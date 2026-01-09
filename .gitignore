@@ -1,0 +1,16 @@
+# Dependencias
+node_modules
+.pnp
+.pnp.js
+
+# Producción
+dist
+dist-electron
+release
+*.exe
+*.dmg
+*.apk
+
+# Logs y Cache
+*.log
+.DS_Store
