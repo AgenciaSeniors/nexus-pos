@@ -1,23 +1,25 @@
 import { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
-import type { Session, AuthChangeEvent } from '@supabase/supabase-js';
+// Eliminada la línea de imports de tipos de supabase que no se usaban
 import { supabase } from './lib/supabase';
 import { db, type Staff } from './lib/db';
-import { TechGuard } from './components/TechGuard';
+
 // Componentes y Páginas
 import { Layout } from './components/Layout';
 import { AuthGuard } from './components/AuthGuard';
 import { PinPad } from './components/PinPad';
+import { TechGuard } from './components/TechGuard';
 import { PosPage } from './pages/PosPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { FinancePage } from './pages/FinancePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { StaffPage } from './pages/StaffPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
+// Eliminado WifiOff
 import { Loader2, Store, User, Lock } from 'lucide-react';
 
-// --- COMPONENTE LOGIN (Solo para el Dueño/Instalación inicial) ---
-function Login() {
+// --- COMPONENTE LOGIN (Solo requiere internet la primera vez) ---
+function Login({ onLoginSuccess }: { onLoginSuccess: () => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -28,16 +30,38 @@ function Login() {
     setLoading(true);
     setError(null);
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
+      // 1. Autenticación con Supabase
+      const { data, error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      if (authError) throw authError;
+
+      if (!data.session) throw new Error("No se pudo iniciar sesión");
+
+      // 2. Verificación de Licencia (Business ID)
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('business_id')
+        .eq('id', data.session.user.id)
+        .single();
+
+      if (profileError) throw new Error("Error verificando licencia.");
+      
+      if (!profile?.business_id) {
+        throw new Error("⚠️ Este usuario no tiene una licencia activa. Contacte al soporte.");
+      }
+
+      // 3. ¡ÉXITO! Guardamos la licencia localmente y la bandera de autorización
+      localStorage.setItem('nexus_business_id', profile.business_id);
+      localStorage.setItem('nexus_device_authorized', 'true');
+      
+      onLoginSuccess();
+
     } catch (err: unknown) {
       if (err instanceof Error) {
         setError(err.message);
-      } else if (typeof err === 'object' && err !== null && 'message' in err) {
-        setError(String((err as { message: unknown }).message));
       } else {
-        setError('Error al iniciar sesión');
+        setError('Error desconocido al iniciar sesión');
       }
+      localStorage.removeItem('nexus_device_authorized');
     } finally {
       setLoading(false);
     }
@@ -51,18 +75,18 @@ function Login() {
             <Store className="w-10 h-10 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-slate-800">Nexus POS</h1>
-          <p className="text-slate-500 text-sm">Sistema de Punto de Venta</p>
+          <p className="text-slate-500 text-sm">Activación de Dispositivo</p>
         </div>
         
         {error && (
-          <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100 flex items-center justify-center">
+          <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100 flex items-center justify-center text-center">
             {error}
           </div>
         )}
 
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Correo Electrónico</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Correo de Licencia</label>
             <div className="relative">
               <User className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
               <input 
@@ -89,11 +113,11 @@ function Login() {
             type="submit" disabled={loading} 
             className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Iniciar Sesión'}
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Activar y Entrar'}
           </button>
         </form>
         <div className="mt-6 text-center text-xs text-slate-400">
-          Nexus POS v1.0 • Agencia Seniors
+          Solo necesitas internet para este paso.
         </div>
       </div>
     </div>
@@ -102,24 +126,24 @@ function Login() {
 
 // --- APP PRINCIPAL ---
 export default function App() {
-  const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   
-  // ESTADO LOCAL: ¿Quién está usando la PC?
+  const [isAuthorized, setIsAuthorized] = useState(() => {
+    return localStorage.getItem('nexus_device_authorized') === 'true';
+  });
+
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
   const [isLocked, setIsLocked] = useState(false);
 
-  // LOGICA DE RESCATE: Verificar si la DB está vacía al iniciar
   useEffect(() => {
     const checkRescueParams = async () => {
       try {
         const count = await db.staff.count();
         if (count === 0) {
-          // Si no hay nadie, creamos al Admin de Emergencia
           await db.staff.add({
             id: 'admin-rescue',
             name: 'Admin Inicial',
-            pin: '0000', // <--- TU PIN MAESTRO DE INICIO
+            pin: '0000', 
             role: 'admin',
             active: true
           });
@@ -132,16 +156,30 @@ export default function App() {
     checkRescueParams();
   }, []);
 
-  // LOGICA DE SESIÓN (SUPABASE)
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
-    });
+    const initAuth = async () => {
+      if (localStorage.getItem('nexus_device_authorized') === 'true') {
+        setLoading(false);
+      }
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
-      setSession(session);
+      const { data } = await supabase.auth.getSession();
+      if (data.session) {
+        setIsAuthorized(true);
+        localStorage.setItem('nexus_device_authorized', 'true');
+      } else if (!localStorage.getItem('nexus_device_authorized')) {
+        setIsAuthorized(false);
+      }
+      
       setLoading(false);
+    };
+
+    initAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        setIsAuthorized(true);
+        localStorage.setItem('nexus_device_authorized', 'true');
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -157,17 +195,21 @@ export default function App() {
     setIsLocked(true);
   };
 
+  const handleLoginSuccess = () => {
+    setIsAuthorized(true);
+    setLoading(false);
+  };
+
   if (loading) return <div className="h-screen w-full flex items-center justify-center text-slate-400"><Loader2 className="animate-spin" /></div>;
 
-  // 1. Si no hay sesión de dueño, pedimos Login de Supabase (Requiere Internet la primera vez)
-  if (!session) return <Login />;
+  if (!isAuthorized) {
+    return <Login onLoginSuccess={handleLoginSuccess} />;
+  }
 
-  // 2. Si hay sesión, pero está bloqueado (o no se ha elegido empleado), pedimos PIN Local
   if (isLocked || !currentStaff) {
     return <PinPad onSuccess={handleUnlock} />;
   }
 
-  // 3. Sistema desbloqueado: Mostramos Layout y Rutas
   return (
     <HashRouter>
       <AuthGuard>
@@ -178,13 +220,14 @@ export default function App() {
             <Route path="/finanzas" element={<FinancePage />} />
             <Route path="/configuracion" element={<SettingsPage />} />
             <Route path="/equipo" element={<StaffPage />} />
-            
-            {/* Ruta secreta para el técnico */}
-            <Route path="/super-alta-secreta" element={
-          <TechGuard>
-          <SuperAdminPage />
-          </TechGuard>
-      }  />
+            <Route 
+              path="/super-alta-secreta" 
+              element={
+                <TechGuard>
+                  <SuperAdminPage />
+                </TechGuard>
+              } 
+            />
           </Route>
         </Routes>
       </AuthGuard>
