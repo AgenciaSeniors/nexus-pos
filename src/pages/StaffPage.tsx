@@ -6,7 +6,12 @@ import { Shield, UserPlus, Trash2, KeyRound } from 'lucide-react';
 export function StaffPage() {
   const staff = useLiveQuery(() => db.staff.toArray());
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [formData, setFormData] = useState({ name: '', pin: '', role: 'vendedor' as const });
+  // Definimos el tipo explícitamente aquí para evitar problemas
+  const [formData, setFormData] = useState<{
+    name: string;
+    pin: string;
+    role: 'admin' | 'vendedor';
+  }>({ name: '', pin: '', role: 'vendedor' });
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,7 +83,12 @@ export function StaffPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Rol</label>
-                <select className="w-full border p-2 rounded-lg bg-white" value={formData.role} onChange={e => setFormData({...formData, role: e.target.value as any})}>
+                <select 
+                    className="w-full border p-2 rounded-lg bg-white" 
+                    value={formData.role} 
+                    // CORRECCIÓN AQUÍ: Forzamos el tipo seguro en lugar de 'any'
+                    onChange={e => setFormData({...formData, role: e.target.value as 'admin' | 'vendedor'})}
+                >
                   <option value="vendedor">Vendedor (Solo Caja)</option>
                   <option value="admin">Administrador (Todo)</option>
                 </select>

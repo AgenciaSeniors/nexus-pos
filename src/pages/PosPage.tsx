@@ -1,20 +1,23 @@
 import { useState, useEffect } from 'react';
+import { useOutletContext } from 'react-router-dom'; // <--- IMPORTANTE: Para recibir al empleado del PIN
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Product, type Sale, type Customer, type ParkedOrder, type SaleItem } from '../lib/db';
+import { db, type Product, type Sale, type Customer, type ParkedOrder, type SaleItem, type Staff } from '../lib/db';
 import { supabase } from '../lib/supabase';
 import { syncPush } from '../lib/sync';
 import { TicketModal } from '../components/TicketModal';
 import { PaymentModal } from '../components/PaymentModal';
 import { CustomerSelect } from '../components/CustomerSelect';
 import { ParkedOrdersModal } from '../components/ParkedOrdersModal';
-import { PauseCircle, ClipboardList } from 'lucide-react';
-import { Users } from 'lucide-react';
+import { PauseCircle, ClipboardList, Users } from 'lucide-react';
 
 interface CartItem extends Product {
   quantity: number;
 }
 
 export function PosPage() {
+  // 1. RECUPERAMOS AL EMPLEADO AUTOMÁTICAMENTE (Viene del Layout/PIN)
+  const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
+
   const [query, setQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Todo');
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -29,10 +32,12 @@ export function PosPage() {
   const allProducts = useLiveQuery(() => db.products.toArray()) || [];
   const categories = ['Todo', ...new Set(allProducts.map(p => p.category || 'General'))].sort();
 
-  // --- NUEVO: Cachear el Business ID al cargar para usarlo Offline ---
+  // 2. CACHÉ AUTOMÁTICA DEL NEGOCIO (Offline-Ready)
   useEffect(() => {
     const cacheBusinessId = async () => {
-      // Solo intentamos si hay internet (Supabase responde)
+      // Solo intentamos si hay internet. Si falla, no pasa nada, usamos lo que haya en caché.
+      if (!navigator.onLine) return;
+
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         const { data: perfil } = await supabase
@@ -48,7 +53,6 @@ export function PosPage() {
     };
     cacheBusinessId();
   }, []);
-  // ------------------------------------------------------------------
 
   const filteredProducts = allProducts.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.includes(query);
@@ -121,28 +125,28 @@ export function PosPage() {
     db.parked_orders.delete(order.id);
     setShowParkedModal(false);
   };
-  // -----------------------------------
 
-  // --- FUNCIÓN DE COBRO CORREGIDA (OFFLINE-FIRST) ---
+  // --- FUNCIÓN DE COBRO (OFFLINE-FIRST CON VENDEDOR AUTOMÁTICO) ---
   const handleCheckout = async (paymentMethod: 'efectivo' | 'transferencia', tendered: number, change: number) => {
     if (cart.length === 0) return;
     setIsCheckout(true);
-    setShowPaymentModal(false); // Cerramos modal inmediatamente
+    setShowPaymentModal(false);
 
     try {
-      // CORRECCIÓN: Usamos el ID de localStorage en vez de llamar a Supabase
+      // Usamos el ID de localStorage (Caché)
       const businessId = localStorage.getItem('nexus_business_id');
       
       if (!businessId) {
-        alert("⚠️ Error: No se detecta el ID del negocio. Por favor inicia sesión con internet al menos una vez.");
+        alert("⚠️ Error: No se detecta el ID del negocio. Inicia sesión con internet al menos una vez.");
         setIsCheckout(false);
         return;
       }
 
       const saleId = crypto.randomUUID();
+      
       const newSale: Sale = {
         id: saleId,
-        business_id: businessId, // Usamos el ID local
+        business_id: businessId,
         total: totalAmount,
         date: new Date().toISOString(),
         items: cart.map(item => ({ 
@@ -153,10 +157,15 @@ export function PosPage() {
             unit: item.unit 
         })),
         customer_id: currentCustomer?.id,
+        
+        // ✅ AQUÍ LA CLAVE: Guardamos al empleado que desbloqueó con PIN
+        staff_id: currentStaff.id,
+        staff_name: currentStaff.name,
+        
         payment_method: paymentMethod,
         amount_tendered: tendered,
         change: change,
-        sync_status: 'pending' // Esto asegura que sync.ts lo suba después
+        sync_status: 'pending' // Pendiente de subir
       };
 
       // Guardamos en Dexie (Instantáneo)
@@ -173,17 +182,17 @@ export function PosPage() {
         }
       });
 
-      // Limpiamos UI
+      // Limpieza UI
       setCart([]);
-      setLastSale(newSale); // Esto abrirá el TicketModal al instante
+      setLastSale(newSale);
       setCurrentCustomer(null);
       
-      // Intentamos sincronizar en segundo plano (sin await para no bloquear)
-      syncPush().catch(console.error); 
+      // Intentar subir sin bloquear
+      syncPush().catch(() => console.log("Guardado localmente.")); 
 
     } catch (error) {
       console.error(error);
-      alert("Error al guardar venta localmente");
+      alert("Error al guardar venta");
     } finally {
       setIsCheckout(false);
     }
@@ -194,9 +203,21 @@ export function PosPage() {
       
       {/* IZQUIERDA: Catálogo */}
       <div className="w-full md:w-2/3 p-4 flex flex-col gap-4 bg-slate-50">
-        <div className="flex justify-between items-center">
-            <h1 className="text-2xl font-bold text-gray-800 hidden md:block">🛒 Punto de Venta</h1>
-            <input type="text" className="flex-1 md:w-64 max-w-md p-3 border border-slate-300 rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="🔍 Buscar..." value={query} onChange={(e) => setQuery(e.target.value)} />
+        <div className="flex justify-between items-center gap-4">
+            <h1 className="text-2xl font-bold text-gray-800 hidden md:block whitespace-nowrap">🛒 Punto de Venta</h1>
+            
+            {/* --- INDICADOR DE EMPLEADO (SOLO LECTURA) --- */}
+            {/* Ya no es un Select, es un aviso fijo de quién está operando */}
+            <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2 shadow-sm flex-shrink-0">
+               <Users size={18} className="text-indigo-600" />
+               <div className="flex flex-col">
+                 <span className="text-[10px] text-indigo-400 leading-none font-bold uppercase">Atendiendo</span>
+                 <span className="text-sm font-bold text-indigo-700 leading-none">{currentStaff.name}</span>
+               </div>
+            </div>
+            {/* --------------------------------------------- */}
+
+            <input type="text" className="flex-1 min-w-0 p-3 border border-slate-300 rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="🔍 Buscar..." value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
 
         <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">

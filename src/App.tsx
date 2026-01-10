@@ -2,17 +2,22 @@ import { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
-import { SettingsPage } from './pages/SettingsPage';
-import { AuthGuard } from './components/AuthGuard';
+import { db, type Staff } from './lib/db';
+
+// Componentes y Páginas
 import { Layout } from './components/Layout';
+import { AuthGuard } from './components/AuthGuard';
+import { PinPad } from './components/PinPad';
 import { PosPage } from './pages/PosPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { FinancePage } from './pages/FinancePage';
-import { Store, User, Lock, Loader2 } from 'lucide-react';
-import { SuperAdminPage } from './pages/SuperAdminPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { StaffPage } from './pages/StaffPage';
+import { CustomersPage } from './pages/CustomersPage';
+import { SuperAdminPage } from './pages/SuperAdminPage';
+import { Loader2, Store, User, Lock } from 'lucide-react';
 
-// --- COMPONENTE LOGIN ---
+// --- COMPONENTE LOGIN (DUEÑO) ---
 function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -30,8 +35,7 @@ function Login() {
         password,
       });
       if (error) throw error;
-    } catch (err: unknown) { // <--- CORRECCIÓN AQUÍ: Usamos 'unknown' en lugar de 'any'
-      // Verificamos si el error tiene un mensaje antes de usarlo
+    } catch (err: unknown) {
       if (err instanceof Error) {
         setError(err.message);
       } else if (typeof err === 'object' && err !== null && 'message' in err) {
@@ -67,43 +71,30 @@ function Login() {
             <div className="relative">
               <User className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
               <input 
-                type="email" 
-                required 
-                className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                type="email" required 
+                className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                 placeholder="usuario@negocio.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                value={email} onChange={(e) => setEmail(e.target.value)}
               />
             </div>
           </div>
-
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Contraseña</label>
             <div className="relative">
               <Lock className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
               <input 
-                type="password" 
-                required 
-                className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                type="password" required 
+                className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                 placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                value={password} onChange={(e) => setPassword(e.target.value)}
               />
             </div>
           </div>
-
-          <button 
-            type="submit" 
-            disabled={loading}
-            className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
+          <button type="submit" disabled={loading} className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2">
             {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Iniciar Sesión'}
           </button>
         </form>
-        
-        <div className="mt-6 text-center text-xs text-slate-400">
-          Nexus POS v1.0 • Agencia Seniors
-        </div>
+        <div className="mt-6 text-center text-xs text-slate-400">Nexus POS v1.0 • Agencia Seniors</div>
       </div>
     </div>
   );
@@ -113,6 +104,10 @@ function Login() {
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  
+  // ESTADO LOCAL: ¿Quién está usando la PC?
+  const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
+  const [isLocked, setIsLocked] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -128,23 +123,39 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  if (loading) {
-     return <div className="h-screen w-full flex items-center justify-center text-slate-400"><Loader2 className="animate-spin" /></div>;
+  const handleUnlock = (staffMember: Staff) => {
+    setCurrentStaff(staffMember);
+    setIsLocked(false);
+  };
+
+  const handleLock = () => {
+    setCurrentStaff(null);
+    setIsLocked(true);
+  };
+
+  if (loading) return <div className="h-screen w-full flex items-center justify-center text-slate-400"><Loader2 className="animate-spin" /></div>;
+
+  // 1. Si no hay sesión de dueño, pedimos Login de Supabase (Requiere Internet la primera vez)
+  if (!session) return <Login />;
+
+  // 2. Si hay sesión, pero está bloqueado, pedimos PIN Local (NO requiere internet)
+  if (isLocked || !currentStaff) {
+    return <PinPad onSuccess={handleUnlock} />;
   }
 
-  if (!session) return <Login />; 
-
+  // 3. Sistema desbloqueado
   return (
     <HashRouter>
       <AuthGuard>
         <Routes>
-          <Route element={<Layout />}>
+          <Route element={<Layout currentStaff={currentStaff} onLock={handleLock} />}>
             <Route path="/" element={<PosPage />} />
+            <Route path="/clientes" element={<CustomersPage />} />
             <Route path="/inventario" element={<InventoryPage />} />
             <Route path="/finanzas" element={<FinancePage />} />
+            <Route path="/equipo" element={<StaffPage />} />
             <Route path="/configuracion" element={<SettingsPage />} />
             <Route path="/super-alta-secreta" element={<SuperAdminPage />} />
-            <Route path="/equipo" element={<StaffPage />} />
           </Route>
         </Routes>
       </AuthGuard>

@@ -1,40 +1,45 @@
-import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Store, Package, PieChart, LogOut, Settings } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { Store, Package, PieChart, Settings, Users, Lock, Shield } from 'lucide-react';
+import type { Staff } from '../lib/db';
 
-export function Layout() {
+interface LayoutProps {
+  currentStaff: Staff | null;
+  onLock: () => void;
+}
+
+export function Layout({ currentStaff, onLock }: LayoutProps) {
   const location = useLocation();
-  const [role, setRole] = useState<string | null>(null);
+  const isAdmin = currentStaff?.role === 'admin';
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        supabase.from('profiles').select('role').eq('id', session.user.id).single()
-          .then(({ data }) => setRole(data?.role || 'seller'));
-      }
-    });
-  }, []);
-
+  // Filtramos el menú según el rol del empleado
   const allMenuItems = [
-    { path: '/', icon: <Store size={22} />, label: 'Vender', roles: ['admin', 'seller'] },
-    { path: '/inventario', icon: <Package size={22} />, label: 'Stock', roles: ['admin'] },
-    { path: '/finanzas', icon: <PieChart size={22} />, label: 'Finanzas', roles: ['admin'] },
-    { path: '/configuracion', icon: <Settings size={22} />, label: 'Ajustes', roles: ['admin'] }
+    { path: '/', icon: <Store size={22} />, label: 'Vender', show: true },
+    { path: '/clientes', icon: <Users size={22} />, label: 'Clientes', show: true },
+    { path: '/inventario', icon: <Package size={22} />, label: 'Stock', show: isAdmin },
+    { path: '/finanzas', icon: <PieChart size={22} />, label: 'Finanzas', show: isAdmin },
+    { path: '/equipo', icon: <Shield size={22} />, label: 'Equipo', show: isAdmin },
+    { path: '/configuracion', icon: <Settings size={22} />, label: 'Ajustes', show: isAdmin }
   ];
-
-  const visibleItems = allMenuItems.filter(item => role ? item.roles.includes(item.roles[0]) : false);
 
   return (
     <div className="flex h-screen w-full bg-slate-50 overflow-hidden">
       
-      {/* 🖥️ SIDEBAR (Solo visible en Desktop 'md') */}
+      {/* 🖥️ SIDEBAR (PC) */}
       <aside className="hidden md:flex w-24 bg-white border-r border-slate-200 flex-col items-center py-6 z-20 shadow-sm">
-        <div className="mb-8 p-3 bg-indigo-600 rounded-xl text-white font-bold shadow-indigo-200 shadow-lg">NP</div>
+        <div className="mb-4 p-3 bg-indigo-600 rounded-xl text-white font-bold shadow-indigo-200 shadow-lg">NP</div>
         
-        <nav className="flex-1 flex flex-col gap-6 w-full px-4">
-          
-          {visibleItems.map((item) => (
+        {/* INFO DEL EMPLEADO ACTUAL */}
+        <div className="mb-6 text-center px-1">
+          <div className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-1 text-slate-600 font-bold text-xs border border-slate-200">
+            {currentStaff?.name.substring(0, 2).toUpperCase()}
+          </div>
+          <p className="text-[10px] font-medium text-slate-500 truncate w-full" title={currentStaff?.name}>
+            {currentStaff?.name}
+          </p>
+        </div>
+
+        <nav className="flex-1 flex flex-col gap-4 w-full px-4 overflow-y-auto scrollbar-hide">
+          {allMenuItems.filter(i => i.show).map((item) => (
             <Link
               key={item.path}
               to={item.path}
@@ -46,40 +51,34 @@ export function Layout() {
             >
               {item.icon}
               <span className="text-[10px] mt-1 font-semibold">{item.label}</span>
-              
             </Link>
-          
           ))}
-          
         </nav>
 
-        <button onClick={() => supabase.auth.signOut()} className="p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors">
-          <LogOut size={22} />
+        {/* BOTÓN DE BLOQUEO */}
+        <button 
+          onClick={onLock} 
+          className="mt-4 p-3 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors flex flex-col items-center"
+          title="Bloquear Pantalla"
+        >
+          <Lock size={22} />
+          <span className="text-[9px] font-bold mt-1">Bloquear</span>
         </button>
       </aside>
 
-      {/* 📱 MOBILE BOTTOM BAR (Solo visible en Móvil) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-6 py-3 flex justify-between items-center z-50 pb-safe shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-        {visibleItems.map((item) => (
-          <Link
-            key={item.path}
-            to={item.path}
-            className={`flex flex-col items-center transition-all ${
-               location.pathname === item.path ? 'text-indigo-600 -translate-y-1' : 'text-slate-400'
-            }`}
-          >
+      {/* 📱 MOBILE BOTTOM BAR */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-4 py-2 flex justify-between items-center z-50 pb-safe">
+        {allMenuItems.filter(i => i.show).slice(0, 4).map((item) => (
+          <Link key={item.path} to={item.path} className={`flex flex-col items-center p-2 ${location.pathname === item.path ? 'text-indigo-600' : 'text-slate-400'}`}>
             {item.icon}
-            <span className="text-[10px] font-medium mt-1">{item.label}</span>
           </Link>
         ))}
-        <button onClick={() => supabase.auth.signOut()} className="text-slate-300">
-           <LogOut size={20} />
-        </button>
+        <button onClick={onLock} className="text-slate-400 p-2"><Lock size={22}/></button>
       </nav>
 
-      {/* ÁREA PRINCIPAL */}
+      {/* ÁREA PRINCIPAL: Pasamos el contexto del empleado a las páginas */}
       <main className="flex-1 overflow-auto relative w-full pb-20 md:pb-0">
-        <Outlet /> 
+        <Outlet context={{ currentStaff }} /> 
       </main>
     </div>
   );
