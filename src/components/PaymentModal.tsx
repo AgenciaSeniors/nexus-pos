@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Banknote, CreditCard, ArrowRight, X } from 'lucide-react';
 
 interface PaymentModalProps {
@@ -17,17 +17,17 @@ export function PaymentModal({ total, onConfirm, onCancel }: PaymentModalProps) 
   const change = tenderedValue - total;
   const isValid = method === 'transferencia' || (method === 'efectivo' && tenderedValue >= total);
 
-  // CORRECCIÓN: Definimos la función ANTES de usarla en el useEffect
-  const handleConfirm = () => {
+  // CORRECCIÓN 1: Usamos useCallback para "congelar" la función y que no cambie en cada render innecesariamente
+  const handleConfirm = useCallback(() => {
     if (!isValid) return;
     onConfirm(
       method, 
       method === 'efectivo' ? tenderedValue : total, 
       method === 'efectivo' ? change : 0
     );
-  };
+  }, [isValid, onConfirm, method, tenderedValue, total, change]);
 
-  // Ahora sí podemos usar handleConfirm aquí dentro
+  // CORRECCIÓN 2: Ahora handleConfirm es estable y podemos ponerlo en las dependencias sin miedo
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onCancel();
@@ -35,7 +35,7 @@ export function PaymentModal({ total, onConfirm, onCancel }: PaymentModalProps) 
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isValid, onCancel, method, tenderedValue, total]); // Agregamos dependencias para evitar warnings
+  }, [onCancel, isValid, handleConfirm]); 
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">

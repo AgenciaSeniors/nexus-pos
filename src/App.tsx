@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
-import { db, type Staff } from './lib/db';
+import { type Staff } from './lib/db';
 
 // Componentes y Páginas
 import { Layout } from './components/Layout';
@@ -13,7 +13,7 @@ import { InventoryPage } from './pages/InventoryPage';
 import { FinancePage } from './pages/FinancePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { StaffPage } from './pages/StaffPage';
-import { CustomersPage } from './pages/CustomersPage';
+import { CustomersPage } from './components/CustomersPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
 import { Loader2, Store, User, Lock } from 'lucide-react';
 
