@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom'; // <--- IMPORTANTE: Para recibir al empleado del PIN
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Product, type Sale, type Customer, type ParkedOrder, type SaleItem, type Staff } from '../lib/db';
+import { db, type Product, type Sale, type ParkedOrder, type SaleItem, type Staff } from '../lib/db';
 import { supabase } from '../lib/supabase';
 import { syncPush } from '../lib/sync';
 import { TicketModal } from '../components/TicketModal';
