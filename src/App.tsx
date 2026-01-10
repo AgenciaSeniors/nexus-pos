@@ -3,7 +3,7 @@ import { HashRouter, Routes, Route } from 'react-router-dom';
 import type { Session, AuthChangeEvent } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
 import { db, type Staff } from './lib/db';
-
+import { TechGuard } from './components/TechGuard';
 // Componentes y Páginas
 import { Layout } from './components/Layout';
 import { AuthGuard } from './components/AuthGuard';
@@ -180,7 +180,11 @@ export default function App() {
             <Route path="/equipo" element={<StaffPage />} />
             
             {/* Ruta secreta para el técnico */}
-            <Route path="/super-alta-secreta" element={<SuperAdminPage />} />
+            <Route path="/super-alta-secreta" element={
+          <TechGuard>
+          <SuperAdminPage />
+          </TechGuard>
+      }  />
           </Route>
         </Routes>
       </AuthGuard>
