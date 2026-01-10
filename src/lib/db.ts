@@ -8,8 +8,6 @@ export interface Product {
   stock: number;
   sku: string;
   business_id: string;
-  cost?: number;
-  expiration_date?: string;
   category?: string;
   unit?: string;
   sync_status?: 'synced' | 'pending_update' | 'pending_create' | 'pending_delete';
@@ -30,6 +28,8 @@ export interface Sale {
   date: string;
   items: SaleItem[];
   customer_id?: string;
+  staff_id?: string; // <--- NUEVO: ID del vendedor
+  staff_name?: string; // <--- NUEVO: Nombre del vendedor
   payment_method: 'efectivo' | 'transferencia' | 'tarjeta';
   amount_tendered?: number;
   change?: number;
@@ -56,9 +56,18 @@ export interface Customer {
 export interface ParkedOrder {
   id: string;
   date: string;
-  items: SaleItem[]; // <--- CORREGIDO: Usamos SaleItem[] en lugar de any[]
+  items: SaleItem[];
   total: number;
   note?: string;
+}
+
+// --- NUEVA INTERFAZ: EMPLEADOS ---
+export interface Staff {
+  id: string;
+  name: string;
+  role: 'admin' | 'vendedor';
+  pin: string;
+  active: boolean;
 }
 
 // 2. Definición de la Base de Datos
@@ -68,15 +77,18 @@ export class NexusDB extends Dexie {
   settings!: Table<BusinessConfig>;
   customers!: Table<Customer>;
   parked_orders!: Table<ParkedOrder>;
+  staff!: Table<Staff>; // <--- NUEVA TABLA
 
   constructor() {
     super('NexusPOS_DB');
-    this.version(5).stores({
+    // Actualizamos a versión 6 para incluir la nueva tabla
+    this.version(6).stores({
       products: 'id, name, sku, category, sync_status', 
-      sales: 'id, date, customer_id, sync_status',
+      sales: 'id, date, customer_id, staff_id, sync_status', // Agregado índice staff_id
       settings: 'id',
       customers: 'id, name, phone, sync_status',
-      parked_orders: 'id, date'
+      parked_orders: 'id, date',
+      staff: 'id, name, pin' // <--- Nueva definición
     });
   }
 }

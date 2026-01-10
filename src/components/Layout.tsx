@@ -33,6 +33,7 @@ export function Layout() {
         <div className="mb-8 p-3 bg-indigo-600 rounded-xl text-white font-bold shadow-indigo-200 shadow-lg">NP</div>
         
         <nav className="flex-1 flex flex-col gap-6 w-full px-4">
+          
           {visibleItems.map((item) => (
             <Link
               key={item.path}
@@ -45,8 +46,11 @@ export function Layout() {
             >
               {item.icon}
               <span className="text-[10px] mt-1 font-semibold">{item.label}</span>
+              
             </Link>
+          
           ))}
+          
         </nav>
 
         <button onClick={() => supabase.auth.signOut()} className="p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors">

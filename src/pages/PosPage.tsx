@@ -1,6 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-// CORRECCIÓN 1: Importamos todo desde un solo lugar para evitar duplicados
 import { db, type Product, type Sale, type Customer, type ParkedOrder, type SaleItem } from '../lib/db';
 import { supabase } from '../lib/supabase';
 import { syncPush } from '../lib/sync';
@@ -9,6 +8,7 @@ import { PaymentModal } from '../components/PaymentModal';
 import { CustomerSelect } from '../components/CustomerSelect';
 import { ParkedOrdersModal } from '../components/ParkedOrdersModal';
 import { PauseCircle, ClipboardList } from 'lucide-react';
+import { Users } from 'lucide-react';
 
 interface CartItem extends Product {
   quantity: number;
@@ -28,6 +28,27 @@ export function PosPage() {
 
   const allProducts = useLiveQuery(() => db.products.toArray()) || [];
   const categories = ['Todo', ...new Set(allProducts.map(p => p.category || 'General'))].sort();
+
+  // --- NUEVO: Cachear el Business ID al cargar para usarlo Offline ---
+  useEffect(() => {
+    const cacheBusinessId = async () => {
+      // Solo intentamos si hay internet (Supabase responde)
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        const { data: perfil } = await supabase
+          .from('profiles')
+          .select('business_id')
+          .eq('id', session.user.id)
+          .single();
+        
+        if (perfil?.business_id) {
+          localStorage.setItem('nexus_business_id', perfil.business_id);
+        }
+      }
+    };
+    cacheBusinessId();
+  }, []);
+  // ------------------------------------------------------------------
 
   const filteredProducts = allProducts.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.includes(query);
@@ -61,8 +82,6 @@ export function PosPage() {
   const handleParkOrder = async () => {
     if (cart.length === 0) return;
     
-    // CORRECCIÓN 2: Convertimos explícitamente de CartItem a SaleItem
-    // CartItem tiene (id, stock, sku...) -> SaleItem tiene (product_id, quantity, price...)
     const itemsToPark: SaleItem[] = cart.map(item => ({
         product_id: item.id,
         name: item.name,
@@ -87,16 +106,12 @@ export function PosPage() {
       if (!confirm("Hay una venta en curso. ¿Deseas reemplazarla?")) return;
     }
     
-    // CORRECCIÓN 3: Reconstruimos los CartItems desde los SaleItems guardados
-    // Como no guardamos el stock o SKU en la orden en espera, ponemos valores por defecto
-    // para cumplir con la interfaz CartItem.
     const restoredCart: CartItem[] = order.items.map(item => ({
-        id: item.product_id, // El ID del producto estaba guardado como product_id
+        id: item.product_id,
         name: item.name,
         price: item.price,
         quantity: item.quantity,
         unit: item.unit,
-        // Datos rellenos necesarios para que TypeScript no se queje:
         stock: 999, // Stock visual temporal
         sku: '',
         business_id: ''
@@ -108,20 +123,26 @@ export function PosPage() {
   };
   // -----------------------------------
 
+  // --- FUNCIÓN DE COBRO CORREGIDA (OFFLINE-FIRST) ---
   const handleCheckout = async (paymentMethod: 'efectivo' | 'transferencia', tendered: number, change: number) => {
     if (cart.length === 0) return;
     setIsCheckout(true);
-    setShowPaymentModal(false);
+    setShowPaymentModal(false); // Cerramos modal inmediatamente
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const { data: perfil } = await supabase.from('profiles').select('business_id').eq('id', session?.user.id).single();
-      if (!perfil) throw new Error("Sesión inválida");
+      // CORRECCIÓN: Usamos el ID de localStorage en vez de llamar a Supabase
+      const businessId = localStorage.getItem('nexus_business_id');
+      
+      if (!businessId) {
+        alert("⚠️ Error: No se detecta el ID del negocio. Por favor inicia sesión con internet al menos una vez.");
+        setIsCheckout(false);
+        return;
+      }
 
       const saleId = crypto.randomUUID();
       const newSale: Sale = {
         id: saleId,
-        business_id: perfil.business_id,
+        business_id: businessId, // Usamos el ID local
         total: totalAmount,
         date: new Date().toISOString(),
         items: cart.map(item => ({ 
@@ -135,24 +156,34 @@ export function PosPage() {
         payment_method: paymentMethod,
         amount_tendered: tendered,
         change: change,
-        sync_status: 'pending'
+        sync_status: 'pending' // Esto asegura que sync.ts lo suba después
       };
 
+      // Guardamos en Dexie (Instantáneo)
       await db.transaction('rw', db.products, db.sales, async () => {
         await db.sales.add(newSale);
         for (const item of cart) {
           const product = await db.products.get(item.id);
-          if (product) await db.products.update(item.id, { stock: product.stock - item.quantity, sync_status: 'pending_update' });
+          if (product) {
+            await db.products.update(item.id, { 
+              stock: product.stock - item.quantity, 
+              sync_status: 'pending_update' 
+            });
+          }
         }
       });
 
+      // Limpiamos UI
       setCart([]);
-      setLastSale(newSale);
+      setLastSale(newSale); // Esto abrirá el TicketModal al instante
       setCurrentCustomer(null);
-      syncPush();
+      
+      // Intentamos sincronizar en segundo plano (sin await para no bloquear)
+      syncPush().catch(console.error); 
+
     } catch (error) {
       console.error(error);
-      alert("Error al procesar");
+      alert("Error al guardar venta localmente");
     } finally {
       setIsCheckout(false);
     }

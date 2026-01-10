@@ -10,6 +10,7 @@ import { InventoryPage } from './pages/InventoryPage';
 import { FinancePage } from './pages/FinancePage';
 import { Store, User, Lock, Loader2 } from 'lucide-react';
 import { SuperAdminPage } from './pages/SuperAdminPage';
+import { StaffPage } from './pages/StaffPage';
 
 // --- COMPONENTE LOGIN ---
 function Login() {
@@ -143,6 +144,7 @@ export default function App() {
             <Route path="/finanzas" element={<FinancePage />} />
             <Route path="/configuracion" element={<SettingsPage />} />
             <Route path="/super-alta-secreta" element={<SuperAdminPage />} />
+            <Route path="/equipo" element={<StaffPage />} />
           </Route>
         </Routes>
       </AuthGuard>
