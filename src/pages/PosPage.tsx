@@ -6,7 +6,6 @@ import { supabase } from '../lib/supabase';
 import { syncPush } from '../lib/sync';
 import { TicketModal } from '../components/TicketModal';
 import { PaymentModal } from '../components/PaymentModal';
-import { CustomerSelect } from '../components/CustomerSelect';
 import { ParkedOrdersModal } from '../components/ParkedOrdersModal';
 import { PauseCircle, ClipboardList, Users } from 'lucide-react';
 
@@ -24,7 +23,6 @@ export function PosPage() {
   const [isCheckout, setIsCheckout] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [currentCustomer, setCurrentCustomer] = useState<Customer | null>(null);
   
   const [showParkedModal, setShowParkedModal] = useState(false);
   const parkedCount = useLiveQuery(() => db.parked_orders.count()) || 0;
@@ -102,7 +100,6 @@ export function PosPage() {
     });
     
     setCart([]);
-    setCurrentCustomer(null);
   };
 
   const handleRestoreOrder = (order: ParkedOrder) => {
@@ -156,7 +153,6 @@ export function PosPage() {
             price: item.price,
             unit: item.unit 
         })),
-        customer_id: currentCustomer?.id,
         
         // ✅ AQUÍ LA CLAVE: Guardamos al empleado que desbloqueó con PIN
         staff_id: currentStaff.id,
@@ -185,7 +181,6 @@ export function PosPage() {
       // Limpieza UI
       setCart([]);
       setLastSale(newSale);
-      setCurrentCustomer(null);
       
       // Intentar subir sin bloquear
       syncPush().catch(() => console.log("Guardado localmente.")); 
@@ -280,13 +275,6 @@ export function PosPage() {
                 <button onClick={() => removeFromCart(item.id)} className="text-slate-300 hover:text-red-500 px-2 transition-colors">×</button>
               </div>
             ))}
-        </div>
-
-        <div className="px-4 mt-2">
-            <CustomerSelect 
-              selectedCustomer={currentCustomer} 
-              onSelect={setCurrentCustomer} 
-            />
         </div>
 
         <div className="p-4 bg-slate-50 border-t space-y-3 pb-24 md:pb-4">

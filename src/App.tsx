@@ -13,7 +13,6 @@ import { InventoryPage } from './pages/InventoryPage';
 import { FinancePage } from './pages/FinancePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { StaffPage } from './pages/StaffPage';
-import { CustomersPage } from './components/CustomersPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
 import { Loader2, Store, User, Lock } from 'lucide-react';
 
@@ -175,7 +174,6 @@ export default function App() {
         <Routes>
           <Route element={<Layout currentStaff={currentStaff} onLock={handleLock} />}>
             <Route path="/" element={<PosPage />} />
-            <Route path="/clientes" element={<CustomersPage />} />
             <Route path="/inventario" element={<InventoryPage />} />
             <Route path="/finanzas" element={<FinancePage />} />
             <Route path="/configuracion" element={<SettingsPage />} />

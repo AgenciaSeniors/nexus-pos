@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Store, Package, PieChart, Settings, Users, Lock, Shield } from 'lucide-react';
+import { Store, Package, PieChart, Settings, Lock, Shield } from 'lucide-react';
 import type { Staff } from '../lib/db';
 
 interface LayoutProps {
@@ -17,7 +17,6 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
   const allMenuItems = [
     // Visible para TODOS (Admin y Vendedor)
     { path: '/', icon: <Store size={22} />, label: 'Vender', show: true },
-    { path: '/clientes', icon: <Users size={22} />, label: 'Clientes', show: true },
     
     // Visible SOLO para ADMIN
     { path: '/inventario', icon: <Package size={22} />, label: 'Stock', show: isAdmin },
