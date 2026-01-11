@@ -1,6 +1,7 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { Store, Package, PieChart, Settings, Lock, Shield } from 'lucide-react';
 import type { Staff } from '../lib/db';
+import logo from '../logo.png';
 
 interface LayoutProps {
   currentStaff: Staff | null;
@@ -32,7 +33,7 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
       <aside className="hidden md:flex w-24 bg-white border-r border-slate-200 flex-col items-center py-6 z-20 shadow-sm">
         {/* Opción con imagen */}
 <div className="mb-4 p-1 bg-white rounded-xl shadow-lg">
-  <img src="/logo.png" alt="Logo" className="w-10 h-10 object-contain" />
+  <img src={logo} alt="Logo" className="w-10 h-10 object-contain" />
 </div>
         
         {/* FOTO/INICIALES DEL EMPLEADO */}
