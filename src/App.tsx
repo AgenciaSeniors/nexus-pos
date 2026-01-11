@@ -16,17 +16,14 @@ import { StaffPage } from './pages/StaffPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
 import { Loader2, Store, User, Lock, WifiOff, UserPlus, LogIn, CheckCircle, KeyRound } from 'lucide-react';
 
-// ============================================================================
-// 1. COMPONENTE DE LOGIN Y REGISTRO
-// ============================================================================
 function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   
-  // Login State
+  // Estados Login
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   
-  // Register State
+  // Estados Registro
   const [fullName, setFullName] = useState(''); 
   const [phone, setPhone] = useState(''); 
   const [months, setMonths] = useState(1); 
@@ -47,16 +44,15 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
     }
 
     try {
-      // 1. Crear usuario en Auth
+      // 1. Crear usuario
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email, password, options: { data: { full_name: fullName } }
       });
 
       if (authError) throw authError;
       
-      // ✅ CORRECCIÓN: Si el usuario se creó, intentamos guardar los datos AUNQUE no haya sesión (email confirmation on)
+      // ✅ CORRECCIÓN CRÍTICA: Usamos authData.user para asegurar que tenemos el ID
       if (authData.user) {
-        // 2. Guardar datos de la solicitud
         const { error: profileError } = await supabase
           .from('profiles')
           .update({
@@ -67,21 +63,16 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
             status: 'pending', 
             business_id: null 
           })
-          .eq('id', authData.user.id); // Usamos user.id, no session.user.id
+          .eq('id', authData.user.id); // Usamos user.id en vez de session.user.id
 
         if (profileError) {
-          // Si falla por permisos (RLS) porque no hay sesión, avisamos pero no bloqueamos
-          console.warn("No se pudo actualizar el perfil (posiblemente falta confirmar email):", profileError);
+          console.error("Error actualizando perfil:", profileError);
+          // Si falla aquí, suele ser porque RLS bloquea updates sin sesión.
+          // Solución: Desactivar 'Confirm Email' en Supabase.
         }
       }
 
-      // Mensaje final dependiendo de si hay sesión o no
-      if (authData.session) {
-        setSuccessMsg("¡Solicitud enviada! Tu cuenta está en revisión.");
-      } else {
-        setSuccessMsg("Cuenta creada. Si no puedes entrar, verifica tu correo.");
-      }
-      
+      setSuccessMsg("¡Solicitud enviada! Tu cuenta está en revisión.");
       setMode('login'); setPassword(''); setUserPin('');
 
     } catch (err: unknown) {
@@ -115,7 +106,7 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
       localStorage.setItem('nexus_business_id', profile.business_id);
       localStorage.setItem('nexus_last_verification', new Date().toISOString());
 
-      // Crear Admin Local con el PIN remoto si la DB está vacía
+      // Configurar Admin Local automáticamente
       const staffCount = await db.staff.count();
       if (staffCount === 0 && profile.initial_pin) {
         await db.staff.add({
@@ -182,9 +173,6 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
   );
 }
 
-// ============================================================================
-// 2. COMPONENTE PRINCIPAL DEL NEGOCIO (POS, Inventario, etc.)
-// ============================================================================
 function BusinessApp() {
   const [isAuthorized, setIsAuthorized] = useState(() => localStorage.getItem('nexus_device_authorized') === 'true');
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
@@ -226,24 +214,11 @@ function BusinessApp() {
   );
 }
 
-// ============================================================================
-// 3. ENRUTADOR GLOBAL
-// ============================================================================
 export default function App() {
   return (
     <HashRouter>
       <Routes>
-        {/* RUTA 1: SUPER ADMIN (Independiente, solo requiere clave maestra) */}
-        <Route 
-          path="/super-alta-secreta" 
-          element={
-            <TechGuard>
-              <SuperAdminPage />
-            </TechGuard>
-          } 
-        />
-
-        {/* RUTA 2: APLICACIÓN DEL NEGOCIO (Requiere Login/PIN) */}
+        <Route path="/super-alta-secreta" element={<TechGuard><SuperAdminPage /></TechGuard>} />
         <Route path="/*" element={<BusinessApp />} />
       </Routes>
     </HashRouter>
