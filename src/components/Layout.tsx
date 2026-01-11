@@ -30,7 +30,10 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
       
       {/* 🖥️ SIDEBAR (PC) */}
       <aside className="hidden md:flex w-24 bg-white border-r border-slate-200 flex-col items-center py-6 z-20 shadow-sm">
-        <div className="mb-4 p-3 bg-indigo-600 rounded-xl text-white font-bold shadow-indigo-200 shadow-lg">NP</div>
+        {/* Opción con imagen */}
+<div className="mb-4 p-1 bg-white rounded-xl shadow-lg">
+  <img src="/logo.png" alt="Logo" className="w-10 h-10 object-contain" />
+</div>
         
         {/* FOTO/INICIALES DEL EMPLEADO */}
         <div className="mb-6 text-center px-1">

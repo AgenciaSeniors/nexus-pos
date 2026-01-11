@@ -1,312 +1,339 @@
 import { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../lib/db';
+import { db, type Sale } from '../lib/db';
 import { syncPull } from '../lib/sync';
+import { TicketModal } from '../components/TicketModal';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   PieChart, Pie, Cell, Legend 
 } from 'recharts';
 import { 
   Calendar, 
-  DollarSign, 
   TrendingUp, 
-  Wallet, 
   ArrowLeft, 
   ArrowRight, 
   CalendarOff,
-  RefreshCw
+  RefreshCw,
+  Eye,
+  BarChart3,
+  DollarSign,
+  Wallet,
+  PieChart as PieChartIcon
 } from 'lucide-react';
 
 export function FinancePage() {
-  // --- GESTIÓN DE FECHA ---
+  // --- ESTADOS DE LA VISTA ---
+  const [viewMode, setViewMode] = useState<'daily' | 'trends'>('daily');
+  
+  // Estado para MODO DIARIO
   const today = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState(today);
+  const [selectedTicket, setSelectedTicket] = useState<Sale | null>(null);
 
-  // --- DATOS DE LA BASE DE DATOS ---
+  // Estado para MODO TENDENCIAS
+  const [trendFilter, setTrendFilter] = useState<'week' | 'month'>('week');
+
+  // --- DATOS ---
   const rawSales = useLiveQuery(() => db.sales.toArray());
   const allSales = useMemo(() => rawSales ?? [], [rawSales]);
 
   const rawProducts = useLiveQuery(() => db.products.toArray());
   const products = useMemo(() => rawProducts ?? [], [rawProducts]);
 
-  // 1. MAPAS DE COSTOS Y CATEGORÍAS (Para cálculos rápidos)
+  // Mapa de Costos y Categorías
   const productMeta = useMemo(() => {
-    const costMap = new Map();
-    const catMap = new Map();
+    const costs = new Map();
+    const cats = new Map();
     products.forEach(p => {
-      costMap.set(p.id, p.cost || 0);
-      catMap.set(p.id, p.category || 'General');
+      costs.set(p.id, p.cost || 0);
+      cats.set(p.id, p.category || 'General');
     });
-    return { costs: costMap, cats: catMap };
+    return { costs, cats };
   }, [products]);
 
-  // 2. CÁLCULOS DEL DÍA SELECCIONADO
+  // ==========================================
+  // 1. LÓGICA DIARIA
+  // ==========================================
   const dailyStats = useMemo(() => {
-    // A. Filtrar ventas solo de la fecha seleccionada
     const salesForDay = allSales.filter(sale => sale.date.startsWith(selectedDate));
-
-    let revenue = 0;
-    let cost = 0;
+    
+    let revenue = 0, cost = 0;
+    const hourlyCounts: Record<string, number> = {};
     const categoryCounts: Record<string, number> = {};
-    const hourlyCounts: Record<string, number> = {}; // "09:00", "10:00"...
 
-    // Inicializar horas para el gráfico (de 8am a 10pm por ejemplo, o todas)
-    for (let i = 0; i < 24; i++) {
-        const hour = i.toString().padStart(2, '0') + ":00";
-        hourlyCounts[hour] = 0;
-    }
+    // Inicializar horas (07:00 a 23:00)
+    for (let i = 7; i <= 23; i++) hourlyCounts[i.toString().padStart(2, '0') + ":00"] = 0;
 
     salesForDay.forEach(sale => {
       revenue += sale.total;
+      
+      // Hora
+      const h = new Date(sale.date).getHours().toString().padStart(2, '0') + ":00";
+      if (hourlyCounts[h] !== undefined) hourlyCounts[h] += sale.total;
 
-      // Calcular hora para el gráfico
-      const dateObj = new Date(sale.date);
-      const hourKey = dateObj.getHours().toString().padStart(2, '0') + ":00";
-      hourlyCounts[hourKey] = (hourlyCounts[hourKey] || 0) + sale.total;
-
-      // Calcular costos y categorías item por item
+      // Costos y Categorías
       sale.items.forEach(item => {
-        // Costo
         const itemCost = productMeta.costs.get(item.product_id) || 0;
         cost += itemCost * item.quantity;
-
-        // Categoría
+        
         const cat = productMeta.cats.get(item.product_id) || 'General';
         categoryCounts[cat] = (categoryCounts[cat] || 0) + (item.price * item.quantity);
       });
     });
 
     const profit = revenue - cost;
-    const margin = revenue > 0 ? ((profit / revenue) * 100) : 0;
-
-    // Formatear datos para Recharts
-    const chartData = Object.entries(hourlyCounts)
-        .map(([time, total]) => ({ time, total }))
-        // Filtramos horas sin ventas para limpiar el gráfico si se desea, o lo dejamos fijo
-        .filter(d => parseInt(d.time) >= 6); // Mostrar desde las 6 AM en adelante
-
+    const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
+    
+    const chartData = Object.entries(hourlyCounts).map(([time, total]) => ({ time, total }));
     const pieData = Object.entries(categoryCounts)
-        .map(([name, value]) => ({ name, value }))
-        .sort((a, b) => b.value - a.value);
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
 
     return { 
       sales: salesForDay.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
-      revenue, 
-      cost, 
-      profit, 
-      margin, 
-      chartData, 
-      pieData 
+      revenue, profit, cost, margin, chartData, pieData 
     };
   }, [allSales, selectedDate, productMeta]);
 
-  // --- NAVEGACIÓN DE FECHA ---
+
+  // ==========================================
+  // 2. LÓGICA TENDENCIAS
+  // ==========================================
+  const trendStats = useMemo(() => {
+    const now = new Date();
+    const daysToShow = trendFilter === 'week' ? 7 : 30;
+    const cutoffDate = new Date();
+    cutoffDate.setDate(now.getDate() - daysToShow);
+
+    const filteredSales = allSales.filter(s => new Date(s.date) >= cutoffDate);
+
+    let totalRevenue = 0, totalCost = 0;
+    const salesByDate: Record<string, number> = {};
+
+    filteredSales.forEach(sale => {
+      totalRevenue += sale.total;
+      
+      let saleCost = 0;
+      sale.items.forEach(i => saleCost += (productMeta.costs.get(i.product_id) || 0) * i.quantity);
+      totalCost += saleCost;
+
+      const dateKey = new Date(sale.date).toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' });
+      salesByDate[dateKey] = (salesByDate[dateKey] || 0) + sale.total;
+    });
+
+    const totalProfit = totalRevenue - totalCost;
+    const totalMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+    const chartData = Object.entries(salesByDate).map(([date, total]) => ({ date, total }));
+
+    return { totalRevenue, totalCost, totalProfit, totalMargin, chartData, count: filteredSales.length };
+  }, [allSales, trendFilter, productMeta]);
+
+
+  // Funciones Auxiliares
   const changeDate = (days: number) => {
-    const date = new Date(selectedDate);
-    date.setDate(date.getDate() + days);
-    const newDateStr = date.toISOString().split('T')[0];
-    if (newDateStr > today) return; // Bloqueo futuro
-    setSelectedDate(newDateStr);
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() + days);
+    const newStr = d.toISOString().split('T')[0];
+    if (newStr <= today) setSelectedDate(newStr);
   };
 
-  // Colores para el gráfico de pastel
-  const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+  const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
   return (
     <div className="p-6 pb-24 md:pb-6 min-h-screen bg-slate-50">
       
-      {/* HEADER: Título y Selector de Fecha */}
-      <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+      {/* HEADER PRINCIPAL */}
+      <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <TrendingUp className="text-indigo-600" /> Finanzas Diarias
+            <TrendingUp className="text-indigo-600" /> Finanzas
           </h1>
-          <p className="text-slate-500 text-sm">Análisis detallado por día</p>
+          <p className="text-slate-500 text-sm">Control de caja y rendimiento</p>
         </div>
 
-        <div className="flex items-center gap-2">
-            {/* Controles de Fecha */}
-            <div className="bg-white p-1.5 rounded-xl shadow-sm border border-slate-200 flex items-center gap-2">
-              <button onClick={() => changeDate(-1)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600">
-                <ArrowLeft size={20} />
-              </button>
+        <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
+          <button 
+            onClick={() => setViewMode('daily')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'daily' ? 'bg-indigo-50 text-indigo-600 shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+          >
+            <Calendar size={16} /> Día a Día
+          </button>
+          <button 
+            onClick={() => setViewMode('trends')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'trends' ? 'bg-indigo-50 text-indigo-600 shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+          >
+            <BarChart3 size={16} /> Tendencias
+          </button>
+        </div>
+      </div>
 
-              <div className="relative group">
-                <div className="flex items-center gap-2 px-3 py-1 cursor-pointer min-w-[140px] justify-center">
-                  <Calendar size={18} className="text-indigo-600" />
-                  <span className="font-bold text-slate-700 capitalize">
-                    {selectedDate === today ? 'Hoy' : new Date(selectedDate).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}
-                  </span>
+      {/* --- VISTA 1: DETALLE DIARIO --- */}
+      {viewMode === 'daily' && (
+        <div className="animate-fade-in">
+          
+          {/* Controles de Fecha */}
+          <div className="flex justify-between items-center mb-6">
+             <div className="flex items-center gap-2 bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
+                <button onClick={() => changeDate(-1)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600"><ArrowLeft size={20} /></button>
+                <div className="relative mx-2">
+                  <input 
+                    type="date" 
+                    value={selectedDate} max={today}
+                    onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
+                    className="bg-transparent text-slate-700 font-bold outline-none cursor-pointer"
+                  />
                 </div>
-                <input 
-                  type="date" 
-                  className="absolute inset-0 opacity-0 cursor-pointer"
-                  value={selectedDate}
-                  max={today}
-                  onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
-                />
+                <button onClick={() => changeDate(1)} disabled={selectedDate >= today} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600 disabled:opacity-30"><ArrowRight size={20} /></button>
+             </div>
+             <button onClick={() => syncPull()} className="p-2 bg-white text-indigo-600 border border-slate-200 rounded-lg shadow-sm hover:bg-indigo-50"><RefreshCw size={20}/></button>
+          </div>
+
+          {/* KPI CARDS (Restaurados: Ventas, Costos, Ganancias) */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            {/* VENTAS */}
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden group">
+               <div className="absolute right-0 top-0 w-20 h-20 bg-indigo-50 rounded-bl-full -mr-4 -mt-4"></div>
+               <div className="relative">
+                  <p className="text-slate-500 text-xs font-bold uppercase mb-1 flex items-center gap-1">
+                     <DollarSign size={14} /> Ventas Totales
+                  </p>
+                  <h3 className="text-2xl font-bold text-slate-800">${dailyStats.revenue.toFixed(2)}</h3>
+               </div>
+            </div>
+
+            {/* COSTOS */}
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden group">
+               <div className="absolute right-0 top-0 w-20 h-20 bg-orange-50 rounded-bl-full -mr-4 -mt-4"></div>
+               <div className="relative">
+                  <p className="text-slate-500 text-xs font-bold uppercase mb-1 flex items-center gap-1">
+                     <Wallet size={14} /> Costo Mercancía
+                  </p>
+                  <h3 className="text-2xl font-bold text-slate-800">${dailyStats.cost.toFixed(2)}</h3>
+               </div>
+            </div>
+
+            {/* GANANCIAS */}
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden group">
+               <div className="absolute right-0 top-0 w-20 h-20 bg-emerald-50 rounded-bl-full -mr-4 -mt-4"></div>
+               <div className="relative">
+                  <p className="text-slate-500 text-xs font-bold uppercase mb-1 flex items-center gap-1">
+                     <TrendingUp size={14} /> Ganancia Neta
+                  </p>
+                  <h3 className="text-2xl font-bold text-slate-800">${dailyStats.profit.toFixed(2)}</h3>
+                  <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold mt-2 inline-block">
+                     Margen: {dailyStats.margin.toFixed(0)}%
+                  </span>
+               </div>
+            </div>
+          </div>
+
+          {dailyStats.sales.length > 0 ? (
+            <>
+              {/* Gráficos */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 h-72">
+                   <h4 className="font-bold text-slate-700 text-sm mb-4 flex items-center gap-2"><BarChart3 size={16}/> Ventas por Hora</h4>
+                   <ResponsiveContainer width="100%" height="90%">
+                     <BarChart data={dailyStats.chartData}>
+                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                       <XAxis dataKey="time" fontSize={10} axisLine={false} tickLine={false} />
+                       <YAxis fontSize={10} axisLine={false} tickLine={false} tickFormatter={v => `$${v}`} />
+                       <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius:'8px'}} />
+                       <Bar dataKey="total" fill="#6366f1" radius={[4,4,0,0]} />
+                     </BarChart>
+                   </ResponsiveContainer>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 h-72">
+                   <h4 className="font-bold text-slate-700 text-sm mb-4 flex items-center gap-2"><PieChartIcon size={16}/> Categorías</h4>
+                   <ResponsiveContainer width="100%" height="90%">
+                     <PieChart>
+                       <Pie data={dailyStats.pieData} cx="50%" cy="50%" innerRadius={40} outerRadius={60} paddingAngle={5} dataKey="value">
+                         {dailyStats.pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                       </Pie>
+                       <Tooltip />
+                       <Legend iconType="circle" wrapperStyle={{fontSize:'10px'}} />
+                     </PieChart>
+                   </ResponsiveContainer>
+                </div>
               </div>
 
-              <button 
-                onClick={() => changeDate(1)} 
-                disabled={selectedDate >= today}
-                className="p-2 hover:bg-slate-100 rounded-lg text-slate-600 disabled:opacity-30 disabled:cursor-not-allowed"
-              >
-                <ArrowRight size={20} />
-              </button>
-            </div>
-
-            {/* Botón Sync Manual */}
-            <button onClick={() => syncPull()} className="p-3 bg-white text-indigo-600 rounded-xl shadow-sm border border-slate-200 hover:bg-indigo-50 transition-colors" title="Sincronizar">
-              <RefreshCw size={20} />
-            </button>
-        </div>
-      </div>
-
-      {/* TARJETAS DE KPI (Ventas, Costos, Ganancia) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden group">
-          <div className="absolute right-0 top-0 w-24 h-24 bg-indigo-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
-          <div className="relative">
-            <p className="text-slate-500 font-medium text-sm mb-1">Ventas del Día</p>
-            <h3 className="text-3xl font-bold text-slate-800">${dailyStats.revenue.toFixed(2)}</h3>
-            <div className="flex items-center mt-2 text-indigo-600 text-xs font-bold bg-indigo-50 w-fit px-2 py-1 rounded-full">
-               <DollarSign size={12} className="mr-1" /> Ingreso Bruto
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden group">
-          <div className="absolute right-0 top-0 w-24 h-24 bg-emerald-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
-          <div className="relative">
-            <p className="text-slate-500 font-medium text-sm mb-1">Ganancia Neta</p>
-            <h3 className="text-3xl font-bold text-slate-800">${dailyStats.profit.toFixed(2)}</h3>
-            <div className="flex items-center mt-2 text-emerald-600 text-xs font-bold bg-emerald-50 w-fit px-2 py-1 rounded-full">
-               <TrendingUp size={12} className="mr-1" /> Margen: {dailyStats.margin.toFixed(1)}%
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden group">
-          <div className="absolute right-0 top-0 w-24 h-24 bg-orange-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
-          <div className="relative">
-            <p className="text-slate-500 font-medium text-sm mb-1">Costos Estimados</p>
-            <h3 className="text-3xl font-bold text-slate-800">${dailyStats.cost.toFixed(2)}</h3>
-            <div className="flex items-center mt-2 text-orange-600 text-xs font-bold bg-orange-50 w-fit px-2 py-1 rounded-full">
-               <Wallet size={12} className="mr-1" /> Costo Mercancía
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {dailyStats.sales.length > 0 ? (
-        <>
-          {/* GRÁFICOS */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-            {/* Gráfico 1: Ventas por Hora */}
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-              <h3 className="font-bold text-slate-700 mb-6">Actividad por Hora</h3>
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={dailyStats.chartData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="time" axisLine={false} tickLine={false} fontSize={12} stroke="#94a3b8" />
-                    <YAxis axisLine={false} tickLine={false} fontSize={12} stroke="#94a3b8" tickFormatter={(value) => `$${value}`} />
-                    <Tooltip 
-                      cursor={{ fill: '#f8fafc' }}
-                      contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} 
-                    />
-                    <Bar dataKey="total" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={30} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            {/* Gráfico 2: Categorías */}
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-              <h3 className="font-bold text-slate-700 mb-6">Categorías Vendidas</h3>
-              <div className="h-64 flex items-center justify-center">
-                 {dailyStats.pieData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                        <Pie
-                        data={dailyStats.pieData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={80}
-                        paddingAngle={5}
-                        dataKey="value"
-                        >
-                        {dailyStats.pieData.map((_entry, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                        </Pie>
-                        <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
-                        <Legend verticalAlign="middle" align="right" layout="vertical" iconType="circle" />
-                    </PieChart>
-                    </ResponsiveContainer>
-                 ) : (
-                     <p className="text-slate-400 text-sm">Sin datos suficientes</p>
-                 )}
-              </div>
-            </div>
-          </div>
-
-          {/* LISTA DE TRANSACCIONES */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-            <div className="p-6 border-b border-slate-100 bg-slate-50/50">
-              <h3 className="font-bold text-slate-800">Transacciones del {new Date(selectedDate).toLocaleDateString()}</h3>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-slate-50 text-slate-500">
-                  <tr>
-                    <th className="p-4">Hora</th>
-                    <th className="p-4">Método</th>
-                    <th className="p-4">Vendedor</th>
-                    <th className="p-4 text-right">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {dailyStats.sales.map(sale => (
-                    <tr key={sale.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="p-4 text-slate-600 font-mono font-bold">
-                            {new Date(sale.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </td>
-                        <td className="p-4">
-                            <span className={`uppercase text-[10px] font-bold px-2 py-1 rounded ${
-                                sale.payment_method === 'efectivo' 
-                                ? 'bg-green-100 text-green-700' 
-                                : 'bg-purple-100 text-purple-700'
-                            }`}>
-                                {sale.payment_method}
-                            </span>
-                        </td>
-                        <td className="p-4 text-slate-600 capitalize">{sale.staff_name}</td>
-                        <td className="p-4 text-right font-bold text-slate-800">${sale.total.toFixed(2)}</td>
+              {/* Lista de Tickets */}
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+                    <tr>
+                      <th className="p-4">Hora</th>
+                      <th className="p-4">Método</th>
+                      <th className="p-4 text-right">Total</th>
+                      <th className="p-4 text-center">Ver</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {dailyStats.sales.map(sale => (
+                      <tr key={sale.id} className="hover:bg-slate-50">
+                         <td className="p-4 font-mono text-slate-600 font-bold">{new Date(sale.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
+                         <td className="p-4"><span className="uppercase text-[10px] font-bold bg-slate-100 px-2 py-1 rounded text-slate-500">{sale.payment_method}</span></td>
+                         <td className="p-4 text-right font-bold text-slate-800">${sale.total.toFixed(2)}</td>
+                         <td className="p-4 text-center">
+                           <button onClick={() => setSelectedTicket(sale)} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"><Eye size={18}/></button>
+                         </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            <div className="bg-white p-12 rounded-2xl border border-dashed border-slate-300 text-center">
+              <CalendarOff className="mx-auto text-slate-300 mb-4" size={40} />
+              <p className="text-slate-500 font-medium">No hubo ventas el {selectedDate}</p>
             </div>
-          </div>
-        </>
-      ) : (
-        // ESTADO VACÍO (SIN VENTAS)
-        <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-12 text-center flex flex-col items-center justify-center">
-            <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4 text-slate-400">
-                <CalendarOff size={32} />
-            </div>
-            <h3 className="text-lg font-bold text-slate-700">Sin Movimientos</h3>
-            <p className="text-slate-400 max-w-xs mx-auto mt-2">
-                No se registraron ventas en la fecha <span className="font-mono text-slate-600 font-bold">{selectedDate}</span>.
-            </p>
-            <button onClick={() => setSelectedDate(today)} className="mt-6 text-indigo-600 font-bold hover:underline">
-                Volver a Hoy
-            </button>
+          )}
         </div>
       )}
+
+      {/* --- VISTA 2: TENDENCIAS --- */}
+      {viewMode === 'trends' && (
+        <div className="animate-fade-in">
+          <div className="flex gap-2 mb-6">
+             <button onClick={() => setTrendFilter('week')} className={`px-4 py-2 rounded-full text-xs font-bold ${trendFilter === 'week' ? 'bg-slate-800 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}>Últimos 7 días</button>
+             <button onClick={() => setTrendFilter('month')} className={`px-4 py-2 rounded-full text-xs font-bold ${trendFilter === 'month' ? 'bg-slate-800 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}>Últimos 30 días</button>
+          </div>
+
+          {/* KPI CARDS TENDENCIAS (También agregadas aquí) */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
+                <p className="text-slate-500 text-xs font-bold uppercase mb-1">Ingresos Totales</p>
+                <h3 className="text-2xl font-bold text-slate-800">${trendStats.totalRevenue.toFixed(2)}</h3>
+             </div>
+             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
+                <p className="text-slate-500 text-xs font-bold uppercase mb-1">Costo Total</p>
+                <h3 className="text-2xl font-bold text-slate-800">${trendStats.totalCost.toFixed(2)}</h3>
+             </div>
+             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
+                <p className="text-slate-500 text-xs font-bold uppercase mb-1">Ganancia Neta</p>
+                <h3 className="text-2xl font-bold text-slate-800">${trendStats.totalProfit.toFixed(2)}</h3>
+                <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">Margen: {trendStats.totalMargin.toFixed(0)}%</span>
+             </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 h-80">
+             <h4 className="font-bold text-slate-700 mb-4">Evolución de Ventas</h4>
+             <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={trendStats.chartData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="date" fontSize={12} axisLine={false} tickLine={false} />
+                  <YAxis fontSize={12} axisLine={false} tickLine={false} tickFormatter={v => `$${v}`} />
+                  <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius:'8px'}} />
+                  <Bar dataKey="total" fill="#10b981" radius={[4,4,0,0]} barSize={40} />
+                </BarChart>
+             </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE TICKET */}
+      {selectedTicket && <TicketModal sale={selectedTicket} onClose={() => setSelectedTicket(null)} />}
     </div>
   );
 }

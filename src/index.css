@@ -2,23 +2,57 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 1. Fuente moderna y fondo sutil */
-body {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  background-color: #f8fafc; /* Slate-50: Un gris muy clarito, mejor que blanco puro */
-  color: #1e293b; /* Slate-800: Texto gris oscuro, más elegante que negro puro #000 */
+/* --- 1. AJUSTES PARA SENSACIÓN DE APP NATIVA --- */
+:root {
+  /* Evita el "rebote" elástico de la página entera en iOS/Android */
+  overscroll-behavior: none;
 }
 
-/* 2. Ocultar scrollbar pero permitir scroll (Estilo App Nativa) */
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: #f8fafc;
+  color: #1e293b;
+
+  /* IMPORTANTE: Desactiva la selección de texto (nadie selecciona texto en una app, salvo inputs) */
+  user-select: none;
+  -webkit-user-select: none;
+  
+  /* Quita el color de resaltado al tocar botones (tap highlight) */
+  -webkit-tap-highlight-color: transparent;
+  
+  /* Asegura que la app ocupe el 100% de la pantalla del celular */
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
+  
+  /* Evita el zoom accidental con doble toque */
+  touch-action: manipulation;
+}
+
+/* --- 2. EXCEPCIONES IMPORTANTES --- */
+/* Permitir seleccionar texto SOLO donde se escribe */
+input, textarea {
+  user-select: text;
+  -webkit-user-select: text;
+  transition: all 0.2s;
+}
+
+/* --- 3. ESTILOS DE UI --- */
+
+/* Animación de inputs al enfocar */
+input:focus, select:focus {
+  transform: translateY(-1px);
+}
+
+/* Ocultar scrollbar pero permitir deslizar (Estilo App Moderna) */
 .scrollbar-hide::-webkit-scrollbar {
     display: none;
 }
 .scrollbar-hide {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
+    -ms-overflow-style: none; /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
 }
 
-/* 3. Animaciones Suaves */
+/* Animaciones Suaves */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -26,12 +60,4 @@ body {
 
 .animate-fade-in {
   animation: fadeIn 0.4s ease-out forwards;
-}
-
-/* 4. Estilos para Inputs más bonitos */
-input, select {
-  transition: all 0.2s;
-}
-input:focus, select:focus {
-  transform: translateY(-1px);
 }
