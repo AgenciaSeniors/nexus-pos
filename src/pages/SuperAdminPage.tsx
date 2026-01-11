@@ -1,6 +1,5 @@
-import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-// ✅ CORRECCIÓN: Eliminado 'Calendar' que no se usaba
+import { useState, useEffect, useCallback } from 'react';
 import { Shield, Check, X, Search, RefreshCw, UserCheck, Inbox, CalendarPlus, Key, User } from 'lucide-react';
 
 interface Profile {
@@ -31,7 +30,7 @@ export function SuperAdminPage() {
   const [extendMonths, setExtendMonths] = useState(1);
 
   // --- 1. CARGAR DATOS ---
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     const statusFilter = activeTab === 'requests' ? 'pending' : 'active';
     
@@ -42,15 +41,14 @@ export function SuperAdminPage() {
       .order('created_at', { ascending: false });
 
     if (!error && data) {
-      // ✅ CORRECCIÓN: Casteo seguro a Profile[]
       setDataList(data as Profile[]);
     }
     setLoading(false);
-  };
+  }, [activeTab]); // <--- Aquí va activeTab ahora
 
   useEffect(() => {
     fetchData();
-  }, [activeTab]);
+  }, [fetchData]); // <--- Ahora depende de la función misma
 
   // --- 2. FUNCIÓN: APROBAR SOLICITUD ---
   const handleApprove = async () => {
