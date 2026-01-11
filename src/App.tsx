@@ -47,30 +47,41 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
     }
 
     try {
-      // Crear usuario en Auth
+      // 1. Crear usuario en Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email, password, options: { data: { full_name: fullName } }
       });
 
       if (authError) throw authError;
-      if (!authData.session) throw new Error("Revisa tu email para confirmar o contacta soporte.");
+      
+      // ✅ CORRECCIÓN: Si el usuario se creó, intentamos guardar los datos AUNQUE no haya sesión (email confirmation on)
+      if (authData.user) {
+        // 2. Guardar datos de la solicitud
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update({
+            full_name: fullName,
+            phone: phone,
+            months_requested: months,
+            initial_pin: userPin,
+            status: 'pending', 
+            business_id: null 
+          })
+          .eq('id', authData.user.id); // Usamos user.id, no session.user.id
 
-      // Actualizar perfil
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({
-          full_name: fullName,
-          phone: phone,
-          months_requested: months,
-          initial_pin: userPin,
-          status: 'pending', 
-          business_id: null 
-        })
-        .eq('id', authData.session.user.id);
+        if (profileError) {
+          // Si falla por permisos (RLS) porque no hay sesión, avisamos pero no bloqueamos
+          console.warn("No se pudo actualizar el perfil (posiblemente falta confirmar email):", profileError);
+        }
+      }
 
-      if (profileError) throw profileError;
-
-      setSuccessMsg("¡Solicitud enviada! Tu cuenta está en revisión.");
+      // Mensaje final dependiendo de si hay sesión o no
+      if (authData.session) {
+        setSuccessMsg("¡Solicitud enviada! Tu cuenta está en revisión.");
+      } else {
+        setSuccessMsg("Cuenta creada. Si no puedes entrar, verifica tu correo.");
+      }
+      
       setMode('login'); setPassword(''); setUserPin('');
 
     } catch (err: unknown) {
@@ -96,7 +107,7 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
         .eq('id', data.session.user.id)
         .single();
 
-      if (profile?.status === 'pending') throw new Error("⏳ Solicitud en revisión.");
+      if (profile?.status === 'pending') throw new Error("⏳ Solicitud en revisión. Contacta al administrador.");
       if (profile?.status === 'rejected') throw new Error("⛔ Solicitud rechazada.");
       if (!profile?.business_id) throw new Error("⚠️ Sin licencia asignada.");
 
@@ -202,7 +213,6 @@ function BusinessApp() {
   return (
     <AuthGuard>
       <Routes>
-        {/* ✅ SOLUCIÓN: Usamos Layout como 'element' de una Route padre, no como wrapper */}
         <Route element={<Layout currentStaff={currentStaff} onLock={() => { setCurrentStaff(null); setIsLocked(true); }} />}>
           <Route path="/" element={<PosPage />} />
           <Route path="/inventario" element={<InventoryPage />} />
