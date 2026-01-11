@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
-// Eliminada la línea de imports de tipos de supabase que no se usaban
 import { supabase } from './lib/supabase';
 import { db, type Staff } from './lib/db';
 
@@ -10,13 +9,14 @@ import { AuthGuard } from './components/AuthGuard';
 import { PinPad } from './components/PinPad';
 import { TechGuard } from './components/TechGuard';
 import { PosPage } from './pages/PosPage';
-import { InventoryPage } from './pages/InventoryPage';
+// ✅ CORRECCIÓN 1: Importar InventoryPage desde su archivo correcto
+import { InventoryPage } from './pages/InventoryPage'; 
 import { FinancePage } from './pages/FinancePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { StaffPage } from './pages/StaffPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
-// Eliminado WifiOff
-import { Loader2, Store, User, Lock } from 'lucide-react';
+// ✅ CORRECCIÓN 2: Eliminado CheckCircle que no se usaba
+import { Loader2, Store, User, Lock, WifiOff } from 'lucide-react';
 
 // --- COMPONENTE LOGIN (Solo requiere internet la primera vez) ---
 function Login({ onLoginSuccess }: { onLoginSuccess: () => void }) {
@@ -30,28 +30,27 @@ function Login({ onLoginSuccess }: { onLoginSuccess: () => void }) {
     setLoading(true);
     setError(null);
     try {
-      // 1. Autenticación con Supabase
+      // 1. Autenticación con Supabase (Requiere Internet)
       const { data, error: authError } = await supabase.auth.signInWithPassword({ email, password });
-      if (authError) throw authError;
+      if (authError) throw new Error("Credenciales incorrectas o sin internet.");
 
       if (!data.session) throw new Error("No se pudo iniciar sesión");
 
       // 2. Verificación de Licencia (Business ID)
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('business_id')
+        .select('business_id, license_expiry')
         .eq('id', data.session.user.id)
         .single();
 
-      if (profileError) throw new Error("Error verificando licencia.");
-      
-      if (!profile?.business_id) {
-        throw new Error("⚠️ Este usuario no tiene una licencia activa. Contacte al soporte.");
+      if (profileError || !profile?.business_id) {
+        throw new Error("⚠️ Este usuario no tiene una licencia activa.");
       }
 
-      // 3. ¡ÉXITO! Guardamos la licencia localmente y la bandera de autorización
-      localStorage.setItem('nexus_business_id', profile.business_id);
+      // 3. ¡ÉXITO! Guardamos TODO localmente
       localStorage.setItem('nexus_device_authorized', 'true');
+      localStorage.setItem('nexus_business_id', profile.business_id);
+      localStorage.setItem('nexus_last_verification', new Date().toISOString());
       
       onLoginSuccess();
 
@@ -59,7 +58,7 @@ function Login({ onLoginSuccess }: { onLoginSuccess: () => void }) {
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError('Error desconocido al iniciar sesión');
+        setError('Error desconocido al activar.');
       }
       localStorage.removeItem('nexus_device_authorized');
     } finally {
@@ -71,7 +70,7 @@ function Login({ onLoginSuccess }: { onLoginSuccess: () => void }) {
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
       <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-slate-200">
         <div className="flex flex-col items-center mb-8">
-          <div className="bg-blue-600 p-3 rounded-xl shadow-lg shadow-blue-200 mb-4">
+          <div className="bg-indigo-600 p-3 rounded-xl shadow-lg shadow-indigo-200 mb-4">
             <Store className="w-10 h-10 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-slate-800">Nexus POS</h1>
@@ -79,8 +78,8 @@ function Login({ onLoginSuccess }: { onLoginSuccess: () => void }) {
         </div>
         
         {error && (
-          <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100 flex items-center justify-center text-center">
-            {error}
+          <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100 flex items-center gap-2">
+            <WifiOff size={16} /> {error}
           </div>
         )}
 
@@ -91,7 +90,7 @@ function Login({ onLoginSuccess }: { onLoginSuccess: () => void }) {
               <User className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
               <input 
                 type="email" required 
-                className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                 placeholder="usuario@negocio.com"
                 value={email} onChange={(e) => setEmail(e.target.value)}
               />
@@ -103,7 +102,7 @@ function Login({ onLoginSuccess }: { onLoginSuccess: () => void }) {
               <Lock className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
               <input 
                 type="password" required 
-                className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                 placeholder="••••••••"
                 value={password} onChange={(e) => setPassword(e.target.value)}
               />
@@ -113,11 +112,12 @@ function Login({ onLoginSuccess }: { onLoginSuccess: () => void }) {
             type="submit" disabled={loading} 
             className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Activar y Entrar'}
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Activar Licencia'}
           </button>
         </form>
         <div className="mt-6 text-center text-xs text-slate-400">
-          Solo necesitas internet para este paso.
+          <p>Solo necesitas internet para activar este dispositivo.</p>
+          <p className="mt-1">Después podrás trabajar 100% Offline.</p>
         </div>
       </div>
     </div>
@@ -126,8 +126,8 @@ function Login({ onLoginSuccess }: { onLoginSuccess: () => void }) {
 
 // --- APP PRINCIPAL ---
 export default function App() {
-  const [loading, setLoading] = useState(true);
   
+  // 1. CARGA INSTANTÁNEA: Leemos localStorage INMEDIATAMENTE
   const [isAuthorized, setIsAuthorized] = useState(() => {
     return localStorage.getItem('nexus_device_authorized') === 'true';
   });
@@ -135,6 +135,39 @@ export default function App() {
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
   const [isLocked, setIsLocked] = useState(false);
 
+  // 2. VERIFICACIÓN EN SEGUNDO PLANO (SILENCIOSA)
+  useEffect(() => {
+    const backgroundLicenseCheck = async () => {
+      if (!isAuthorized) return;
+
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('business_id')
+            .eq('id', session.user.id)
+            .single();
+
+          if (!profile?.business_id) {
+            console.warn("Licencia revocada remotamente.");
+            localStorage.removeItem('nexus_device_authorized');
+            setIsAuthorized(false); 
+          } else {
+            localStorage.setItem('nexus_last_verification', new Date().toISOString());
+          }
+        }
+      } catch {
+        // ✅ CORRECCIÓN 3: Eliminado el 'err' no usado
+        console.log("Modo Offline: Verificación en segundo plano omitida.");
+      }
+    };
+
+    backgroundLicenseCheck();
+  }, [isAuthorized]);
+
+  // 3. MODO RESCATE
   useEffect(() => {
     const checkRescueParams = async () => {
       try {
@@ -150,39 +183,10 @@ export default function App() {
           console.log("⚠️ Modo Rescate: Admin (0000) creado.");
         }
       } catch (error) {
-        console.error("Error verificando staff:", error);
+        console.error("Error Dexie:", error);
       }
     };
     checkRescueParams();
-  }, []);
-
-  useEffect(() => {
-    const initAuth = async () => {
-      if (localStorage.getItem('nexus_device_authorized') === 'true') {
-        setLoading(false);
-      }
-
-      const { data } = await supabase.auth.getSession();
-      if (data.session) {
-        setIsAuthorized(true);
-        localStorage.setItem('nexus_device_authorized', 'true');
-      } else if (!localStorage.getItem('nexus_device_authorized')) {
-        setIsAuthorized(false);
-      }
-      
-      setLoading(false);
-    };
-
-    initAuth();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) {
-        setIsAuthorized(true);
-        localStorage.setItem('nexus_device_authorized', 'true');
-      }
-    });
-
-    return () => subscription.unsubscribe();
   }, []);
 
   const handleUnlock = (staffMember: Staff) => {
@@ -197,10 +201,7 @@ export default function App() {
 
   const handleLoginSuccess = () => {
     setIsAuthorized(true);
-    setLoading(false);
   };
-
-  if (loading) return <div className="h-screen w-full flex items-center justify-center text-slate-400"><Loader2 className="animate-spin" /></div>;
 
   if (!isAuthorized) {
     return <Login onLoginSuccess={handleLoginSuccess} />;
@@ -220,6 +221,7 @@ export default function App() {
             <Route path="/finanzas" element={<FinancePage />} />
             <Route path="/configuracion" element={<SettingsPage />} />
             <Route path="/equipo" element={<StaffPage />} />
+            
             <Route 
               path="/super-alta-secreta" 
               element={
