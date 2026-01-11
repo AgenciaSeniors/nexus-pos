@@ -3,19 +3,24 @@ import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import { db, type Staff } from './lib/db';
 
-// Componentes y Páginas
+// --- IMPORTACIONES DE PÁGINAS Y COMPONENTES ---
 import { Layout } from './components/Layout';
 import { AuthGuard } from './components/AuthGuard';
 import { PinPad } from './components/PinPad';
-import { TechGuard } from './components/TechGuard';
 import { PosPage } from './pages/PosPage';
 import { InventoryPage } from './pages/InventoryPage'; 
 import { FinancePage } from './pages/FinancePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { StaffPage } from './pages/StaffPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
-import { Loader2, Store, User, Lock, WifiOff, UserPlus, LogIn, CheckCircle, KeyRound } from 'lucide-react';
+// Asegúrate de haber creado este archivo (SuperAdminLogin.tsx) como vimos en el paso anterior
+import { SuperAdminLogin } from './pages/SuperAdminLogin'; 
 
+import { Loader2, Store, User, Lock, WifiOff, UserPlus, LogIn, CheckCircle, KeyRound, } from 'lucide-react';
+
+// =============================================================================
+// 1. COMPONENTE LOGIN SCREEN (Para Clientes/Negocios)
+// =============================================================================
 function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   
@@ -33,47 +38,55 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
+  // --- LÓGICA DE REGISTRO ROBUSTA ---
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
 
+    // Validación básica del PIN
     if (userPin.length !== 4 || isNaN(Number(userPin))) {
       setError("El PIN debe ser de 4 números exactos.");
       setLoading(false); return;
     }
 
     try {
-      // 1. Crear usuario
+      // 1. Crear usuario en Auth de Supabase
       const { data: authData, error: authError } = await supabase.auth.signUp({
-        email, password, options: { data: { full_name: fullName } }
+        email, 
+        password, 
+        options: { data: { full_name: fullName } }
       });
 
       if (authError) throw authError;
       
-      // ✅ CORRECCIÓN CRÍTICA: Usamos authData.user para asegurar que tenemos el ID
+      // 2. Guardar perfil en base de datos (UPSERT para evitar conflictos)
+      // Esto asegura que el PIN y los meses se guarden sí o sí.
       if (authData.user) {
         const { error: profileError } = await supabase
           .from('profiles')
-          .update({
+          .upsert({
+            id: authData.user.id,
+            email: email,
             full_name: fullName,
             phone: phone,
             months_requested: months,
             initial_pin: userPin,
-            status: 'pending', 
-            business_id: null 
-          })
-          .eq('id', authData.user.id); // Usamos user.id en vez de session.user.id
+            status: 'pending',     // Estado inicial
+            role: 'admin',         // Rol por defecto: Dueño/Admin
+            business_id: null      // Se llenará cuando el SuperAdmin apruebe
+          });
 
         if (profileError) {
-          console.error("Error actualizando perfil:", profileError);
-          // Si falla aquí, suele ser porque RLS bloquea updates sin sesión.
-          // Solución: Desactivar 'Confirm Email' en Supabase.
+          console.error("Error guardando perfil:", profileError);
+          // Intentamos continuar, pero avisamos en consola
         }
       }
 
-      setSuccessMsg("¡Solicitud enviada! Tu cuenta está en revisión.");
-      setMode('login'); setPassword(''); setUserPin('');
+      setSuccessMsg("¡Solicitud enviada! Espera a que el administrador active tu licencia.");
+      setMode('login'); 
+      setPassword(''); 
+      setUserPin('');
 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error al registrarse";
@@ -83,42 +96,59 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
     }
   };
 
+  // --- LÓGICA DE LOGIN (Verificación de Licencia) ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    
     try {
+      // 1. Autenticar credenciales
       const { data, error: authError } = await supabase.auth.signInWithPassword({ email, password });
-      if (authError) throw new Error("Credenciales incorrectas o sin internet.");
+      
+      if (authError) throw new Error("Credenciales incorrectas o problema de conexión.");
       if (!data.session) throw new Error("No se pudo iniciar sesión.");
       
-      const { data: profile } = await supabase
+      // 2. Verificar estado de la cuenta (Perfil)
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('business_id, status, initial_pin, full_name')
+        .select('business_id, status, initial_pin, full_name, role')
         .eq('id', data.session.user.id)
         .single();
 
-      if (profile?.status === 'pending') throw new Error("⏳ Solicitud en revisión. Contacta al administrador.");
-      if (profile?.status === 'rejected') throw new Error("⛔ Solicitud rechazada.");
-      if (!profile?.business_id) throw new Error("⚠️ Sin licencia asignada.");
+      if (profileError) throw new Error("Error verificando tu perfil. Contacta soporte.");
 
+      // 3. Validaciones de Estado
+      if (profile?.status === 'pending') throw new Error("⏳ Tu cuenta está en revisión. Espera la aprobación.");
+      if (profile?.status === 'rejected') throw new Error("⛔ Tu solicitud ha sido rechazada.");
+      if (profile?.status === 'suspended') throw new Error("⚠️ Tu licencia ha sido suspendida.");
+      
+      // 4. Validación de Licencia Activa
+      if (!profile?.business_id) throw new Error("⚠️ Tu cuenta no tiene una licencia/negocio asignado aún.");
+
+      // 5. Configuración Local (Éxito)
       localStorage.setItem('nexus_device_authorized', 'true');
       localStorage.setItem('nexus_business_id', profile.business_id);
       localStorage.setItem('nexus_last_verification', new Date().toISOString());
 
-      // Configurar Admin Local automáticamente
+      // 6. Autoconfiguración del primer Admin Local (Si la DB local está vacía)
       const staffCount = await db.staff.count();
       if (staffCount === 0 && profile.initial_pin) {
         await db.staff.add({
-          id: 'admin-owner', name: profile.full_name || 'Admin', 
-          pin: profile.initial_pin, role: 'admin', active: true
+          id: 'admin-owner', 
+          name: profile.full_name || 'Admin', 
+          pin: profile.initial_pin, 
+          role: 'admin', 
+          active: true
         });
       }
       
       onLoginSuccess();
+
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error de acceso";
       setError(msg);
+      // Limpiamos autorización si falló el login
       localStorage.removeItem('nexus_device_authorized');
     } finally {
       setLoading(false);
@@ -129,43 +159,98 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
       <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-slate-200">
         <div className="flex flex-col items-center mb-6">
-          <div className="bg-indigo-600 p-3 rounded-xl shadow-lg shadow-indigo-200 mb-4"><Store className="w-10 h-10 text-white" /></div>
+          <div className="bg-indigo-600 p-3 rounded-xl shadow-lg shadow-indigo-200 mb-4">
+            <Store className="w-10 h-10 text-white" />
+          </div>
           <h1 className="text-2xl font-bold text-slate-800">Nexus POS</h1>
           <p className="text-slate-500 text-sm">{mode === 'login' ? 'Acceso Clientes' : 'Solicitar Licencia'}</p>
         </div>
 
+        {/* Switch Login/Register */}
         <div className="flex bg-slate-100 p-1 rounded-lg mb-6">
-          <button onClick={() => { setMode('login'); setError(null); }} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${mode === 'login' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>Iniciar Sesión</button>
-          <button onClick={() => { setMode('register'); setError(null); }} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${mode === 'register' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>Crear Cuenta</button>
+          <button 
+            onClick={() => { setMode('login'); setError(null); }} 
+            className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${mode === 'login' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
+          >
+            Iniciar Sesión
+          </button>
+          <button 
+            onClick={() => { setMode('register'); setError(null); }} 
+            className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${mode === 'register' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
+          >
+            Crear Cuenta
+          </button>
         </div>
         
-        {error && <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-center gap-2"><WifiOff size={16} /> {error}</div>}
-        {successMsg && <div className="mb-4 p-3 bg-green-50 text-green-700 text-sm rounded-lg flex items-center gap-2"><CheckCircle size={16} /> {successMsg}</div>}
+        {/* Mensajes de Error / Éxito */}
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-center gap-2 border border-red-100">
+            <WifiOff size={16} /> {error}
+          </div>
+        )}
+        {successMsg && (
+          <div className="mb-4 p-3 bg-green-50 text-green-700 text-sm rounded-lg flex items-center gap-2 border border-green-100">
+            <CheckCircle size={16} /> {successMsg}
+          </div>
+        )}
 
+        {/* FORMULARIO DE LOGIN */}
         {mode === 'login' ? (
           <form onSubmit={handleLogin} className="space-y-4">
-            <div className="relative"><User className="absolute left-3 top-3 text-slate-400 w-5 h-5" /><input type="email" required className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg outline-none" placeholder="correo@ejemplo.com" value={email} onChange={(e) => setEmail(e.target.value)}/></div>
-            <div className="relative"><Lock className="absolute left-3 top-3 text-slate-400 w-5 h-5" /><input type="password" required className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg outline-none" placeholder="Contraseña" value={password} onChange={(e) => setPassword(e.target.value)}/></div>
-            <button type="submit" disabled={loading} className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-lg shadow-lg disabled:opacity-50 flex items-center justify-center gap-2">{loading ? <Loader2 className="animate-spin" /> : <><LogIn size={18}/> Entrar</>}</button>
+            <div className="relative">
+              <User className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
+              <input type="email" required className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-indigo-500 transition-colors" placeholder="correo@ejemplo.com" value={email} onChange={(e) => setEmail(e.target.value)}/>
+            </div>
+            <div className="relative">
+              <Lock className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
+              <input type="password" required className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-indigo-500 transition-colors" placeholder="Contraseña" value={password} onChange={(e) => setPassword(e.target.value)}/>
+            </div>
+            <button type="submit" disabled={loading} className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-lg shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 transition-transform active:scale-95">
+              {loading ? <Loader2 className="animate-spin" /> : <><LogIn size={18}/> Entrar</>}
+            </button>
           </form>
         ) : (
+          /* FORMULARIO DE REGISTRO */
           <form onSubmit={handleRegister} className="space-y-4">
-            <div><label className="text-xs font-bold text-slate-500 uppercase">Nombre</label><input type="text" required className="w-full px-3 py-2 border rounded-lg outline-none" placeholder="Nombre Negocio" value={fullName} onChange={(e) => setFullName(e.target.value)}/></div>
-            <div className="grid grid-cols-2 gap-2">
-                <div><label className="text-xs font-bold text-slate-500 uppercase">Teléfono</label><input type="tel" required className="w-full px-3 py-2 border rounded-lg outline-none" value={phone} onChange={(e) => setPhone(e.target.value)}/></div>
-                <div><label className="text-xs font-bold text-slate-500 uppercase">PIN (4 #)</label><div className="relative"><KeyRound className="absolute left-2 top-2 text-slate-400 w-4 h-4"/><input type="text" maxLength={4} required className="w-full pl-8 pr-2 py-2 border rounded-lg outline-none text-center font-mono font-bold" placeholder="0000" value={userPin} onChange={(e) => setUserPin(e.target.value)}/></div></div>
+            <div>
+              <label className="text-xs font-bold text-slate-500 uppercase">Nombre Negocio</label>
+              <input type="text" required className="w-full px-3 py-2 border rounded-lg outline-none focus:border-indigo-500" placeholder="Mi Tienda" value={fullName} onChange={(e) => setFullName(e.target.value)}/>
             </div>
             <div className="grid grid-cols-2 gap-2">
-                <div><label className="text-xs font-bold text-slate-500 uppercase">Correo</label><input type="email" required className="w-full px-3 py-2 border rounded-lg outline-none" value={email} onChange={(e) => setEmail(e.target.value)}/></div>
-                <div><label className="text-xs font-bold text-slate-500 uppercase">Clave</label><input type="password" required className="w-full px-3 py-2 border rounded-lg outline-none" value={password} onChange={(e) => setPassword(e.target.value)}/></div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase">Teléfono</label>
+                  <input type="tel" required className="w-full px-3 py-2 border rounded-lg outline-none focus:border-indigo-500" value={phone} onChange={(e) => setPhone(e.target.value)}/>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase">PIN (4 #)</label>
+                  <div className="relative">
+                    <KeyRound className="absolute left-2 top-2 text-slate-400 w-4 h-4"/>
+                    <input type="text" maxLength={4} required className="w-full pl-8 pr-2 py-2 border rounded-lg outline-none text-center font-mono font-bold focus:border-indigo-500" placeholder="0000" value={userPin} onChange={(e) => setUserPin(e.target.value)}/>
+                  </div>
+                </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase">Correo</label>
+                  <input type="email" required className="w-full px-3 py-2 border rounded-lg outline-none focus:border-indigo-500" value={email} onChange={(e) => setEmail(e.target.value)}/>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase">Clave</label>
+                  <input type="password" required className="w-full px-3 py-2 border rounded-lg outline-none focus:border-indigo-500" value={password} onChange={(e) => setPassword(e.target.value)}/>
+                </div>
             </div>
             <div>
-              <label className="text-xs font-bold text-slate-500 uppercase">Meses</label>
-              <select value={months} onChange={(e) => setMonths(Number(e.target.value))} className="w-full px-3 py-2 border rounded-lg bg-white outline-none">
-                <option value={1}>1 Mes</option><option value={3}>3 Meses</option><option value={6}>6 Meses</option><option value={12}>1 Año</option>
+              <label className="text-xs font-bold text-slate-500 uppercase">Plan Solicitado</label>
+              <select value={months} onChange={(e) => setMonths(Number(e.target.value))} className="w-full px-3 py-2 border rounded-lg bg-white outline-none focus:border-indigo-500">
+                <option value={1}>1 Mes</option>
+                <option value={3}>3 Meses</option>
+                <option value={6}>6 Meses</option>
+                <option value={12}>1 Año</option>
               </select>
             </div>
-            <button type="submit" disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg shadow-lg disabled:opacity-50 flex items-center justify-center gap-2">{loading ? <Loader2 className="animate-spin" /> : <><UserPlus size={18}/> Enviar Solicitud</>}</button>
+            <button type="submit" disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 transition-transform active:scale-95">
+              {loading ? <Loader2 className="animate-spin" /> : <><UserPlus size={18}/> Enviar Solicitud</>}
+            </button>
           </form>
         )}
       </div>
@@ -173,31 +258,49 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
   );
 }
 
+// =============================================================================
+// 2. COMPONENTE BUSINESS APP (Aplicación Principal)
+// =============================================================================
 function BusinessApp() {
   const [isAuthorized, setIsAuthorized] = useState(() => localStorage.getItem('nexus_device_authorized') === 'true');
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
   const [isLocked, setIsLocked] = useState(false);
 
+  // Verificación periódica de la sesión/licencia en segundo plano
   useEffect(() => {
-    const check = async () => {
+    const checkStatus = async () => {
       if (!isAuthorized) return;
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {
-          const { data } = await supabase.from('profiles').select('business_id, status').eq('id', session.user.id).single();
+          // Consultamos si sigue activo en tiempo real
+          const { data } = await supabase
+            .from('profiles')
+            .select('business_id, status')
+            .eq('id', session.user.id)
+            .single();
+          
           if (!data?.business_id || data?.status !== 'active') {
+            console.warn("Sesión invalidada o licencia expirada.");
             localStorage.removeItem('nexus_device_authorized');
             setIsAuthorized(false);
           }
         }
-      } catch { /* Ignorar errores offline */ }
+      } catch (err) { 
+        // Si hay error de red, no bloqueamos inmediatamente (modo offline)
+        console.error("Check status failed (offline?)", err);
+      }
     };
-    check();
+    
+    checkStatus();
+    // Podríamos poner un intervalo aquí si quisiéramos polling
   }, [isAuthorized]);
 
+  // Pantallas de Bloqueo / Login
   if (!isAuthorized) return <LoginScreen onLoginSuccess={() => setIsAuthorized(true)} />;
   if (isLocked || !currentStaff) return <PinPad onSuccess={(s) => { setCurrentStaff(s); setIsLocked(false); }} />;
 
+  // App Principal con Rutas
   return (
     <AuthGuard>
       <Routes>
@@ -214,11 +317,70 @@ function BusinessApp() {
   );
 }
 
+// =============================================================================
+// 3. COMPONENTE ADMIN ROUTE (Protección para Super Admin)
+// =============================================================================
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const [authorized, setAuthorized] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const checkAdmin = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          setAuthorized(false);
+          return;
+        }
+
+        // Consultamos la "corona" en la base de datos
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('is_super_admin')
+          .eq('id', user.id)
+          .single();
+        
+        if (error || !data?.is_super_admin) {
+          setAuthorized(false);
+        } else {
+          setAuthorized(true);
+        }
+      } catch {
+        setAuthorized(false);
+      }
+    };
+    checkAdmin();
+  }, []);
+
+  if (authorized === null) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <Loader2 className="animate-spin text-white w-8 h-8"/>
+      </div>
+    );
+  }
+  
+  // Si no es admin, lo mandamos al login de admin
+  return authorized ? <>{children}</> : <Navigate to="/admin-login" replace />;
+}
+
+// =============================================================================
+// 4. APP PRINCIPAL (Enrutador Maestro)
+// =============================================================================
 export default function App() {
   return (
     <HashRouter>
       <Routes>
-        <Route path="/super-alta-secreta" element={<TechGuard><SuperAdminPage /></TechGuard>} />
+        {/* RUTA PÚBLICA PARA EL LOGIN DEL SUPER ADMIN */}
+        <Route path="/admin-login" element={<SuperAdminLogin />} />
+        
+        {/* RUTA PROTEGIDA PARA EL PANEL DE CONTROL (SUPER ADMIN) */}
+        <Route path="/super-panel" element={
+          <AdminRoute>
+            <SuperAdminPage />
+          </AdminRoute>
+        } />
+
+        {/* RUTAS DE LA APP DEL CLIENTE (Cualquier otra ruta) */}
         <Route path="/*" element={<BusinessApp />} />
       </Routes>
     </HashRouter>
