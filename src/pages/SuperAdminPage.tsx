@@ -1,309 +1,488 @@
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { useState, useEffect, useCallback } from 'react';
-import { Shield, Check, X, Search, RefreshCw, UserCheck, Inbox, CalendarPlus, Key, User } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { 
+  Shield, Check, X, Search, RefreshCw, UserCheck, Inbox, 
+  CalendarPlus, Key, User, LogOut, Store, Trash2, AlertTriangle, Calendar
+} from 'lucide-react';
 
+// Interfaz completa para manejar todos los datos del usuario y negocio
 interface Profile {
   id: string;
+  email?: string;
   full_name: string;
   phone: string;
   months_requested: number;
-  status: string; // 'pending' | 'active' | 'rejected'
+  status: 'pending' | 'active' | 'rejected' | 'suspended';
   created_at: string;
   initial_pin: string;
   license_expiry?: string;
   business_id?: string;
-  email?: string;
+  role?: string;
 }
 
 export function SuperAdminPage() {
+  const navigate = useNavigate();
+  
+  // --- ESTADOS DE LA INTERFAZ (Tu lógica original) ---
   const [activeTab, setActiveTab] = useState<'requests' | 'active'>('requests');
   const [dataList, setDataList] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  
-  // MODALES
+
+  // --- ESTADOS DE LOS MODALES ---
   const [approvingItem, setApprovingItem] = useState<Profile | null>(null);
   const [extendingItem, setExtendingItem] = useState<Profile | null>(null);
-  
-  // FORMULARIOS AUXILIARES
-  const [monthsToGrant, setMonthsToGrant] = useState(1);
-  const [extendMonths, setExtendMonths] = useState(1);
 
-  // --- 1. CARGAR DATOS ---
+  // --- VALORES SELECCIONADOS EN MODALES ---
+  const [monthsToGrant, setMonthsToGrant] = useState(1); // Para aprobación
+  const [extendMonths, setExtendMonths] = useState(1);   // Para extensión
+
+  // 1. CARGA DE DATOS (Filtrado por pestaña)
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const statusFilter = activeTab === 'requests' ? 'pending' : 'active';
-    
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('status', statusFilter)
-      .order('created_at', { ascending: false });
+    try {
+      let query = supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-    if (!error && data) {
-      setDataList(data as Profile[]);
+      // Filtro según la pestaña activa
+      if (activeTab === 'requests') {
+        query = query.eq('status', 'pending');
+      } else {
+        // En activos mostramos active y suspended
+        query = query.in('status', ['active', 'suspended', 'rejected']);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      setDataList(data || []);
+
+    } catch (error) {
+      console.error('Error cargando usuarios:', error);
+      alert("Error al cargar la lista de usuarios");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }, [activeTab]); // <--- Aquí va activeTab ahora
+  }, [activeTab]);
 
   useEffect(() => {
     fetchData();
-  }, [fetchData]); // <--- Ahora depende de la función misma
+  }, [fetchData]);
 
-  // --- 2. FUNCIÓN: APROBAR SOLICITUD ---
-  const handleApprove = async () => {
+  // 2. APROBACIÓN DE USUARIO (Lógica corregida: Crea el Negocio + Perfil)
+  const executeApproval = async () => {
     if (!approvingItem) return;
 
-    const expiryDate = new Date();
-    expiryDate.setMonth(expiryDate.getMonth() + monthsToGrant);
-
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        status: 'active',
-        business_id: crypto.randomUUID(),
-        license_expiry: expiryDate.toISOString()
-      })
-      .eq('id', approvingItem.id);
-
-    if (error) alert("Error: " + error.message);
-    else {
-      alert(`✅ Usuario Aprobado. Podrá entrar con su PIN: ${approvingItem.initial_pin}`);
-      setApprovingItem(null);
-      fetchData();
-    }
-  };
-
-  // --- 3. FUNCIÓN: EXTENDER LICENCIA ---
-  const handleExtend = async () => {
-    if (!extendingItem) return;
-
     try {
-      const now = new Date();
-      const currentExpiry = extendingItem.license_expiry ? new Date(extendingItem.license_expiry) : new Date();
-      const startDate = currentExpiry > now ? currentExpiry : now;
-      
-      const newExpiry = new Date(startDate);
-      newExpiry.setMonth(newExpiry.getMonth() + extendMonths);
-
-      const { error } = await supabase
-        .from('profiles')
-        .update({ license_expiry: newExpiry.toISOString() })
-        .eq('id', extendingItem.id);
+      // Llamada a la Transacción Atómica en Base de Datos
+      const { error } = await supabase.rpc('approve_client_transaction', {
+        target_user_id: approvingItem.id,
+        months_to_grant: monthsToGrant,
+        admin_user_id: (await supabase.auth.getUser()).data.user?.id // Opcional
+      });
 
       if (error) throw error;
 
-      alert("✅ Licencia extendida exitosamente.");
-      setExtendingItem(null);
+      setApprovingItem(null);
       fetchData();
-    } catch (err: unknown) { // ✅ CORRECCIÓN: Tipo seguro
-      const msg = err instanceof Error ? err.message : "Error desconocido";
-      alert("Error al extender: " + msg);
+      alert(`✅ ${approvingItem.full_name} aprobado y negocio creado correctamente.`);
+
+    } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Error desconocido";
+        console.error(err);
+        alert("❌ Error crítico en aprobación: " + msg);
     }
   };
 
-  // --- 4. FUNCIÓN: REVOCAR ---
-  const handleRevoke = async (id: string) => {
-    if (!confirm("¿Estás seguro de quitar el acceso a este usuario?")) return;
+  // 3. EXTENSIÓN DE LICENCIA (Sincroniza Perfil y Negocio)
+  const executeExtension = async () => {
+    if (!extendingItem) return;
+
+    try {
+      // Calcular nueva fecha basada en la actual o desde hoy si ya venció
+      const currentExpiry = extendingItem.license_expiry ? new Date(extendingItem.license_expiry) : new Date();
+      const baseDate = currentExpiry > new Date() ? currentExpiry : new Date();
+      baseDate.setMonth(baseDate.getMonth() + extendMonths);
+
+      // Actualizar Perfil
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ license_expiry: baseDate.toISOString(), status: 'active' })
+        .eq('id', extendingItem.id);
+
+      if (profileError) throw profileError;
+
+      // Actualizar Negocio (Si tiene uno asignado)
+      if (extendingItem.business_id) {
+        await supabase
+          .from('businesses')
+          .update({ subscription_expires_at: baseDate.toISOString(), status: 'active' })
+          .eq('id', extendingItem.business_id);
+      }
+
+      setExtendingItem(null);
+      fetchData();
+      alert("✅ Licencia extendida correctamente.");
+
+    } catch (err) {
+      console.error(err);
+      alert("Error al extender licencia");
+    }
+  };
+
+  // 4. SUSPENDER / REACTIVAR
+  const toggleStatus = async (user: Profile) => {
+    const newStatus = user.status === 'active' ? 'suspended' : 'active';
+    const action = user.status === 'active' ? 'SUSPENDER' : 'REACTIVAR';
     
-    const { error } = await supabase
-      .from('profiles')
-      .update({ status: 'rejected', business_id: null })
-      .eq('id', id);
+    if (!confirm(`¿Estás seguro de ${action} a este usuario?`)) return;
 
-    if (error) alert("Error al revocar");
-    else fetchData();
+    try {
+      await supabase.from('profiles').update({ status: newStatus }).eq('id', user.id);
+      // También actualizamos el negocio para bloquear acceso inmediato
+      if (user.business_id) {
+        await supabase.from('businesses').update({ status: newStatus }).eq('id', user.business_id);
+      }
+      fetchData();
+    } catch (error) {
+      console.error(error);
+      alert("Error al cambiar estado");
+    }
   };
 
-  const handleRejectRequest = async (id: string) => {
-    if (!confirm("¿Rechazar solicitud permanentemente?")) return;
-    await supabase.from('profiles').update({ status: 'rejected' }).eq('id', id);
-    fetchData();
+  // --- ELIMINAR (SOFT DELETE) ---
+  const handleDelete = async (userId: string) => {
+    if (!confirm("⚠️ ¿ELIMINAR USUARIO? Desaparecerá de la lista pero sus datos se conservarán en la base de datos por seguridad.")) return;
+    
+    try {
+        // 1. Marcamos el perfil como 'deleted' en lugar de borrarlo
+        const { error } = await supabase
+            .from('profiles')
+            .update({ status: 'deleted' }) 
+            .eq('id', userId);
+
+        if (error) throw error;
+        
+        // 2. (Seguridad Extra) Si tiene negocio, lo suspendemos para bloquear acceso por API
+        const { data: user } = await supabase
+            .from('profiles')
+            .select('business_id')
+            .eq('id', userId)
+            .single();
+
+        if (user?.business_id) {
+            await supabase
+                .from('businesses')
+                .update({ status: 'suspended' })
+                .eq('id', user.business_id);
+        }
+
+        alert("🗑️ Usuario eliminado correctamente.");
+        fetchData(); // Recargamos la lista (el filtro ocultará al 'deleted')
+
+    } catch (err) {
+        console.error(err);
+        alert("Error al eliminar usuario.");
+    }
   };
 
-  // Filtrado local
-  const filteredData = dataList.filter(item => 
-    item.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    item.id.includes(searchTerm)
+  // 6. LOGOUT
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate('/admin-login');
+  };
+
+  // Filtrado en cliente por buscador
+  const filteredList = dataList.filter(item => 
+    item.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    item.email?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
-    <div className="p-6 bg-slate-50 min-h-screen">
-      
-      <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <Shield className="text-purple-600" /> Super Admin
-          </h1>
-          <p className="text-slate-500 text-sm">Control Maestro de Licencias</p>
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      {/* --- HEADER --- */}
+      <header className="bg-slate-900 text-white shadow-lg sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4 h-16 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="bg-red-600 p-2 rounded-lg shadow-red-900/50 shadow-lg">
+              <Shield className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight">Panel Super Admin</h1>
+              <p className="text-xs text-slate-400">Sistema de Control de Licencias</p>
+            </div>
+          </div>
+          <button onClick={handleLogout} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm transition-all border border-slate-700">
+            <LogOut size={16} /> <span className="hidden sm:inline">Cerrar Sesión</span>
+          </button>
         </div>
+      </header>
+
+      {/* --- CONTENIDO PRINCIPAL --- */}
+      <main className="flex-1 max-w-7xl mx-auto w-full p-4 sm:p-6">
         
-        <div className="flex gap-2">
-            <div className="relative">
-                <Search className="absolute left-3 top-2.5 text-slate-400 w-4 h-4"/>
+        {/* BUSCADOR Y PESTAÑAS */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+            
+            {/* Tabs */}
+            <div className="bg-white p-1 rounded-xl shadow-sm border border-slate-200 flex w-full sm:w-auto">
+                <button 
+                    onClick={() => setActiveTab('requests')}
+                    className={`flex items-center gap-2 px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'requests' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                >
+                    <Inbox size={18} /> Solicitudes
+                </button>
+                <button 
+                    onClick={() => setActiveTab('active')}
+                    className={`flex items-center gap-2 px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'active' ? 'bg-green-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                >
+                    <UserCheck size={18} /> Clientes
+                </button>
+            </div>
+
+            {/* Search */}
+            <div className="relative w-full sm:w-80">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5"/>
                 <input 
                     type="text" 
-                    placeholder="Buscar cliente..." 
-                    className="pl-9 pr-4 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-purple-200"
+                    placeholder="Buscar cliente, email..." 
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm"
                 />
             </div>
-            <button onClick={fetchData} className="p-2 bg-white border rounded-lg hover:bg-slate-100">
-                <RefreshCw size={20} className={loading ? 'animate-spin' : ''}/>
-            </button>
         </div>
-      </div>
 
-      <div className="flex gap-4 mb-6 border-b border-slate-200">
-        <button 
-          onClick={() => { setActiveTab('requests'); setSearchTerm(''); }}
-          className={`pb-2 px-4 font-bold text-sm flex items-center gap-2 border-b-2 transition-colors ${activeTab === 'requests' ? 'text-indigo-600 border-indigo-600' : 'text-slate-400 border-transparent hover:text-slate-600'}`}
-        >
-          <Inbox size={18} /> Solicitudes Pendientes
-        </button>
-        <button 
-          onClick={() => { setActiveTab('active'); setSearchTerm(''); }}
-          className={`pb-2 px-4 font-bold text-sm flex items-center gap-2 border-b-2 transition-colors ${activeTab === 'active' ? 'text-indigo-600 border-indigo-600' : 'text-slate-400 border-transparent hover:text-slate-600'}`}
-        >
-          <UserCheck size={18} /> Usuarios Activos
-        </button>
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        {filteredData.length === 0 ? (
-          <div className="p-12 text-center text-slate-400">
-            {loading ? 'Cargando...' : 'No se encontraron registros.'}
-          </div>
-        ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 text-slate-500 uppercase text-xs">
-              <tr>
-                <th className="p-4">Cliente</th>
-                <th className="p-4">Contacto</th>
-                <th className="p-4">Info Licencia</th>
-                <th className="p-4 text-center">Acciones</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredData.map(item => (
-                <tr key={item.id} className="hover:bg-slate-50 transition-colors">
-                  
-                  <td className="p-4">
-                    <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
-                            <User size={16} />
-                        </div>
-                        <div>
-                            <p className="font-bold text-slate-800">{item.full_name || 'Sin nombre'}</p>
-                            <p className="text-xs text-slate-400 font-mono">ID: {item.id.slice(0,8)}</p>
-                        </div>
+        {/* LISTA DE DATOS */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            {loading ? (
+                <div className="p-12 flex flex-col items-center justify-center text-slate-400">
+                    <RefreshCw className="animate-spin w-8 h-8 mb-4 text-indigo-500" />
+                    <p>Cargando datos...</p>
+                </div>
+            ) : filteredList.length === 0 ? (
+                <div className="p-12 text-center text-slate-400">
+                    <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <Inbox className="w-8 h-8 opacity-50"/>
                     </div>
-                  </td>
+                    <p>No se encontraron registros en esta sección.</p>
+                </div>
+            ) : (
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                        <thead className="bg-slate-50 text-slate-500 uppercase text-xs font-bold border-b border-slate-200">
+                            <tr>
+                                <th className="p-4 w-64">Cliente / Negocio</th>
+                                <th className="p-4">Contacto</th>
+                                <th className="p-4">Estado</th>
+                                <th className="p-4">Detalles Licencia</th>
+                                <th className="p-4 text-right">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {filteredList.map((item) => (
+                                <tr key={item.id} className="hover:bg-slate-50/80 transition-colors group">
+                                    <td className="p-4">
+                                        <div className="font-bold text-slate-800">{item.full_name}</div>
+                                        <div className="text-xs text-slate-400 flex items-center gap-1 mt-1">
+                                            {item.business_id ? <Store size={12}/> : <AlertTriangle size={12} className="text-yellow-500"/>}
+                                            {item.business_id ? "Negocio Vinculado" : "Sin Negocio Asignado"}
+                                        </div>
+                                    </td>
+                                    <td className="p-4">
+                                        <div className="text-sm text-slate-600 flex items-center gap-2"><User size={14}/> {item.email || 'Sin email'}</div>
+                                        <div className="text-sm text-slate-600 mt-1">{item.phone}</div>
+                                    </td>
+                                    <td className="p-4">
+                                        <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${
+                                            item.status === 'active' ? 'bg-green-50 text-green-700 border-green-200' :
+                                            item.status === 'pending' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
+                                            item.status === 'suspended' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
+                                            'bg-red-50 text-red-700 border-red-200'
+                                        }`}>
+                                            {item.status === 'active' ? 'ACTIVO' : 
+                                             item.status === 'pending' ? 'PENDIENTE' : 
+                                             item.status === 'suspended' ? 'SUSPENDIDO' : 'RECHAZADO'}
+                                        </span>
+                                    </td>
+                                    <td className="p-4">
+                                        <div className="flex flex-col gap-1">
+                                            <div className="text-sm font-medium flex items-center gap-2 text-slate-700">
+                                                <Key size={14} className="text-slate-400"/> PIN: <span className="font-mono bg-slate-100 px-1.5 rounded">{item.initial_pin}</span>
+                                            </div>
+                                            <div className="text-xs text-slate-500">
+                                                Solicitó: <span className="font-bold">{item.months_requested} Meses</span>
+                                            </div>
+                                            {item.license_expiry && (
+                                                <div className="text-xs text-slate-500 flex items-center gap-1 mt-1">
+                                                    <Calendar size={12}/> Vence: {new Date(item.license_expiry).toLocaleDateString()}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </td>
+                                    <td className="p-4 text-right">
+                                        <div className="flex items-center justify-end gap-2 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                                            
+                                            {/* BOTONES PARA SOLICITUDES PENDIENTES */}
+                                            {activeTab === 'requests' && (
+                                                <>
+                                                    <button 
+                                                        onClick={() => { setApprovingItem(item); setMonthsToGrant(item.months_requested || 1); }}
+                                                        className="bg-indigo-600 hover:bg-indigo-700 text-white p-2 rounded-lg shadow-sm transition-colors"
+                                                        title="Aprobar Solicitud"
+                                                    >
+                                                        <Check size={18} />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleDelete(item.id)}
+                                                        className="bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 text-slate-400 p-2 rounded-lg transition-colors"
+                                                        title="Rechazar y Borrar"
+                                                    >
+                                                        <X size={18} />
+                                                    </button>
+                                                </>
+                                            )}
 
-                  <td className="p-4 text-slate-600">
-                    <p>{item.phone || 'No telf'}</p>
-                    {item.initial_pin && (
-                        <div className="flex items-center gap-1 mt-1 text-xs text-slate-500">
-                            <Key size={12}/> PIN: <span className="font-mono font-bold bg-slate-100 px-1 rounded">{item.initial_pin}</span>
-                        </div>
-                    )}
-                  </td>
-                  
-                  <td className="p-4">
-                    {activeTab === 'requests' ? (
-                      <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded-full text-xs font-bold">
-                        Solicita: {item.months_requested} Meses
-                      </span>
-                    ) : (
-                      <div className="flex flex-col">
-                        <span className="text-xs text-slate-400">Vence el:</span>
-                        <span className={`font-bold ${new Date(item.license_expiry!) < new Date() ? 'text-red-600' : 'text-green-600'}`}>
-                          {item.license_expiry ? new Date(item.license_expiry).toLocaleDateString() : 'Indefinido'}
-                        </span>
-                      </div>
-                    )}
-                  </td>
+                                            {/* BOTONES PARA CLIENTES ACTIVOS */}
+                                            {activeTab === 'active' && (
+                                                <>
+                                                    <button 
+                                                        onClick={() => { setExtendingItem(item); setExtendMonths(1); }}
+                                                        className="bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 text-slate-600 p-2 rounded-lg transition-colors"
+                                                        title="Extender Licencia"
+                                                    >
+                                                        <CalendarPlus size={18} />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => toggleStatus(item)}
+                                                        className={`p-2 rounded-lg border transition-colors ${
+                                                            item.status === 'active' 
+                                                            ? 'bg-white border-slate-200 text-yellow-600 hover:bg-yellow-50' 
+                                                            : 'bg-green-100 border-green-200 text-green-700 hover:bg-green-200'
+                                                        }`}
+                                                        title={item.status === 'active' ? "Suspender" : "Reactivar"}
+                                                    >
+                                                        {item.status === 'active' ? <UserCheck size={18} /> : <Check size={18} />}
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleDelete(item.id)}
+                                                        className="bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 text-slate-400 p-2 rounded-lg transition-colors"
+                                                        title="Eliminar Cliente"
+                                                    >
+                                                        <Trash2 size={18} />
+                                                    </button>
+                                                </>
+                                            )}
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+        </div>
+      </main>
 
-                  <td className="p-4 flex justify-center gap-2">
-                    {activeTab === 'requests' ? (
-                      <>
-                        <button 
-                            onClick={() => { setApprovingItem(item); setMonthsToGrant(item.months_requested); }} 
-                            className="p-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors" 
-                            title="Aprobar"
-                        >
-                            <Check size={18}/>
-                        </button>
-                        <button 
-                            onClick={() => handleRejectRequest(item.id)} 
-                            className="p-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors" 
-                            title="Rechazar"
-                        >
-                            <X size={18}/>
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button 
-                            onClick={() => setExtendingItem(item)} 
-                            className="p-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 flex items-center gap-1 font-bold text-xs transition-colors"
-                        >
-                            <CalendarPlus size={16}/> Extender
-                        </button>
-                        <button 
-                            onClick={() => handleRevoke(item.id)} 
-                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Revocar Acceso"
-                        >
-                            <X size={18} />
-                        </button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
+      {/* --- MODAL DE APROBACIÓN (Tu modal original restaurado) --- */}
       {approvingItem && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fade-in">
-          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6">
-            <h3 className="text-lg font-bold text-slate-800 mb-4">Aprobar Solicitud</h3>
-            <p className="text-sm text-slate-500 mb-4">Cliente: <span className="font-bold text-indigo-600">{approvingItem.full_name}</span></p>
-            <div className="mb-4">
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tiempo a Otorgar (Meses)</label>
-                <input type="number" value={monthsToGrant} onChange={(e) => setMonthsToGrant(Number(e.target.value))} className="w-full p-2 border border-slate-300 rounded-lg font-bold outline-none focus:border-indigo-500"/>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 animate-in fade-in zoom-in duration-200">
+                <h3 className="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
+                    <Check className="text-green-500"/> Aprobar Licencia
+                </h3>
+                <p className="text-sm text-slate-500 mb-4">
+                    Cliente: <span className="font-bold text-indigo-600">{approvingItem.full_name}</span>
+                </p>
+
+                <div className="mb-6">
+                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Confirmar Duración (Meses)</label>
+                    <div className="grid grid-cols-4 gap-2 mb-3">
+                        {[1, 3, 6, 12].map(m => (
+                            <button 
+                                key={m} 
+                                onClick={() => setMonthsToGrant(m)} 
+                                className={`py-2 text-xs font-bold rounded-lg border transition-all ${monthsToGrant === m ? 'bg-indigo-600 text-white border-indigo-600 shadow-md transform scale-105' : 'bg-white text-slate-600 hover:bg-slate-50 border-slate-200'}`}
+                            >
+                                {m}M
+                            </button>
+                        ))}
+                    </div>
+                    <input 
+                        type="number" 
+                        value={monthsToGrant} 
+                        onChange={(e) => setMonthsToGrant(Number(e.target.value))} 
+                        className="w-full p-3 border border-slate-200 rounded-xl font-bold text-center outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all text-slate-700"
+                    />
+                </div>
+
+                <div className="flex gap-3">
+                    <button 
+                        onClick={() => setApprovingItem(null)} 
+                        className="flex-1 py-3 text-slate-600 font-bold bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+                    >
+                        Cancelar
+                    </button>
+                    <button 
+                        onClick={executeApproval} 
+                        className="flex-1 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl shadow-lg shadow-green-900/20 transition-all active:scale-95"
+                    >
+                        Confirmar
+                    </button>
+                </div>
             </div>
-            <div className="flex gap-2">
-                <button onClick={() => setApprovingItem(null)} className="flex-1 py-2 text-slate-600 font-bold bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors">Cancelar</button>
-                <button onClick={handleApprove} className="flex-1 py-2 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors">Confirmar y Activar</button>
-            </div>
-          </div>
         </div>
       )}
 
+      {/* --- MODAL DE EXTENSIÓN (Tu modal original restaurado) --- */}
       {extendingItem && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fade-in">
-          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6">
-            <h3 className="text-lg font-bold text-slate-800 mb-4">Extender Licencia</h3>
-            <p className="text-sm text-slate-500 mb-4">Cliente: <span className="font-bold text-indigo-600">{extendingItem.full_name}</span></p>
-            <div className="mb-4">
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Meses a Añadir</label>
-                <div className="flex gap-2 mb-2">
-                    {[1, 3, 6, 12].map(m => (
-                        <button key={m} onClick={() => setExtendMonths(m)} className={`flex-1 py-1 text-xs font-bold rounded border transition-colors ${extendMonths === m ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>{m}M</button>
-                    ))}
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 animate-in fade-in zoom-in duration-200">
+                <h3 className="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
+                    <CalendarPlus className="text-indigo-500"/> Extender Licencia
+                </h3>
+                <p className="text-sm text-slate-500 mb-4">
+                    Cliente: <span className="font-bold text-indigo-600">{extendingItem.full_name}</span>
+                </p>
+
+                <div className="mb-6">
+                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Meses a Añadir</label>
+                    <div className="grid grid-cols-4 gap-2 mb-3">
+                        {[1, 3, 6, 12].map(m => (
+                            <button 
+                                key={m} 
+                                onClick={() => setExtendMonths(m)} 
+                                className={`py-2 text-xs font-bold rounded-lg border transition-all ${extendMonths === m ? 'bg-indigo-600 text-white border-indigo-600 shadow-md transform scale-105' : 'bg-white text-slate-600 hover:bg-slate-50 border-slate-200'}`}
+                            >
+                                {m}M
+                            </button>
+                        ))}
+                    </div>
+                    <input 
+                        type="number" 
+                        value={extendMonths} 
+                        onChange={(e) => setExtendMonths(Number(e.target.value))} 
+                        className="w-full p-3 border border-slate-200 rounded-xl font-bold text-center outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all text-slate-700"
+                    />
                 </div>
-                <input type="number" value={extendMonths} onChange={(e) => setExtendMonths(Number(e.target.value))} className="w-full p-2 border border-slate-300 rounded-lg font-bold mt-2 text-center outline-none focus:border-indigo-500"/>
+
+                <div className="flex gap-3">
+                    <button 
+                        onClick={() => setExtendingItem(null)} 
+                        className="flex-1 py-3 text-slate-600 font-bold bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+                    >
+                        Cancelar
+                    </button>
+                    <button 
+                        onClick={executeExtension} 
+                        className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-900/20 transition-all active:scale-95"
+                    >
+                        Extender
+                    </button>
+                </div>
             </div>
-            <div className="flex gap-2">
-                <button onClick={() => setExtendingItem(null)} className="flex-1 py-2 text-slate-600 font-bold bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors">Cancelar</button>
-                <button onClick={handleExtend} className="flex-1 py-2 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition-colors">Aplicar Extensión</button>
-            </div>
-          </div>
         </div>
       )}
     </div>

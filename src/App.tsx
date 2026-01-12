@@ -122,16 +122,31 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
       if (profile?.status === 'pending') throw new Error("⏳ Tu cuenta está en revisión. Espera la aprobación.");
       if (profile?.status === 'rejected') throw new Error("⛔ Tu solicitud ha sido rechazada.");
       if (profile?.status === 'suspended') throw new Error("⚠️ Tu licencia ha sido suspendida.");
-      
-      // 4. Validación de Licencia Activa
       if (!profile?.business_id) throw new Error("⚠️ Tu cuenta no tiene una licencia/negocio asignado aún.");
+
+      // 4. DETECTOR DE CAMBIO DE CUENTA (LIMPIEZA DE BASURA) 🧹
+      const previousBusinessId = localStorage.getItem('nexus_business_id');
+      
+      if (previousBusinessId && previousBusinessId !== profile.business_id) {
+        // A. Verificar si hay datos vitales sin sincronizar antes de borrar
+        const pendingSales = await db.sales.where('synced').equals(0).count();
+        
+        if (pendingSales > 0) {
+          // ⛔ BLOQUEO TOTAL: No dejamos pasar si hay riesgo de perder dinero
+          throw new Error(`⚠️ ¡ALTO! Hay ${pendingSales} ventas NO sincronizadas en este dispositivo. Debes entrar con el usuario anterior y esperar a que se suban los datos antes de cambiar de cuenta.`);
+        }
+
+        console.log("♻️ Cambio de negocio seguro. Limpiando base de datos local...");
+        await db.delete(); 
+        await db.open(); 
+      }
 
       // 5. Configuración Local (Éxito)
       localStorage.setItem('nexus_device_authorized', 'true');
       localStorage.setItem('nexus_business_id', profile.business_id);
       localStorage.setItem('nexus_last_verification', new Date().toISOString());
 
-      // 6. Autoconfiguración del primer Admin Local (Si la DB local está vacía)
+      // 6. Autoconfiguración del primer Admin Local
       const staffCount = await db.staff.count();
       if (staffCount === 0 && profile.initial_pin) {
         await db.staff.add({
@@ -148,7 +163,6 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error de acceso";
       setError(msg);
-      // Limpiamos autorización si falló el login
       localStorage.removeItem('nexus_device_authorized');
     } finally {
       setLoading(false);
