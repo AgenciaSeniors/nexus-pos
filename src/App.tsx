@@ -13,10 +13,10 @@ import { FinancePage } from './pages/FinancePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { StaffPage } from './pages/StaffPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
-// Asegúrate de haber creado este archivo (SuperAdminLogin.tsx) como vimos en el paso anterior
-import { SuperAdminLogin } from './pages/SuperAdminLogin'; 
+import { SuperAdminLogin } from './pages/SuperAdminLogin';
+import { CustomersPage } from './components/CustomersPage'; // Asegúrate de tener esto importado si lo usas
 
-import { Loader2, Store, User, Lock, WifiOff, UserPlus, LogIn, CheckCircle, KeyRound, } from 'lucide-react';
+import { Loader2, Store, User, Lock, WifiOff, UserPlus, LogIn, CheckCircle, AlertTriangle, LogOut } from 'lucide-react';
 
 // =============================================================================
 // 1. COMPONENTE LOGIN SCREEN (Para Clientes/Negocios)
@@ -38,20 +38,18 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // --- LÓGICA DE REGISTRO ROBUSTA ---
+  // --- LÓGICA DE REGISTRO ---
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
 
-    // Validación básica del PIN
     if (userPin.length !== 4 || isNaN(Number(userPin))) {
       setError("El PIN debe ser de 4 números exactos.");
       setLoading(false); return;
     }
 
     try {
-      // 1. Crear usuario en Auth de Supabase
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email, 
         password, 
@@ -60,8 +58,6 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
 
       if (authError) throw authError;
       
-      // 2. Guardar perfil en base de datos (UPSERT para evitar conflictos)
-      // Esto asegura que el PIN y los meses se guarden sí o sí.
       if (authData.user) {
         const { error: profileError } = await supabase
           .from('profiles')
@@ -72,15 +68,12 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
             phone: phone,
             months_requested: months,
             initial_pin: userPin,
-            status: 'pending',     // Estado inicial
-            role: 'admin',         // Rol por defecto: Dueño/Admin
-            business_id: null      // Se llenará cuando el SuperAdmin apruebe
+            status: 'pending',
+            role: 'admin',
+            business_id: null
           });
 
-        if (profileError) {
-          console.error("Error guardando perfil:", profileError);
-          // Intentamos continuar, pero avisamos en consola
-        }
+        if (profileError) console.error("Error perfil:", profileError);
       }
 
       setSuccessMsg("¡Solicitud enviada! Espera a que el administrador active tu licencia.");
@@ -96,7 +89,7 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
     }
   };
 
-  // --- LÓGICA DE LOGIN (Verificación de Licencia) ---
+  // --- LÓGICA DE LOGIN (Verificación y Protección de Datos) ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -109,44 +102,44 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
       if (authError) throw new Error("Credenciales incorrectas o problema de conexión.");
       if (!data.session) throw new Error("No se pudo iniciar sesión.");
       
-      // 2. Verificar estado de la cuenta (Perfil)
+      // 2. Verificar estado del perfil
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('business_id, status, initial_pin, full_name, role')
         .eq('id', data.session.user.id)
         .single();
 
-      if (profileError) throw new Error("Error verificando tu perfil. Contacta soporte.");
+      if (profileError) throw new Error("Error verificando tu perfil.");
 
       // 3. Validaciones de Estado
-      if (profile?.status === 'pending') throw new Error("⏳ Tu cuenta está en revisión. Espera la aprobación.");
+      if (profile?.status === 'pending') throw new Error("⏳ Tu cuenta está en revisión.");
       if (profile?.status === 'rejected') throw new Error("⛔ Tu solicitud ha sido rechazada.");
       if (profile?.status === 'suspended') throw new Error("⚠️ Tu licencia ha sido suspendida.");
-      if (!profile?.business_id) throw new Error("⚠️ Tu cuenta no tiene una licencia/negocio asignado aún.");
+      if (profile?.status === 'deleted') throw new Error("⛔ Cuenta eliminada.");
+      if (!profile?.business_id) throw new Error("⚠️ Cuenta sin negocio asignado.");
 
-      // 4. DETECTOR DE CAMBIO DE CUENTA (LIMPIEZA DE BASURA) 🧹
+      // 4. 🛡️ PROTECCIÓN DE DATOS AL CAMBIAR DE CUENTA
       const previousBusinessId = localStorage.getItem('nexus_business_id');
       
       if (previousBusinessId && previousBusinessId !== profile.business_id) {
-        // A. Verificar si hay datos vitales sin sincronizar antes de borrar
+        // Verificar si hay ventas sin sincronizar antes de borrar la DB local
         const pendingSales = await db.sales.where('synced').equals(0).count();
         
         if (pendingSales > 0) {
-          // ⛔ BLOQUEO TOTAL: No dejamos pasar si hay riesgo de perder dinero
-          throw new Error(`⚠️ ¡ALTO! Hay ${pendingSales} ventas NO sincronizadas en este dispositivo. Debes entrar con el usuario anterior y esperar a que se suban los datos antes de cambiar de cuenta.`);
+          throw new Error(`⚠️ ¡ALTO! Hay ${pendingSales} ventas NO sincronizadas. Entra con el usuario anterior para subirlas.`);
         }
 
-        console.log("♻️ Cambio de negocio seguro. Limpiando base de datos local...");
+        console.log("♻️ Cambio seguro. Limpiando datos locales...");
         await db.delete(); 
         await db.open(); 
       }
 
-      // 5. Configuración Local (Éxito)
+      // 5. Configuración Local
       localStorage.setItem('nexus_device_authorized', 'true');
       localStorage.setItem('nexus_business_id', profile.business_id);
       localStorage.setItem('nexus_last_verification', new Date().toISOString());
 
-      // 6. Autoconfiguración del primer Admin Local
+      // 6. Autoconfiguración Admin Local
       const staffCount = await db.staff.count();
       if (staffCount === 0 && profile.initial_pin) {
         await db.staff.add({
@@ -164,6 +157,7 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
       const msg = err instanceof Error ? err.message : "Error de acceso";
       setError(msg);
       localStorage.removeItem('nexus_device_authorized');
+      await supabase.auth.signOut();
     } finally {
       setLoading(false);
     }
@@ -180,23 +174,11 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
           <p className="text-slate-500 text-sm">{mode === 'login' ? 'Acceso Clientes' : 'Solicitar Licencia'}</p>
         </div>
 
-        {/* Switch Login/Register */}
         <div className="flex bg-slate-100 p-1 rounded-lg mb-6">
-          <button 
-            onClick={() => { setMode('login'); setError(null); }} 
-            className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${mode === 'login' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
-          >
-            Iniciar Sesión
-          </button>
-          <button 
-            onClick={() => { setMode('register'); setError(null); }} 
-            className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${mode === 'register' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
-          >
-            Crear Cuenta
-          </button>
+          <button onClick={() => { setMode('login'); setError(null); }} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${mode === 'login' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>Iniciar Sesión</button>
+          <button onClick={() => { setMode('register'); setError(null); }} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${mode === 'register' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>Crear Cuenta</button>
         </div>
         
-        {/* Mensajes de Error / Éxito */}
         {error && (
           <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-center gap-2 border border-red-100">
             <WifiOff size={16} /> {error}
@@ -208,23 +190,21 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
           </div>
         )}
 
-        {/* FORMULARIO DE LOGIN */}
         {mode === 'login' ? (
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="relative">
               <User className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
-              <input type="email" required className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-indigo-500 transition-colors" placeholder="correo@ejemplo.com" value={email} onChange={(e) => setEmail(e.target.value)}/>
+              <input type="email" required className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-indigo-500" placeholder="correo@ejemplo.com" value={email} onChange={(e) => setEmail(e.target.value)}/>
             </div>
             <div className="relative">
               <Lock className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
-              <input type="password" required className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-indigo-500 transition-colors" placeholder="Contraseña" value={password} onChange={(e) => setPassword(e.target.value)}/>
+              <input type="password" required className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-indigo-500" placeholder="Contraseña" value={password} onChange={(e) => setPassword(e.target.value)}/>
             </div>
-            <button type="submit" disabled={loading} className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-lg shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 transition-transform active:scale-95">
+            <button type="submit" disabled={loading} className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-transform">
               {loading ? <Loader2 className="animate-spin" /> : <><LogIn size={18}/> Entrar</>}
             </button>
           </form>
         ) : (
-          /* FORMULARIO DE REGISTRO */
           <form onSubmit={handleRegister} className="space-y-4">
             <div>
               <label className="text-xs font-bold text-slate-500 uppercase">Nombre Negocio</label>
@@ -237,10 +217,7 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
                 </div>
                 <div>
                   <label className="text-xs font-bold text-slate-500 uppercase">PIN (4 #)</label>
-                  <div className="relative">
-                    <KeyRound className="absolute left-2 top-2 text-slate-400 w-4 h-4"/>
-                    <input type="text" maxLength={4} required className="w-full pl-8 pr-2 py-2 border rounded-lg outline-none text-center font-mono font-bold focus:border-indigo-500" placeholder="0000" value={userPin} onChange={(e) => setUserPin(e.target.value)}/>
-                  </div>
+                  <input type="text" maxLength={4} required className="w-full px-3 py-2 border rounded-lg outline-none text-center font-mono font-bold focus:border-indigo-500" placeholder="0000" value={userPin} onChange={(e) => setUserPin(e.target.value)}/>
                 </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -262,7 +239,7 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
                 <option value={12}>1 Año</option>
               </select>
             </div>
-            <button type="submit" disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 transition-transform active:scale-95">
+            <button type="submit" disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-transform">
               {loading ? <Loader2 className="animate-spin" /> : <><UserPlus size={18}/> Enviar Solicitud</>}
             </button>
           </form>
@@ -273,48 +250,109 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
 }
 
 // =============================================================================
-// 2. COMPONENTE BUSINESS APP (Aplicación Principal)
+// 2. COMPONENTE BUSINESS APP (Con Watchdog y Pantalla de Bloqueo)
 // =============================================================================
 function BusinessApp() {
   const [isAuthorized, setIsAuthorized] = useState(() => localStorage.getItem('nexus_device_authorized') === 'true');
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
   const [isLocked, setIsLocked] = useState(false);
+  const [blockReason, setBlockReason] = useState<string | null>(null);
 
-  // Verificación periódica de la sesión/licencia en segundo plano
+  // 🐕 WATCHDOG: Vigila la licencia en tiempo real
   useEffect(() => {
-    const checkStatus = async () => {
-      if (!isAuthorized) return;
+    const verifyLicenseStatus = async () => {
+      if (!isAuthorized || !navigator.onLine) return; // Solo online y si ya entró
+
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          // Consultamos si sigue activo en tiempo real
-          const { data } = await supabase
-            .from('profiles')
-            .select('business_id, status')
-            .eq('id', session.user.id)
-            .single();
-          
-          if (!data?.business_id || data?.status !== 'active') {
-            console.warn("Sesión invalidada o licencia expirada.");
-            localStorage.removeItem('nexus_device_authorized');
-            setIsAuthorized(false);
-          }
+        if (!session) return;
+
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('status, license_expiry, business_id')
+          .eq('id', session.user.id)
+          .single();
+
+        if (!profile) return;
+
+        let reason = null;
+        if (profile.status === 'suspended') reason = "Licencia Suspendida";
+        if (profile.status === 'deleted') reason = "Cuenta Eliminada";
+        if (profile.license_expiry && new Date(profile.license_expiry) < new Date()) {
+          reason = "Licencia Expirada";
         }
-      } catch (err) { 
-        // Si hay error de red, no bloqueamos inmediatamente (modo offline)
-        console.error("Check status failed (offline?)", err);
+
+        // Si detecta bloqueo, activa la pantalla roja
+        if (reason) {
+          setBlockReason(reason);
+        }
+
+      } catch (err) {
+        console.error("Error watchdog:", err);
       }
     };
-    
-    checkStatus();
-    // Podríamos poner un intervalo aquí si quisiéramos polling
+
+    // Revisar cada 1 minuto
+    const interval = setInterval(verifyLicenseStatus, 60000);
+    verifyLicenseStatus(); // Revisar al montar
+
+    return () => clearInterval(interval);
   }, [isAuthorized]);
 
-  // Pantallas de Bloqueo / Login
-  if (!isAuthorized) return <LoginScreen onLoginSuccess={() => setIsAuthorized(true)} />;
-  if (isLocked || !currentStaff) return <PinPad onSuccess={(s) => { setCurrentStaff(s); setIsLocked(false); }} />;
+  // FUNCIÓN DE SALIDA DE EMERGENCIA (Para el botón de la pantalla roja)
+  const handleForceLogout = async () => {
+    // 1. Limpieza Local
+    localStorage.removeItem('nexus_device_authorized');
+    localStorage.removeItem('nexus_business_id');
+    localStorage.removeItem('nexus_last_verification');
+    
+    // 2. Limpieza Servidor
+    await supabase.auth.signOut();
+    
+    // 3. Recarga Total (Rompe bucles)
+    window.location.href = '/';
+  };
 
-  // App Principal con Rutas
+  // --- RENDERS CONDICIONALES ---
+
+  // A. Si no está autorizado, mostrar Login
+  if (!isAuthorized) return <LoginScreen onLoginSuccess={() => setIsAuthorized(true)} />;
+
+  // B. PANTALLA DE SERVICIO SUSPENDIDO (La que pediste recuperar)
+  if (blockReason) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-md w-full text-center border border-slate-200">
+          <div className="bg-red-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
+            <AlertTriangle className="w-10 h-10 text-red-600" />
+          </div>
+          
+          <h1 className="text-2xl font-bold text-slate-800">Servicio Suspendido</h1>
+          
+          <p className="text-slate-500 mt-4 mb-8">
+            {blockReason === "Licencia Expirada" 
+              ? "El periodo de vigencia de tu licencia ha terminado. Por favor renueva tu suscripción."
+              : "El acceso a este negocio ha sido revocado temporal o permanentemente."}
+            <br/><br/>
+            Contacta al administrador para reactivar el servicio.
+          </p>
+          
+          <button 
+            onClick={handleForceLogout}
+            className="w-full px-6 py-3 bg-slate-800 text-white font-bold rounded-xl hover:bg-slate-900 transition-colors flex items-center justify-center gap-2"
+          >
+            <LogOut size={20}/> Cerrar Sesión
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // C. PinPad o Layout Principal
+  if (isLocked || !currentStaff) {
+    return <PinPad onSuccess={(s) => { setCurrentStaff(s); setIsLocked(false); }} />;
+  }
+
   return (
     <AuthGuard>
       <Routes>
@@ -324,6 +362,7 @@ function BusinessApp() {
           <Route path="/finanzas" element={<FinancePage />} />
           <Route path="/configuracion" element={<SettingsPage />} />
           <Route path="/equipo" element={<StaffPage />} />
+          <Route path="/clientes" element={<CustomersPage />} /> 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
@@ -332,7 +371,7 @@ function BusinessApp() {
 }
 
 // =============================================================================
-// 3. COMPONENTE ADMIN ROUTE (Protección para Super Admin)
+// 3. ADMIN ROUTE (Protección Super Admin)
 // =============================================================================
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const [authorized, setAuthorized] = useState<boolean | null>(null);
@@ -341,23 +380,15 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
     const checkAdmin = async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          setAuthorized(false);
-          return;
-        }
+        if (!user) { setAuthorized(false); return; }
 
-        // Consultamos la "corona" en la base de datos
         const { data, error } = await supabase
           .from('profiles')
           .select('is_super_admin')
           .eq('id', user.id)
           .single();
         
-        if (error || !data?.is_super_admin) {
-          setAuthorized(false);
-        } else {
-          setAuthorized(true);
-        }
+        setAuthorized(!error && data?.is_super_admin);
       } catch {
         setAuthorized(false);
       }
@@ -365,36 +396,20 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
     checkAdmin();
   }, []);
 
-  if (authorized === null) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <Loader2 className="animate-spin text-white w-8 h-8"/>
-      </div>
-    );
-  }
+  if (authorized === null) return <div className="min-h-screen bg-slate-900 flex items-center justify-center"><Loader2 className="animate-spin text-white w-8 h-8"/></div>;
   
-  // Si no es admin, lo mandamos al login de admin
   return authorized ? <>{children}</> : <Navigate to="/admin-login" replace />;
 }
 
 // =============================================================================
-// 4. APP PRINCIPAL (Enrutador Maestro)
+// 4. APP PRINCIPAL
 // =============================================================================
 export default function App() {
   return (
     <HashRouter>
       <Routes>
-        {/* RUTA PÚBLICA PARA EL LOGIN DEL SUPER ADMIN */}
         <Route path="/admin-login" element={<SuperAdminLogin />} />
-        
-        {/* RUTA PROTEGIDA PARA EL PANEL DE CONTROL (SUPER ADMIN) */}
-        <Route path="/super-panel" element={
-          <AdminRoute>
-            <SuperAdminPage />
-          </AdminRoute>
-        } />
-
-        {/* RUTAS DE LA APP DEL CLIENTE (Cualquier otra ruta) */}
+        <Route path="/super-panel" element={<AdminRoute><SuperAdminPage /></AdminRoute>} />
         <Route path="/*" element={<BusinessApp />} />
       </Routes>
     </HashRouter>
