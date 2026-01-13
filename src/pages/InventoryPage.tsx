@@ -1,249 +1,331 @@
 import { useState } from 'react';
+import { db, type Product } from '../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Product } from '../lib/db'; // Importamos type Product correctamente
-import { syncPull, syncPush } from '../lib/sync';
-import { supabase } from '../lib/supabase';
+import { Plus, Search, Edit2, Trash2, Package, Loader2 } from 'lucide-react';
+import { syncPush } from '../lib/sync';
 
 export function InventoryPage() {
-  // Filtramos para NO mostrar los que están marcados para borrar
-  const productos = useLiveQuery(() => 
-    db.products.where('sync_status').notEqual('pending_delete').toArray()
-  );
-  
+  const products = useLiveQuery(() => db.products.toArray());
+  const [searchTerm, setSearchTerm] = useState('');
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  
-  // Estado para saber si estamos editando uno existente
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  // AQUI ESTA EL CAMBIO: Agregamos 'category' al estado inicial
   const [formData, setFormData] = useState({
     name: '',
     price: '',
     stock: '',
     sku: '',
     cost: '',
-    expiration_date: '',
-    category: '' ,
-    unit: 'un'// <--- Nuevo campo
+    category: 'General',
+    unit: 'un',
+    expiration_date: ''
   });
 
-  // Abrir formulario para crear (limpio)
-  const openCreate = () => {
-    setEditingId(null);
-    setFormData({ 
-      name: '', price: '', stock: '', sku: '', cost: '', expiration_date: '', 
-      category: '', unit: 'un' // <--- Limpiamos categoría
-    });
-    setIsFormOpen(true);
-  };
+  // Filtrado de productos
+  const filteredProducts = products?.filter(p => 
+    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.sku?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
-  // Abrir formulario para editar (con datos)
-  const openEdit = (p: Product) => {
-    setEditingId(p.id);
-    setFormData({
-      name: p.name,
-      price: p.price.toString(),
-      stock: p.stock.toString(),
-      sku: p.sku,
-      cost: p.cost?.toString() || '',
-      expiration_date: p.expiration_date || '',
-      category: p.category || 'General',
-      unit: p.unit || 'un'// <--- Corgamos la categoría existente
-    });
-    setIsFormOpen(true);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleSave = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
     try {
-      // Preparamos los datos comunes
-      const productData = {
+      // 1. Obtener business_id de forma segura (Offline friendly)
+      const storedBusinessId = localStorage.getItem('nexus_business_id');
+      
+      if (!editingId && !storedBusinessId) {
+        throw new Error("No se identificó el negocio (Falta business_id en sesión local).");
+      }
+
+      // Preparamos los datos
+      const productData: Partial<Product> = {
         name: formData.name,
-        price: parseFloat(formData.price),
-        stock: parseInt(formData.stock),
+        price: parseFloat(formData.price) || 0,
+        stock: parseFloat(formData.stock) || 0,
         sku: formData.sku || crypto.randomUUID().slice(0, 8),
         cost: formData.cost ? parseFloat(formData.cost) : 0,
-        expiration_date: formData.expiration_date || undefined,
         category: formData.category || 'General',
-        unit: formData.unit || 'un' 
+        unit: formData.unit || 'un',
       };
+      
+      // Manejo de fecha de vencimiento (Extendemos el tipo para evitar 'any')
+      if(formData.expiration_date) {
+        (productData as Product & { expiration_date?: string }).expiration_date = formData.expiration_date;
+      }
 
       if (editingId) {
-        // --- MODO EDICIÓN ---
+        // --- EDICIÓN ---
         const original = await db.products.get(editingId);
         if (!original) return;
 
-        const newStatus = original.sync_status === 'pending_create' 
-          ? 'pending_create' 
-          : 'pending_update';
+        const finalBusinessId = original.business_id || storedBusinessId || 'unknown';
 
         await db.products.update(editingId, {
           ...productData,
-          sync_status: newStatus
+          business_id: finalBusinessId,
+          sync_status: original.sync_status === 'pending_create' ? 'pending_create' : 'pending_update'
         });
 
       } else {
-        // --- MODO CREACIÓN ---
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) throw new Error("Sin sesión");
-        
-        const { data: perfil } = await supabase
-          .from('profiles').select('business_id').eq('id', session.user.id).single();
+        // --- CREACIÓN ---
+        // Preparamos el objeto completo para la creación
+        const newProduct = {
+            id: crypto.randomUUID(),
+            business_id: storedBusinessId!,
+            name: productData.name!,
+            price: productData.price!,
+            stock: productData.stock!,
+            sku: productData.sku,
+            cost: productData.cost,
+            category: productData.category,
+            unit: productData.unit,
+            sync_status: 'pending_create',
+            ...(formData.expiration_date ? { expiration_date: formData.expiration_date } : {})
+        };
 
-        if (!perfil) throw new Error("Sin negocio");
-
-        await db.products.add({
-          id: crypto.randomUUID(),
-          business_id: perfil.business_id,
-          ...productData,
-          sync_status: 'pending_create'
-        });
+        await db.products.add(newProduct as Product);
       }
 
       setIsFormOpen(false);
-      setEditingId(null);
+      resetForm();
       syncPush(); // Intentar subir cambios
 
-    } catch (error) {
+    } catch (error: unknown) {
       console.error(error);
-      alert("Error al guardar");
+      const msg = error instanceof Error ? error.message : "Error desconocido";
+      alert("Error al guardar: " + msg);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleDelete = async (p: Product) => {
-    if (!confirm(`¿Seguro que quieres eliminar "${p.name}"?`)) return;
+  const handleEdit = (product: Product) => {
+    setEditingId(product.id);
+    setFormData({
+      name: product.name,
+      price: product.price.toString(),
+      stock: product.stock.toString(),
+      sku: product.sku || '',
+      cost: product.cost?.toString() || '',
+      category: product.category || 'General',
+      unit: product.unit || 'un',
+      // Casting seguro para leer la fecha si existe
+      expiration_date: (product as Product & { expiration_date?: string }).expiration_date || ''
+    });
+    setIsFormOpen(true);
+  };
 
+  const handleDelete = async (id: string) => {
+    if (!confirm('¿Eliminar este producto?')) return;
     try {
-      if (p.sync_status === 'pending_create') {
-        await db.products.delete(p.id);
+      const product = await db.products.get(id);
+      if (product?.sync_status === 'pending_create') {
+        await db.products.delete(id); 
       } else {
-        await db.products.update(p.id, { sync_status: 'pending_delete' });
+        await db.products.update(id, { sync_status: 'pending_delete' }); 
+        await db.products.delete(id); 
       }
       syncPush();
     } catch (error) {
       console.error(error);
+      alert("Error al eliminar");
     }
   };
 
+  const resetForm = () => {
+    setFormData({
+      name: '', price: '', stock: '', sku: '', cost: '',
+      category: 'General', unit: 'un', expiration_date: ''
+    });
+    setEditingId(null);
+  };
+
   return (
-    <div className="p-6 pb-20">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">📦 Inventario</h1>
-        <div className="flex gap-2">
-           <button onClick={async () => { await syncPush(); await syncPull(); }} className="text-blue-600 hover:bg-blue-50 px-3 py-2 rounded font-medium text-sm">🔄 Sincronizar</button>
-          <button onClick={openCreate} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow flex items-center gap-2">＋ Nuevo</button>
+    <div className="p-6 max-w-7xl mx-auto pb-24">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+            <Package className="text-indigo-600"/> Inventario
+          </h1>
+          <p className="text-slate-500 text-sm">Gestiona tus productos y existencias</p>
+        </div>
+        <div className="flex gap-2 w-full sm:w-auto">
+          <div className="relative flex-1 sm:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+            <input 
+              type="text" 
+              placeholder="Buscar por nombre o SKU..." 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+            />
+          </div>
+          <button 
+            onClick={() => { resetForm(); setIsFormOpen(true); }}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold text-sm transition-colors shadow-sm"
+          >
+            <Plus size={18}/> <span className="hidden sm:inline">Nuevo Producto</span>
+          </button>
         </div>
       </div>
 
-      {isFormOpen && (
-        <div className="bg-white p-6 rounded-lg shadow-lg mb-6 border border-blue-100 animate-fade-in">
-          <h3 className="font-bold text-lg mb-4 text-gray-700">{editingId ? '✏️ Editar' : '✨ Nuevo'}</h3>
-          <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-gray-700">Nombre</label>
-              <input required type="text" className="w-full mt-1 p-2 border rounded" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-gray-700">Categoría</label>
-              <input list="categories-list" type="text" className="w-full mt-1 p-2 border rounded" placeholder="Ej: Bebidas..." value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} />
-              <datalist id="categories-list">
-                <option value="General" /><option value="Bebidas" /><option value="Comida" /><option value="Postres" />
-              </datalist>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <label className="block text-sm font-medium text-gray-700">Precio ($)</label>
-                    <input required type="number" step="0.01" className="w-full mt-1 p-2 border rounded" value={formData.price} onChange={e => setFormData({...formData, price: e.target.value})} />
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 text-slate-500">Costo ($)</label>
-                    <input type="number" step="0.01" className="w-full mt-1 p-2 border rounded bg-slate-50" value={formData.cost} onChange={e => setFormData({...formData, cost: e.target.value})} />
-                </div>
-            </div>
-
-            {/* --- SECCIÓN NUEVA DE STOCK Y UNIDAD --- */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Stock</label>
-                <input required type="number" step="0.001" className="w-full mt-1 p-2 border rounded" value={formData.stock} onChange={e => setFormData({...formData, stock: e.target.value})} />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Unidad</label>
-                <select className="w-full mt-1 p-2 border rounded bg-white" value={formData.unit} onChange={e => setFormData({...formData, unit: e.target.value})}>
-                  <option value="un">Unidad (un)</option>
-                  <option value="kg">Kilogramo (kg)</option>
-                  <option value="lb">Libra (lb)</option>
-                  <option value="lt">Litro (lt)</option>
-                  <option value="mt">Metro (mt)</option>
-                </select>
-              </div>
-            </div>
-            {/* -------------------------------------- */}
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700">SKU</label>
-              <input type="text" className="w-full mt-1 p-2 border rounded" value={formData.sku} onChange={e => setFormData({...formData, sku: e.target.value})} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Vencimiento</label>
-              <input type="date" className="w-full mt-1 p-2 border rounded" value={formData.expiration_date} onChange={e => setFormData({...formData, expiration_date: e.target.value})} />
-            </div>
-
-            <div className="md:col-span-2 mt-4 flex gap-2">
-              <button disabled={isLoading} className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2 rounded shadow">
-                {isLoading ? 'Guardando...' : '💾 Guardar'}
-              </button>
-              <button type="button" onClick={() => setIsFormOpen(false)} className="px-4 py-2 bg-slate-200 rounded text-slate-700">Cancelar</button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Tabla */}
-      <div className="bg-white rounded-lg shadow overflow-hidden overflow-x-auto">
-        <table className="w-full text-left min-w-[600px]">
-          <thead className="bg-gray-50 border-b">
-            <tr>
-              <th className="p-4 font-semibold text-gray-600">Producto</th>
-              <th className="p-4 font-semibold text-gray-600">Precio</th>
-              <th className="p-4 font-semibold text-gray-600">Stock</th>
-              <th className="p-4 font-semibold text-center">Acciones</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {productos?.map(p => (
-                <tr key={p.id} className="hover:bg-gray-50 group">
+      {/* --- LISTA DE PRODUCTOS --- */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        {!products ? (
+           <div className="p-12 flex justify-center"><Loader2 className="animate-spin text-indigo-500"/></div>
+        ) : filteredProducts?.length === 0 ? (
+           <div className="p-12 text-center text-slate-400 flex flex-col items-center">
+             <Package className="w-12 h-12 opacity-20 mb-2"/>
+             <p>No se encontraron productos.</p>
+           </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead className="bg-slate-50 text-slate-500 uppercase text-xs font-bold">
+                <tr>
+                  <th className="p-4">Producto</th>
+                  <th className="p-4">Categoría</th>
+                  <th className="p-4 text-right">Precio</th>
+                  <th className="p-4 text-center">Stock</th>
+                  <th className="p-4 text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredProducts?.map(product => (
+                  <tr key={product.id} className="hover:bg-slate-50/80 transition-colors group">
                     <td className="p-4">
-                        <div className="font-medium">{p.name}</div>
-                        <div className="text-xs text-gray-400">
-                           <span className="bg-slate-100 px-1 rounded text-slate-500 mr-1">{p.category || 'General'}</span> 
-                           {p.sku}
-                        </div>
+                      <div className="font-bold text-slate-800">{product.name}</div>
+                      <div className="text-xs text-slate-400 font-mono">{product.sku}</div>
                     </td>
-                    <td className="p-4 font-mono text-blue-600 font-bold">${p.price.toFixed(2)}</td>
-                    <td className={`p-4 font-bold ${p.stock < 5 ? 'text-red-500' : 'text-green-600'}`}>
-                        {p.stock} <span className="text-xs text-gray-400 font-normal uppercase">{p.unit || 'un'}</span>
+                    <td className="p-4 text-sm text-slate-600">
+                      <span className="bg-slate-100 px-2 py-1 rounded text-xs font-bold text-slate-500 border border-slate-200">
+                        {product.category}
+                      </span>
+                    </td>
+                    <td className="p-4 text-right font-bold text-indigo-600">
+                      ${product.price.toFixed(2)}
                     </td>
                     <td className="p-4 text-center">
-                        <div className="flex justify-center gap-2">
-                            <button onClick={() => openEdit(p)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-full">✏️</button>
-                            <button onClick={() => handleDelete(p)} className="p-2 text-red-500 hover:bg-red-50 rounded-full">🗑️</button>
-                        </div>
+                       <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                         product.stock <= 5 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                       }`}>
+                         {product.stock} {product.unit}
+                       </span>
                     </td>
-                </tr>
-            ))}
-          </tbody>
-        </table>
+                    <td className="p-4 text-right">
+                      <div className="flex justify-end gap-1 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => handleEdit(product)} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg">
+                          <Edit2 size={16}/>
+                        </button>
+                        <button onClick={() => handleDelete(product.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg">
+                          <Trash2 size={16}/>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
+
+      {/* --- MODAL DE CREACIÓN/EDICIÓN --- */}
+      {isFormOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="bg-slate-50 p-4 border-b border-slate-200 flex justify-between items-center">
+               <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                 {editingId ? <Edit2 size={18} className="text-indigo-600"/> : <Plus size={18} className="text-indigo-600"/>}
+                 {editingId ? 'Editar Producto' : 'Nuevo Producto'}
+               </h2>
+               <button onClick={() => setIsFormOpen(false)} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
+            </div>
+            
+            <form onSubmit={handleSubmit} className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+               {/* NOMBRE */}
+               <div className="sm:col-span-2">
+                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nombre del Producto</label>
+                 <input required type="text" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" 
+                   value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Ej. Coca Cola 600ml"/>
+               </div>
+
+               {/* PRECIO */}
+               <div>
+                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Precio Venta ($)</label>
+                 <input required type="number" step="0.01" min="0" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-indigo-600" 
+                   value={formData.price} onChange={e => setFormData({...formData, price: e.target.value})} placeholder="0.00"/>
+               </div>
+
+               {/* COSTO */}
+               <div>
+                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Costo Adquisición ($)</label>
+                 <input type="number" step="0.01" min="0" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" 
+                   value={formData.cost} onChange={e => setFormData({...formData, cost: e.target.value})} placeholder="Opcional"/>
+               </div>
+
+               {/* STOCK */}
+               <div>
+                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Stock Actual</label>
+                 <input required type="number" step="0.01" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" 
+                   value={formData.stock} onChange={e => setFormData({...formData, stock: e.target.value})} placeholder="0"/>
+               </div>
+
+               {/* UNIDAD */}
+               <div>
+                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Unidad de Medida</label>
+                 <select className="w-full p-2 border border-slate-300 rounded-lg bg-white" 
+                   value={formData.unit} onChange={e => setFormData({...formData, unit: e.target.value})}>
+                    <option value="un">Unidad (un)</option>
+                    <option value="kg">Kilogramo (kg)</option>
+                    <option value="lt">Litro (lt)</option>
+                    <option value="m">Metro (m)</option>
+                    <option value="pq">Paquete (pq)</option>
+                 </select>
+               </div>
+
+               {/* SKU */}
+               <div>
+                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Código (SKU/Barras)</label>
+                 <input type="text" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm" 
+                   value={formData.sku} onChange={e => setFormData({...formData, sku: e.target.value})} placeholder="Generar automático si vacío"/>
+               </div>
+
+               {/* CATEGORÍA */}
+               <div>
+                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Categoría</label>
+                 <input type="text" list="categories" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" 
+                   value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}/>
+                 <datalist id="categories">
+                   <option value="General"/>
+                   <option value="Bebidas"/>
+                   <option value="Alimentos"/>
+                   <option value="Limpieza"/>
+                 </datalist>
+               </div>
+               
+               {/* FECHA VENCIMIENTO (Opcional) */}
+               <div className="sm:col-span-2">
+                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Fecha de Vencimiento (Opcional)</label>
+                 <input type="date" className="w-full p-2 border border-slate-300 rounded-lg" 
+                   value={formData.expiration_date} onChange={e => setFormData({...formData, expiration_date: e.target.value})}/>
+               </div>
+
+               <div className="sm:col-span-2 pt-4 flex gap-3">
+                 <button type="button" onClick={() => setIsFormOpen(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors">
+                   Cancelar
+                 </button>
+                 <button type="submit" disabled={isLoading} className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200 flex justify-center items-center gap-2">
+                   {isLoading ? <Loader2 className="animate-spin"/> : <><Package size={18}/> Guardar Producto</>}
+                 </button>
+               </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
