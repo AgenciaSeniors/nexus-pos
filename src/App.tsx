@@ -240,14 +240,16 @@ function LoginScreen() {
 }
 
 // =============================================================================
-// 2. COMPONENTE BUSINESS APP
+// 2. COMPONENTE BUSINESS APP (CORREGIDO)
 // =============================================================================
 function BusinessApp() {
   const [session, setSession] = useState<Session | null>(null);
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
-  const lastLoadedUserId = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
+
+  // 🛡️ EL ESCUDO: Esta referencia evita el bucle infinito de recargas
+  const lastLoadedUserId = useRef<string | null>(null);
 
   const fetchProfile = async (userId: string) => {
     try {
@@ -277,12 +279,11 @@ function BusinessApp() {
           role: (data.role === 'admin' || data.role === 'super_admin') ? 'admin' : 'vendedor',
           pin: data.initial_pin || '0000',
           active: true,
-          
           // Casting seguro para incluir business_id
           business_id: data.business_id 
         } as unknown as Staff;
 
-        // Limpieza de datos antiguos si existen
+        // Limpieza y guardado local
         localStorage.removeItem('nexus_business_id');
         localStorage.removeItem('nexus_current_staff');
 
@@ -291,7 +292,10 @@ function BusinessApp() {
         }
         localStorage.setItem('nexus_current_staff', JSON.stringify(staffData));
         
-        lastLoadedUserId.current = userId;
+        // ✅ AQUÍ ESTÁ LA MAGIA:
+        // Marcamos este usuario como "ya cargado" para que el Listener no lo reinicie.
+        lastLoadedUserId.current = userId; 
+
         // Actualizamos estado en memoria
         setCurrentStaff(staffData);
       }
@@ -310,7 +314,7 @@ function BusinessApp() {
   };
 
   useEffect(() => {
-    // 1. Carga Inicial
+    // 1. Carga Inicial (Al abrir la app)
     const initSession = async () => {
       const { data: { session: initialSession } } = await supabase.auth.getSession();
       if (initialSession) {
@@ -321,37 +325,39 @@ function BusinessApp() {
         setCurrentStaff(null);
         localStorage.removeItem('nexus_business_id');
       }
-      setLoading(false); // Solo quitamos el loading inicial aquí
+      setLoading(false); 
     };
     initSession();
 
-    // 2. Escuchar cambios
+    // 2. Escuchar cambios de sesión (El Listener Inteligente)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       
       if (event === 'SIGNED_IN' && newSession) {
+        // 🛑 FRENO DE MANO:
+        // Si el usuario que entra es el mismo que ya tenemos cargado, NO reiniciamos nada.
         if (lastLoadedUserId.current === newSession.user.id) {
-            console.log("Sesión restaurada, omitiendo recarga de perfil.");
-            setSession(newSession); // Actualizar token si es necesario, pero no borrar data
-            return;
+            console.log("🔄 Sesión restaurada, evitando recarga innecesaria.");
+            setSession(newSession);
+            // Salimos inmediatamente para evitar el parpadeo "Cargando..."
+            return; 
         }
-        // Al entrar, limpiamos el staff anterior para evitar "nombres fantasmas"
+
+        // Si es un usuario nuevo (Login real), entonces sí limpiamos y cargamos
+        console.log("👤 Nuevo usuario detectado, recargando perfil...");
         setCurrentStaff(null); 
         setSession(newSession);
-        // NO activamos setLoading(true) global para evitar parpadeos molestos,
-        // dejamos que fetchProfile actualice el estado cuando termine.
         await fetchProfile(newSession.user.id);
       } 
       else if (event === 'SIGNED_OUT') {
         // Limpieza total
         setSession(null);
         setCurrentStaff(null);
-        lastLoadedUserId.current = null; // Limpiar referencia
+        lastLoadedUserId.current = null; // Reseteamos la referencia
         setIsLocked(false);
         localStorage.removeItem('nexus_business_id');
         localStorage.removeItem('nexus_current_staff');
       }
       else if (event === 'TOKEN_REFRESHED') {
-        // Solo actualizamos la sesión, NO recargamos perfil ni mostramos loading
         setSession(newSession);
       }
     });
@@ -359,11 +365,13 @@ function BusinessApp() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // --- RENDERIZADO CONDICIONAL ---
+
   if (loading) {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50 gap-4">
         <Loader2 className="animate-spin text-indigo-600 w-10 h-10" />
-        <p className="text-slate-500 font-medium animate-pulse">Cargando sistema...</p>
+        <p className="text-slate-500 font-medium animate-pulse">Iniciando sistema...</p>
       </div>
     );
   }
@@ -372,13 +380,12 @@ function BusinessApp() {
     return <LoginScreen />; 
   }
 
-  // Si hay sesión pero aún no se carga el staff (estamos en el limbo del fetchProfile)
-  // mostramos un estado intermedio en lugar del login
+  // Si hay sesión pero no perfil, mostramos carga
   if (session && !currentStaff) {
      return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50 gap-4">
         <Loader2 className="animate-spin text-indigo-600 w-10 h-10" />
-        <p className="text-slate-500 font-medium">Obteniendo perfil...</p>
+        <p className="text-slate-500 font-medium">Cargando perfil...</p>
       </div>
      );
   }

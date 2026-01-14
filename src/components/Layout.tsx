@@ -9,7 +9,7 @@ import { db, type Staff } from '../lib/db';
 import { syncPush } from '../lib/sync';
 import { supabase } from '../lib/supabase';
 import logo from '../logo.png'; 
-import { Toaster, toast } from 'sonner'; // ✅ IMPORTANTE: Importamos Sonner
+import { toast } from 'sonner'; // ✅ IMPORTANTE: Importamos Sonner
 
 interface LayoutProps {
   currentStaff: Staff | null;
@@ -79,8 +79,7 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
 
   return (
     <div className="flex h-screen w-full bg-slate-50 overflow-hidden font-sans">
-      {/* ✅ COMPONENTE TOASTER: Aquí se renderizan las notificaciones */}
-      <Toaster position="top-center" richColors expand={true} />
+      
       
       {/* SIDEBAR DESKTOP */}
       <aside className={`hidden md:flex flex-col items-center py-6 z-20 shadow-sm transition-all bg-white border-r border-slate-200 duration-300 ${isCashier ? 'w-20' : 'w-24'}`}>
