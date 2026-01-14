@@ -8,7 +8,14 @@ interface TicketModalProps {
 }
 
 export function TicketModal({ sale, onClose }: TicketModalProps) {
-  const config = useLiveQuery(() => db.settings.get('my-business'));
+  // ✅ CORRECCIÓN: Buscamos usando el ID real guardado en localStorage
+  const config = useLiveQuery(async () => {
+    const businessId = localStorage.getItem('nexus_business_id');
+    if (businessId) {
+      return await db.settings.get(businessId);
+    }
+    return undefined;
+  });
   
   if (!sale) return null;
 
@@ -58,7 +65,7 @@ export function TicketModal({ sale, onClose }: TicketModalProps) {
             <span>${sale.total.toFixed(2)}</span>
           </div>
 
-          {/* --- INFORMACIÓN DE PAGO (NUEVO) --- */}
+          {/* --- INFORMACIÓN DE PAGO --- */}
           <div className="bg-slate-50 p-3 rounded mb-6 text-xs space-y-1">
              <div className="flex justify-between">
                 <span className="text-slate-500">Método de Pago:</span>
@@ -77,7 +84,6 @@ export function TicketModal({ sale, onClose }: TicketModalProps) {
                </>
              )}
           </div>
-          {/* ----------------------------------- */}
 
           {/* Footer */}
           <div className="text-center text-xs text-slate-400 space-y-1">

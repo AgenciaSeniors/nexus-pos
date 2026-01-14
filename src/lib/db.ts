@@ -56,7 +56,6 @@ export interface BusinessConfig {
   phone?: string;
   receipt_message?: string;
 }
-
 export interface Customer {
   id: string;
   business_id: string;
@@ -143,9 +142,11 @@ export class NexusDB extends Dexie {
     super('NexusPOS_DB');
 
     this.version(3).stores({
+      businesses: 'id',
       products: 'id, business_id, sku, name, sync_status',
       sales: 'id, business_id, date, sync_status',
       movements: 'id, business_id, product_id, created_at, sync_status',
+      inventory_movements: 'id, business_id, product_id, sync_status',
       customers: 'id, business_id, name, phone, sync_status',
       parked_orders: 'id, business_id, date',
       settings: 'id',
