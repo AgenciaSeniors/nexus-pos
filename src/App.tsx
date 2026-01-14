@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import { type Staff } from './lib/db';
-import { type Session } from '@supabase/supabase-js'; // ✅ Importamos tipo Session
+import { type Session } from '@supabase/supabase-js';
 import { Toaster, toast } from 'sonner';
 
 // --- IMPORTACIONES DE PÁGINAS Y COMPONENTES ---
@@ -39,6 +39,10 @@ function LoginScreen() {
     setLoading(true);
 
     try {
+      // Limpiamos cualquier rastro anterior antes de intentar loguear
+      localStorage.removeItem('nexus_business_id');
+      localStorage.removeItem('nexus_current_staff');
+
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password
@@ -46,7 +50,8 @@ function LoginScreen() {
 
       if (error) throw error;
       toast.success("Bienvenido de nuevo");
-    } catch (error: unknown) { // ✅ Tipado seguro
+      // No necesitamos navegar manual, el listener de auth lo hará
+    } catch (error: unknown) {
       console.error(error);
       const errorMessage = error instanceof Error ? error.message : "Error desconocido";
       
@@ -92,7 +97,7 @@ function LoginScreen() {
         });
         setMode('login');
       }
-    } catch (error: unknown) { // ✅ Tipado seguro
+    } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Error desconocido";
       toast.error("Error en registro: " + errorMessage);
     } finally {
@@ -238,12 +243,11 @@ function LoginScreen() {
 // 2. COMPONENTE BUSINESS APP
 // =============================================================================
 function BusinessApp() {
-  const [session, setSession] = useState<Session | null>(null); // ✅ Tipado
+  const [session, setSession] = useState<Session | null>(null);
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
   const [loading, setLoading] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
 
-  // --- LOGICA DE RECUPERACIÓN DE PERFIL ---
   const fetchProfile = async (userId: string) => {
     try {
       const { data, error } = await supabase
@@ -252,59 +256,58 @@ function BusinessApp() {
         .eq('id', userId)
         .single();
 
-      // Si hay error (ej: usuario no encontrado porque se eliminó), lanzamos error
       if (error) throw error;
 
       if (data) {
-        // Verificar si está suspendido o eliminado lógicamente
-        if (data.status === 'suspended' || data.status === 'rejected' || data.status === 'deleted') {
-          throw new Error("Cuenta desactivada o eliminada");
-        }
-
         if (data.status === 'pending') {
           toast.info("Tu cuenta está pendiente de aprobación.");
           await supabase.auth.signOut();
           return;
         }
+        if (data.status === 'suspended' || data.status === 'rejected') {
+          toast.error("Acceso denegado. Contacta a soporte.");
+          await supabase.auth.signOut();
+          return;
+        }
 
-        // Construir objeto Staff
         const staffData: Staff = {
           id: data.id,
           name: data.full_name || data.email,
           role: (data.role === 'admin' || data.role === 'super_admin') ? 'admin' : 'vendedor',
           pin: data.initial_pin || '0000',
           active: true,
+          // Casting seguro para incluir business_id
           business_id: data.business_id 
-        };
+        } as unknown as Staff;
+
+        // Limpieza de datos antiguos si existen
+        localStorage.removeItem('nexus_business_id');
+        localStorage.removeItem('nexus_current_staff');
 
         if (data.business_id) {
           localStorage.setItem('nexus_business_id', data.business_id);
         }
-        
         localStorage.setItem('nexus_current_staff', JSON.stringify(staffData));
-        // Opcional: Si quieres auto-login sin PinPad para admins:
-        // setCurrentStaff(staffData); 
+        
+        // Actualizamos estado en memoria
+        setCurrentStaff(staffData);
       }
     } catch (error: unknown) {
-      // 🚨 AQUÍ ESTÁ EL ARREGLO:
-      // Si falla obtener el perfil (406, 404, etc), asumimos que el usuario ya no es válido.
-      console.error("Error crítico de perfil:", error);
+      const errorMessage = error instanceof Error ? error.message : "Error desconocido";
+      console.error("Error crítico de perfil:", errorMessage);
       
-      // 1. Cerramos la sesión de Supabase
       await supabase.auth.signOut();
-      
-      // 2. Limpiamos estado local
       setSession(null);
       setCurrentStaff(null);
       localStorage.removeItem('nexus_business_id');
       localStorage.removeItem('nexus_current_staff');
       
-      // 3. Avisamos al usuario
-      toast.error("Sesión caducada o usuario no encontrado.");
+      toast.error("Sesión inválida o usuario eliminado.");
     }
   };
 
   useEffect(() => {
+    // 1. Carga Inicial
     const initSession = async () => {
       const { data: { session: initialSession } } = await supabase.auth.getSession();
       if (initialSession) {
@@ -315,23 +318,32 @@ function BusinessApp() {
         setCurrentStaff(null);
         localStorage.removeItem('nexus_business_id');
       }
-      setLoading(false);
+      setLoading(false); // Solo quitamos el loading inicial aquí
     };
     initSession();
 
+    // 2. Escuchar cambios
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+      
       if (event === 'SIGNED_IN' && newSession) {
+        // Al entrar, limpiamos el staff anterior para evitar "nombres fantasmas"
+        setCurrentStaff(null); 
         setSession(newSession);
-        setLoading(true);
+        // NO activamos setLoading(true) global para evitar parpadeos molestos,
+        // dejamos que fetchProfile actualice el estado cuando termine.
         await fetchProfile(newSession.user.id);
-        setLoading(false);
       } 
       else if (event === 'SIGNED_OUT') {
+        // Limpieza total
         setSession(null);
         setCurrentStaff(null);
         setIsLocked(false);
         localStorage.removeItem('nexus_business_id');
         localStorage.removeItem('nexus_current_staff');
+      }
+      else if (event === 'TOKEN_REFRESHED') {
+        // Solo actualizamos la sesión, NO recargamos perfil ni mostramos loading
+        setSession(newSession);
       }
     });
 
@@ -351,20 +363,28 @@ function BusinessApp() {
     return <LoginScreen />; 
   }
 
-  if (!currentStaff || isLocked) {
+  // Si hay sesión pero aún no se carga el staff (estamos en el limbo del fetchProfile)
+  // mostramos un estado intermedio en lugar del login
+  if (session && !currentStaff) {
+     return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50 gap-4">
+        <Loader2 className="animate-spin text-indigo-600 w-10 h-10" />
+        <p className="text-slate-500 font-medium">Obteniendo perfil...</p>
+      </div>
+     );
+  }
+
+  if (isLocked) {
     return (
       <PinPad 
         onSuccess={(staff) => {
           setCurrentStaff(staff);
           setIsLocked(false);
         }} 
-        // Descomenta si tu componente PinPad soporta onLogout
-        // onLogout={async () => await supabase.auth.signOut()} 
       />
     );
   }
 
-  // ✅ CORRECCIÓN DE RUTAS: Usamos Rutas Anidadas para el Layout
   return (
     <Routes>
       <Route element={<Layout currentStaff={currentStaff} onLock={() => setIsLocked(true)} />}>
@@ -374,7 +394,6 @@ function BusinessApp() {
         <Route path="/finanzas" element={<FinancePage />} />
         <Route path="/equipo" element={<StaffPage />} />
         <Route path="/configuracion" element={<SettingsPage />} />
-        {/* Ruta para manejar URLs desconocidas dentro de la sesión */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
