@@ -1,142 +1,174 @@
+import { db, type Product, type Sale, type InventoryMovement, type Customer } from './db';
 import { supabase } from './supabase';
-import { db } from './db';
 
-// 1. Función de BAJADA (Nube -> Local)
-export async function syncPull() {
-  console.log("🔄 Iniciando sincronización (Nube -> Local)...");
+// Helper para verificar conexión
+const isOnline = () => navigator.onLine;
+
+export async function syncPush() {
+  if (!isOnline()) return;
 
   try {
-    // A. Verificamos si hay sesión activa
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return;
+    const businessId = localStorage.getItem('nexus_business_id');
+    if (!businessId) return;
 
-    // B. Descargar PRODUCTOS (Esto ya lo tenías)
-    const { data: cloudProducts, error } = await supabase
-      .from('products')
-      .select('*');
+    // --------------------------------------------------------
+    // 1. SINCRONIZAR PRODUCTOS (¡SIN SOBRESCRIBIR STOCK!)
+    // --------------------------------------------------------
+    const pendingProducts = await db.products
+      .where('sync_status')
+      .anyOf('pending_create', 'pending_update')
+      .toArray();
 
-    if (error) throw error;
+    if (pendingProducts.length > 0) {
+      for (const p of pendingProducts) {
+        // Preparamos los datos base
+        const productPayload: any = {
+          id: p.id,
+          business_id: p.business_id,
+          name: p.name,
+          price: p.price,
+          cost: p.cost,
+          sku: p.sku,
+          category: p.category,
+          unit: p.unit,
+          expiration_date: p.expiration_date
+        };
 
-    if (cloudProducts && cloudProducts.length > 0) {
-      await db.products.bulkPut(
-        cloudProducts.map(p => ({
-            ...p,
-            sync_status: 'synced'
-        }))
-      );
+        // 🛡️ LÓGICA ANTI-RACE CONDITION:
+        // Solo enviamos el stock si es un producto NUEVO ('pending_create').
+        // Si es una actualización ('pending_update'), NO enviamos el stock,
+        // confiamos en que los 'movements' mantendrán el stock correcto en la nube.
+        if (p.sync_status === 'pending_create') {
+           productPayload.stock = p.stock;
+        }
+
+        const { error } = await supabase
+          .from('products')
+          .upsert(productPayload);
+
+        if (!error) {
+          await db.products.update(p.id, { sync_status: 'synced' });
+        } else {
+          console.error("Error sync product:", p.name, error);
+        }
+      }
     }
 
-    // ============================================================
-    //  AQUÍ ESTÁ LA PARTE NUEVA DEL PASO 3 (Configuración)
-    // ============================================================
-    
-    // C.1. Buscamos el perfil del usuario para saber su business_id
-    const { data: perfil } = await supabase
-        .from('profiles')
-        .select('business_id')
-        .eq('id', session.user.id)
-        .single();
+    // --------------------------------------------------------
+    // 2. SINCRONIZAR MOVIMIENTOS DE INVENTARIO (CRÍTICO)
+    // --------------------------------------------------------
+    const pendingMovements = await db.movements
+        .where('sync_status')
+        .equals('pending_create')
+        .toArray();
 
-    if (perfil) {
-        // C.2. Buscamos los detalles de ese negocio en la nube
-        const { data: business } = await supabase
-            .from('businesses')
-            .select('*')
-            .eq('id', perfil.business_id)
-            .single();
+    if (pendingMovements.length > 0) {
+        // Mapeamos para quitar campos locales internos si fuera necesario
+        const movementsToPush = pendingMovements.map(m => ({
+            id: m.id,
+            business_id: m.business_id,
+            product_id: m.product_id,
+            qty_change: m.qty_change,
+            reason: m.reason,
+            created_at: m.created_at,
+            staff_id: m.staff_id
+        }));
 
-        if (business) {
-            // C.3. Guardamos esos detalles en la base de datos LOCAL (Dexie)
-            // Usamos un ID fijo 'my-business' porque solo guardamos 1 configuración
-            await db.settings.put({
-                id: 'my-business', 
-                name: business.name,
-                address: business.address,
-                phone: business.phone,
-                receipt_message: business.receipt_message
-            });
-            console.log("🏢 Configuración descargada y guardada en local.");
+        // Enviamos a Supabase
+        // ALERTA: El Trigger SQL que creamos se ejecutará aquí automáticamente
+        const { error } = await supabase.from('inventory_movements').insert(movementsToPush);
+
+        if (!error) {
+            // Si éxito, marcamos como synced localmente
+            const ids = pendingMovements.map(m => m.id);
+            await db.movements.where('id').anyOf(ids).modify({ sync_status: 'synced' });
+        } else {
+            console.error("Error sync movements:", error);
         }
     }
-    // ============================================================
 
-    console.log("✅ Pull (Bajada) completado.");
+    // --------------------------------------------------------
+    // 3. SINCRONIZAR VENTAS
+    // --------------------------------------------------------
+    const pendingSales = await db.sales
+      .where('sync_status')
+      .equals('pending_create')
+      .toArray();
+
+    if (pendingSales.length > 0) {
+      const salesToPush = pendingSales.map(s => ({
+        id: s.id,
+        business_id: s.business_id,
+        date: s.date,
+        total: s.total,
+        payment_method: s.payment_method,
+        staff_id: s.staff_id,
+        staff_name: s.staff_name,
+        // Convertimos items a JSON si tu DB usa JSONB, o mantén estructura si normalizaste
+        items: s.items 
+      }));
+
+      const { error } = await supabase.from('sales').insert(salesToPush);
+
+      if (!error) {
+        const ids = pendingSales.map(s => s.id);
+        await db.sales.where('id').anyOf(ids).modify({ sync_status: 'synced' });
+      }
+    }
+
+    // --------------------------------------------------------
+    // 4. SINCRONIZAR CLIENTES
+    // --------------------------------------------------------
+    const pendingCustomers = await db.customers
+      .where('sync_status')
+      .anyOf('pending_create', 'pending_update')
+      .toArray();
+
+    if (pendingCustomers.length > 0) {
+        for (const c of pendingCustomers) {
+            const { error } = await supabase.from('customers').upsert({
+                id: c.id,
+                business_id: c.business_id,
+                name: c.name,
+                phone: c.phone,
+                email: c.email,
+                address: c.address,
+                notes: c.notes
+            });
+            if(!error) {
+                await db.customers.update(c.id, { sync_status: 'synced' });
+            }
+        }
+    }
 
   } catch (error) {
-    console.error("❌ Error en sincronización:", error);
+    console.error("Error general de sincronización:", error);
   }
 }
 
-// 2. Función de SUBIDA (Local -> Nube) - (Esta se mantiene igual que antes)
-export async function syncPush() {
-  console.log("⬆️ Iniciando subida inteligente...");
-  
-  try {
-    // 1. PRODUCTOS CREADOS
-    const creados = await db.products.where('sync_status').equals('pending_create').toArray();
-    if (creados.length > 0) {
-      for (const p of creados) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { sync_status: _, ...data } = p;
-        const { error } = await supabase.from('products').insert(data);
-        if (!error) await db.products.update(p.id, { sync_status: 'synced' });
-      }
-    }
+// Función para TRAER datos frescos (Pull)
+// Esto es importante para corregir el stock local con el valor real del servidor
+export async function syncPull() {
+    if (!isOnline()) return;
+    const businessId = localStorage.getItem('nexus_business_id');
+    if (!businessId) return;
 
-    // 2. PRODUCTOS ACTUALIZADOS
-    const modificados = await db.products.where('sync_status').equals('pending_update').toArray();
-    if (modificados.length > 0) {
-      for (const p of modificados) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { sync_status: _, ...data } = p;
-        const { error } = await supabase.from('products').update(data).eq('id', p.id); 
-        if (!error) await db.products.update(p.id, { sync_status: 'synced' });
-      }
-    }
-
-    // 3. PRODUCTOS ELIMINADOS
-    const eliminados = await db.products.where('sync_status').equals('pending_delete').toArray();
-    if (eliminados.length > 0) {
-      for (const p of eliminados) {
-        const { error } = await supabase.from('products').delete().eq('id', p.id);
-        if (!error || error.code === 'PGRST116') {
-          await db.products.delete(p.id);
-        }
-      }
-    }
-
-    // 4. VENTAS
-    const ventas = await db.sales.where('sync_status').equals('pending').toArray();
-    if (ventas.length > 0) {
-      for (const v of ventas) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { sync_status: _, ...data } = v;
-        const { error } = await supabase.from('sales').insert(data);
-        if (!error) await db.sales.update(v.id, { sync_status: 'synced' });
-      }
-    }
-
-    // 5. CONFIGURACIÓN DEL NEGOCIO (¡También la subimos si cambia!)
-    const settings = await db.settings.get('my-business');
-    if (settings) {
-        // Obtenemos el business_id de nuevo para asegurar
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-             const { data: perfil } = await supabase.from('profiles').select('business_id').eq('id', session.user.id).single();
-             if (perfil) {
-                 await supabase.from('businesses').update({
-                     name: settings.name,
-                     address: settings.address,
-                     phone: settings.phone,
-                     receipt_message: settings.receipt_message
-                 }).eq('id', perfil.business_id);
-             }
-        }
-    }
-
-    console.log("✅ Sincronización completada.");
+    // 1. Traer Productos (para actualizar Stock real calculado por el servidor)
+    const { data: remoteProducts } = await supabase
+        .from('products')
+        .select('*')
+        .eq('business_id', businessId);
     
-  } catch (error) {
-    console.error("❌ Error en Push:", error);
-  }
+    if (remoteProducts) {
+        await db.transaction('rw', db.products, async () => {
+            for (const p of remoteProducts) {
+                const local = await db.products.get(p.id);
+                // Solo actualizamos si localmente no tenemos cambios pendientes
+                // para no sobrescribir el trabajo del usuario actual
+                if (!local || local.sync_status === 'synced') {
+                    await db.products.put({ ...p, sync_status: 'synced' });
+                }
+            }
+        });
+    }
 }
