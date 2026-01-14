@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { db, type Product } from '../lib/db';
+import { db, type Product, } from '../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Plus, Search, Edit2, Trash2, Package, Loader2 } from 'lucide-react';
 import { syncPush } from '../lib/sync';
@@ -22,7 +22,6 @@ export function InventoryPage() {
     expiration_date: ''
   });
 
-  // Filtrado de productos
   const filteredProducts = products?.filter(p => 
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.sku?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -33,14 +32,13 @@ export function InventoryPage() {
     setIsLoading(true);
 
     try {
-      // 1. Obtener business_id de forma segura (Offline friendly)
       const storedBusinessId = localStorage.getItem('nexus_business_id');
       
       if (!editingId && !storedBusinessId) {
         throw new Error("No se identificó el negocio (Falta business_id en sesión local).");
       }
 
-      // Preparamos los datos
+      // Preparamos los datos base
       const productData: Partial<Product> = {
         name: formData.name,
         price: parseFloat(formData.price) || 0,
@@ -51,47 +49,93 @@ export function InventoryPage() {
         unit: formData.unit || 'un',
       };
       
-      // Manejo de fecha de vencimiento (Extendemos el tipo para evitar 'any')
       if(formData.expiration_date) {
         (productData as Product & { expiration_date?: string }).expiration_date = formData.expiration_date;
       }
 
+      // --- LÓGICA DE TRAZABILIDAD ---
       if (editingId) {
-        // --- EDICIÓN ---
+        // MODO EDICIÓN
         const original = await db.products.get(editingId);
         if (!original) return;
 
         const finalBusinessId = original.business_id || storedBusinessId || 'unknown';
+        
+        // 1. Calcular Diferencia de Stock (Trazabilidad)
+        const oldStock = original.stock;
+        const newStock = productData.stock || 0;
+        const difference = newStock - oldStock;
 
-        await db.products.update(editingId, {
-          ...productData,
-          business_id: finalBusinessId,
-          sync_status: original.sync_status === 'pending_create' ? 'pending_create' : 'pending_update'
+        // 2. Si el stock cambió, registramos el movimiento "correction"
+        // NOTA: Usamos una transacción para que si falla uno, fallen los dos (Integridad)
+        await db.transaction('rw', db.products, db.movements, async () => {
+            
+            // A. Actualizamos el Producto (Foto actual)
+            await db.products.update(editingId, {
+              ...productData,
+              business_id: finalBusinessId,
+              sync_status: original.sync_status === 'pending_create' ? 'pending_create' : 'pending_update'
+            });
+
+            // B. Insertamos el Movimiento (Historial) si hubo cambio
+            // Solo registramos si la diferencia no es cero (para no llenar basura)
+            if (difference !== 0) {
+                await db.movements.add({
+                    id: crypto.randomUUID(),
+                    business_id: finalBusinessId,
+                    product_id: editingId,
+                    qty_change: difference,
+                    reason: 'correction', // Corrección de inventario manual
+                    created_at: new Date().toISOString(),
+                    sync_status: 'pending_create'
+                });
+            }
         });
 
       } else {
-        // --- CREACIÓN ---
-        // Preparamos el objeto completo para la creación
-        const newProduct = {
-            id: crypto.randomUUID(),
-            business_id: storedBusinessId!,
-            name: productData.name!,
-            price: productData.price!,
-            stock: productData.stock!,
-            sku: productData.sku,
-            cost: productData.cost,
-            category: productData.category,
-            unit: productData.unit,
-            sync_status: 'pending_create',
-            ...(formData.expiration_date ? { expiration_date: formData.expiration_date } : {})
-        };
+        // MODO CREACIÓN
+        const newProductId = crypto.randomUUID();
+        const initialStock = productData.stock || 0;
 
-        await db.products.add(newProduct as Product);
+        await db.transaction('rw', db.products, db.movements, async () => {
+            // A. Crear Producto
+            const newProduct = {
+                id: newProductId,
+                business_id: storedBusinessId!,
+                name: productData.name!,
+                price: productData.price!,
+                stock: initialStock,
+                sku: productData.sku,
+                cost: productData.cost,
+                category: productData.category,
+                unit: productData.unit,
+                sync_status: 'pending_create',
+                ...(formData.expiration_date ? { expiration_date: formData.expiration_date } : {})
+            };
+
+            await db.products.add(newProduct as Product);
+
+            // B. Registrar Movimiento Inicial (Si empieza con stock > 0)
+            if (initialStock !== 0) {
+                await db.movements.add({
+                    id: crypto.randomUUID(),
+                    business_id: storedBusinessId!,
+                    product_id: newProductId,
+                    qty_change: initialStock,
+                    reason: 'initial', // Carga inicial
+                    created_at: new Date().toISOString(),
+                    sync_status: 'pending_create'
+                });
+            }
+        });
       }
 
       setIsFormOpen(false);
       resetForm();
-      syncPush(); // Intentar subir cambios
+      
+      // Intentar subir cambios (Productos y Movimientos)
+      // Nota: Necesitaremos actualizar sync.ts luego para que suba la tabla 'movements'
+      syncPush(); 
 
     } catch (error: unknown) {
       console.error(error);
@@ -112,7 +156,6 @@ export function InventoryPage() {
       cost: product.cost?.toString() || '',
       category: product.category || 'General',
       unit: product.unit || 'un',
-      // Casting seguro para leer la fecha si existe
       expiration_date: (product as Product & { expiration_date?: string }).expiration_date || ''
     });
     setIsFormOpen(true);
@@ -122,6 +165,20 @@ export function InventoryPage() {
     if (!confirm('¿Eliminar este producto?')) return;
     try {
       const product = await db.products.get(id);
+      
+      // Trazabilidad: Registrar que se eliminó el stock remanente
+      if (product && product.stock !== 0) {
+          await db.movements.add({
+              id: crypto.randomUUID(),
+              business_id: product.business_id,
+              product_id: id,
+              qty_change: -product.stock, // Restamos todo lo que quedaba
+              reason: 'correction', // Salida por eliminación
+              created_at: new Date().toISOString(),
+              sync_status: 'pending_create'
+          });
+      }
+
       if (product?.sync_status === 'pending_create') {
         await db.products.delete(id); 
       } else {
@@ -172,7 +229,6 @@ export function InventoryPage() {
         </div>
       </div>
 
-      {/* --- LISTA DE PRODUCTOS --- */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         {!products ? (
            <div className="p-12 flex justify-center"><Loader2 className="animate-spin text-indigo-500"/></div>
@@ -233,7 +289,6 @@ export function InventoryPage() {
         )}
       </div>
 
-      {/* --- MODAL DE CREACIÓN/EDICIÓN --- */}
       {isFormOpen && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">

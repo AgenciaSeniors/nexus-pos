@@ -14,7 +14,6 @@ interface CartItem extends Product {
 }
 
 export function PosPage() {
-  // 1. RECUPERAMOS AL EMPLEADO AUTOMÁTICAMENTE (Viene del Layout/PIN)
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
 
   const [query, setQuery] = useState('');
@@ -29,13 +28,10 @@ export function PosPage() {
 
   const allProducts = useLiveQuery(() => db.products.toArray()) || [];
 
-  // ✅ CORRECCIÓN 1: Filtramos categorías vacías o nulas y eliminamos "General" forzado
   const categories = ['Todo', ...new Set(allProducts.map(p => p.category).filter((c): c is string => !!c))].sort();
 
-  // 2. CACHÉ AUTOMÁTICA DEL NEGOCIO (Offline-Ready)
   useEffect(() => {
     const cacheBusinessId = async () => {
-      // Solo intentamos si hay internet. Si falla, no pasa nada, usamos lo que haya en caché.
       if (!navigator.onLine) return;
 
       const { data: { session } } = await supabase.auth.getSession();
@@ -56,7 +52,6 @@ export function PosPage() {
 
   const filteredProducts = allProducts.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.includes(query);
-    // ✅ CORRECCIÓN 2: Comparación estricta, sin fallback a 'General'
     const matchesCategory = selectedCategory === 'Todo' || p.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
@@ -87,6 +82,9 @@ export function PosPage() {
   const handleParkOrder = async () => {
     if (cart.length === 0) return;
     
+    // ✅ CORRECCIÓN 1: Obtener business_id para cumplir con el tipo ParkedOrder
+    const businessId = localStorage.getItem('nexus_business_id') || 'unknown';
+
     const itemsToPark: SaleItem[] = cart.map(item => ({
         product_id: item.id,
         name: item.name,
@@ -97,6 +95,7 @@ export function PosPage() {
 
     await db.parked_orders.add({
       id: crypto.randomUUID(),
+      business_id: businessId, // Agregado
       date: new Date().toISOString(),
       items: itemsToPark,
       total: totalAmount
@@ -110,15 +109,17 @@ export function PosPage() {
       if (!confirm("Hay una venta en curso. ¿Deseas reemplazarla?")) return;
     }
     
+    // ✅ CORRECCIÓN 2: Rellenar propiedades faltantes de CartItem (Product)
     const restoredCart: CartItem[] = order.items.map(item => ({
         id: item.product_id,
         name: item.name,
         price: item.price,
         quantity: item.quantity,
         unit: item.unit,
-        stock: 999, // Stock visual temporal
+        stock: 999, // Stock visual temporal (no afecta lógica real)
         sku: '',
-        business_id: ''
+        business_id: order.business_id,
+        sync_status: 'synced' // Valor dummy necesario por el tipo Product
     }));
 
     setCart(restoredCart);
@@ -126,8 +127,8 @@ export function PosPage() {
     setShowParkedModal(false);
   };
 
-  // --- FUNCIÓN DE COBRO (OFFLINE-FIRST CON VENDEDOR AUTOMÁTICO) ---
-  const handleCheckout = async (paymentMethod: 'efectivo' | 'transferencia', tendered: number, change: number) => {
+  // --- FUNCIÓN DE COBRO (CON TRAZABILIDAD) ---
+  const handleCheckout = async (paymentMethod: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto', tendered: number, change: number) => {
     if (cart.length === 0) return;
     setIsCheckout(true);
     setShowPaymentModal(false);
@@ -142,18 +143,20 @@ export function PosPage() {
       }
 
       const saleId = crypto.randomUUID();
+      const saleDate = new Date().toISOString();
       
       const newSale: Sale = {
         id: saleId,
         business_id: businessId,
         total: totalAmount,
-        date: new Date().toISOString(),
+        date: saleDate,
         items: cart.map(item => ({ 
             product_id: item.id, 
             name: item.name, 
             quantity: item.quantity, 
             price: item.price,
-            unit: item.unit 
+            unit: item.unit,
+            cost: item.cost 
         })),
         
         staff_id: currentStaff.id,
@@ -162,17 +165,34 @@ export function PosPage() {
         payment_method: paymentMethod,
         amount_tendered: tendered,
         change: change,
-        sync_status: 'pending'
+        // ✅ CORRECCIÓN 3: Usar el literal correcto
+        sync_status: 'pending_create'
       };
 
-      await db.transaction('rw', db.products, db.sales, async () => {
+      // 🛡️ TRANSACCIÓN ATÓMICA: Venta + Descuento Stock + Historial Movimiento
+      await db.transaction('rw', db.products, db.sales, db.movements, async () => {
+        // 1. Guardar la venta
         await db.sales.add(newSale);
+
         for (const item of cart) {
           const product = await db.products.get(item.id);
           if (product) {
+            // 2. Actualizar Stock
             await db.products.update(item.id, { 
               stock: product.stock - item.quantity, 
               sync_status: 'pending_update' 
+            });
+
+            // 3. REGISTRAR EL MOVIMIENTO (Trazabilidad)
+            await db.movements.add({
+                id: crypto.randomUUID(),
+                business_id: businessId,
+                product_id: item.id,
+                qty_change: -item.quantity, // Negativo porque es venta
+                reason: 'sale',
+                created_at: saleDate,
+                staff_id: currentStaff.id,
+                sync_status: 'pending_create'
             });
           }
         }
@@ -222,13 +242,11 @@ export function PosPage() {
                  <button key={p.id} onClick={() => addToCart(p)} className="group relative bg-white rounded-2xl p-4 shadow-sm hover:shadow-xl border border-slate-100 hover:border-indigo-100 transition-all duration-300 flex flex-col justify-between h-40 overflow-hidden text-left">
                  <div className="absolute inset-0 bg-gradient-to-br from-transparent to-indigo-50 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                  <div className="relative z-10">
-                    {/* ✅ CORRECCIÓN 3: Ocultar etiqueta si no hay categoría */}
                     {p.category && (
                       <span className="inline-block px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-2 group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
                         {p.category}
                       </span>
                     )}
-                    {/* Ajuste de margen si no hay categoría para que el título no suba tanto */}
                     <h3 className={`font-bold text-slate-700 leading-snug text-sm line-clamp-2 group-hover:text-indigo-900 ${!p.category ? 'mt-4' : ''}`}>
                       {p.name}
                     </h3>
