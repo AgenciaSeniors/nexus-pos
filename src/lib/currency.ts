@@ -1,49 +1,74 @@
-// src/lib/currency.ts
+// Librería de Manejo Seguro de Moneda
+// Evita errores de punto flotante (0.1 + 0.2 = 0.300000004)
 
-/**
- * Convierte un monto decimal (ej: 10.50) a centavos enteros (1050).
- * Esto elimina los errores de punto flotante de JS.
- */
-export const toCents = (amount: number): number => {
-  return Math.round(amount * 100);
-};
+const LOCALE = 'es-MX'; // Ajusta a tu país (es-AR, es-CL, es-CO, etc.)
+const CURRENCY = 'MXN'; // Ajusta a tu moneda (ARS, CLP, COP, etc.)
 
-/**
- * Convierte centavos (1050) de vuelta a decimal (10.50) para mostrar en pantalla.
- */
-export const fromCents = (cents: number): number => {
-  return cents / 100;
-};
+export const currency = {
+  /**
+   * Convierte un monto en dólares/pesos a centavos (enteros)
+   * Ej: 10.50 -> 1050
+   */
+  toCents: (amount: number): number => {
+    return Math.round(amount * 100);
+  },
 
-/**
- * Suma dos montos de forma segura.
- * Uso: safeAdd(19.99, 9.99) -> Retorna 29.98 (exacto)
- */
-export const safeAdd = (a: number, b: number): number => {
-  return fromCents(toCents(a) + toCents(b));
-};
+  /**
+   * Convierte centavos a monto decimal
+   * Ej: 1050 -> 10.50
+   */
+  fromCents: (cents: number): number => {
+    return cents / 100;
+  },
 
-/**
- * Resta dos montos de forma segura.
- */
-export const safeSub = (a: number, b: number): number => {
-  return fromCents(toCents(a) - toCents(b));
-};
+  /**
+   * Formatea un número para mostrar en pantalla
+   * Ej: 1250.5 -> "$1,250.50"
+   */
+  format: (amount: number): string => {
+    return new Intl.NumberFormat(LOCALE, {
+      style: 'currency',
+      currency: CURRENCY,
+      minimumFractionDigits: 2
+    }).format(amount);
+  },
 
-/**
- * Multiplica (ej: Precio x Cantidad) de forma segura.
- */
-export const safeMul = (amount: number, quantity: number): number => {
-  // Cantidad suele ser entero, pero por si acaso tratamos todo con cuidado
-  return fromCents(Math.round(toCents(amount) * quantity));
-};
+  /**
+   * Suma segura de dos montos decimales
+   */
+  add: (a: number, b: number): number => {
+    const aCents = Math.round(a * 100);
+    const bCents = Math.round(b * 100);
+    return (aCents + bCents) / 100;
+  },
 
-/**
- * Formatea dinero para mostrar al usuario (ej: "$ 1,250.00")
- */
-export const formatCurrency = (amount: number): string => {
-  return new Intl.NumberFormat('es-MX', {
-    style: 'currency',
-    currency: 'MXN',
-  }).format(amount);
+  /**
+   * Resta segura (a - b)
+   */
+  subtract: (a: number, b: number): number => {
+    const aCents = Math.round(a * 100);
+    const bCents = Math.round(b * 100);
+    return (aCents - bCents) / 100;
+  },
+
+  /**
+   * Multiplicación segura (Precio * Cantidad)
+   */
+  multiply: (price: number, quantity: number): number => {
+    // Convertimos precio a centavos, multiplicamos y regresamos a decimal
+    const priceCents = Math.round(price * 100);
+    return (priceCents * quantity) / 100;
+  },
+
+  /**
+   * Calcula el total de un carrito de compras de forma segura
+   */
+  calculateTotal: (items: { price: number; quantity: number }[]): number => {
+    const totalCents = items.reduce((sum, item) => {
+      const itemTotalCents = Math.round(item.price * 100) * item.quantity;
+      return sum + itemTotalCents;
+    }, 0);
+    
+    return totalCents / 100;
+  }
 };

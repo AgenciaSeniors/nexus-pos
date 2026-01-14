@@ -8,6 +8,7 @@ import { TicketModal } from '../components/TicketModal';
 import { PaymentModal } from '../components/PaymentModal';
 import { ParkedOrdersModal } from '../components/ParkedOrdersModal';
 import { PauseCircle, ClipboardList, Users } from 'lucide-react';
+import { currency } from '../lib/currency';
 
 interface CartItem extends Product {
   quantity: number;
@@ -76,7 +77,7 @@ export function PosPage() {
     }));
   };
 
-  const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const totalAmount = currency.calculateTotal(cart);
 
   // --- LÓGICA DE CUENTAS EN ESPERA ---
   const handleParkOrder = async () => {
@@ -256,7 +257,7 @@ export function PosPage() {
                         <span>Stock:</span>
                         <span className={`${p.stock < 5 ? 'text-red-500' : 'text-slate-600'}`}>{p.stock} <span className="text-[10px] uppercase">{p.unit || 'un'}</span></span>
                     </div>
-                    <div className="bg-slate-50 text-slate-900 font-bold px-3 py-1.5 rounded-lg text-sm shadow-sm group-hover:bg-indigo-600 group-hover:text-white group-hover:shadow-indigo-200 transition-all">${p.price}</div>
+                    <div className="bg-slate-50 text-slate-900 font-bold px-3 py-1.5 rounded-lg text-sm shadow-sm group-hover:bg-indigo-600 group-hover:text-white group-hover:shadow-indigo-200 transition-all">{currency.format(p.price)}</div>
                  </div>
                </button>
             ))}
@@ -293,7 +294,9 @@ export function PosPage() {
                   <button onClick={() => updateQuantity(item.id, item.quantity + 1)} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-green-600 hover:bg-white rounded font-bold transition-all">+</button>
                 </div>
 
-                <div className="font-bold text-sm w-16 text-right">${(item.price * item.quantity).toFixed(2)}</div>
+                <div className="font-bold text-sm w-16 text-right">
+                  {currency.format(currency.multiply(item.price, item.quantity))}
+                  </div>
                 <button onClick={() => removeFromCart(item.id)} className="text-slate-300 hover:text-red-500 px-2 transition-colors">×</button>
               </div>
             ))}
@@ -327,7 +330,7 @@ export function PosPage() {
 
           <div className="flex justify-between text-xl font-bold text-slate-800 pt-2">
             <span>Total</span>
-            <span>${totalAmount.toFixed(2)}</span>
+            <span>{currency.format(totalAmount)}</span>
           </div>
           <button onClick={() => setShowPaymentModal(true)} disabled={cart.length === 0 || isCheckout} className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-xl shadow-lg transition-transform active:scale-95 disabled:bg-slate-300">
             {isCheckout ? 'Procesando...' : 'Cobrar Ticket'}

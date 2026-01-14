@@ -3,6 +3,7 @@ import { db, type Product, } from '../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Plus, Search, Edit2, Trash2, Package, Loader2 } from 'lucide-react';
 import { syncPush } from '../lib/sync';
+import { currency } from '../lib/currency';
 
 export function InventoryPage() {
   const products = useLiveQuery(() => db.products.toArray());
@@ -262,7 +263,8 @@ export function InventoryPage() {
                       </span>
                     </td>
                     <td className="p-4 text-right font-bold text-indigo-600">
-                      ${product.price.toFixed(2)}
+                      {currency.format(product.price)}
+
                     </td>
                     <td className="p-4 text-center">
                        <span className={`px-2 py-1 rounded-full text-xs font-bold ${
