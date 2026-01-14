@@ -9,8 +9,8 @@ import { logAuditAction } from '../lib/audit';
 import { TicketModal } from '../components/TicketModal';
 import { PaymentModal } from '../components/PaymentModal';
 import { ParkedOrdersModal } from '../components/ParkedOrdersModal';
-import { PauseCircle, ClipboardList, Users, Search, Barcode, Keyboard, AlertTriangle } from 'lucide-react';
-import { toast } from 'sonner'; // ✅ Importamos Toast
+import { PauseCircle, ClipboardList, Users, Search, Barcode, Keyboard, AlertTriangle, Plus, Minus, X } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface CartItem extends Product {
   quantity: number;
@@ -113,7 +113,6 @@ export function PosPage() {
                 addToCart(filteredProducts[0]);
                 setQuery('');
             } else {
-                // Feedback sutil si no encuentra nada
                 toast.warning("Producto no encontrado");
             }
         }
@@ -154,11 +153,10 @@ export function PosPage() {
     });
     
     setCart([]);
-    toast.info("Orden puesta en espera"); // ✅ Feedback
+    toast.info("Orden puesta en espera");
     setTimeout(() => searchInputRef.current?.focus(), 100);
   };
 
-  // ✅ CONFIRMACIÓN NO BLOQUEANTE (Reemplaza confirm nativo)
   const handleRestoreOrder = (order: ParkedOrder) => {
     const doRestore = () => {
         const restoredCart: CartItem[] = order.items.map(item => ({
@@ -167,7 +165,7 @@ export function PosPage() {
             price: item.price,
             quantity: item.quantity,
             unit: item.unit,
-            stock: 999, // Stock temporal visual
+            stock: 999,
             sku: '',
             business_id: order.business_id,
             sync_status: 'synced'
@@ -202,7 +200,6 @@ export function PosPage() {
     setIsCheckout(true);
     setShowPaymentModal(false);
 
-    // Promise Toast para dar feedback durante el proceso
     const checkoutPromise = async () => {
         const businessId = localStorage.getItem('nexus_business_id');
         if (!businessId) throw new Error("No se detecta el ID del negocio");
@@ -292,10 +289,11 @@ export function PosPage() {
   };
 
   return (
-    <div className="flex h-full flex-col md:flex-row h-[calc(100vh-4rem)] md:h-[calc(100vh-2rem)] overflow-hidden">
+    // ✅ UX FIX 1: 'h-dvh' (Dynamic Viewport Height) evita que el teclado o la barra del móvil tapen la app
+    <div className="flex flex-col md:flex-row h-[calc(100dvh-4rem)] md:h-[calc(100dvh-2rem)] overflow-hidden">
       
       {/* IZQUIERDA: Catálogo */}
-      <div className="w-full md:w-2/3 p-4 flex flex-col gap-4 bg-slate-50">
+      <div className="w-full md:w-2/3 p-4 flex flex-col gap-4 bg-slate-50 border-r border-slate-200">
         <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
             <div className="relative w-full flex-1">
                 <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
@@ -331,9 +329,9 @@ export function PosPage() {
             ))}
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 overflow-y-auto pb-24 content-start pr-1">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 overflow-y-auto pb-24 content-start pr-1">
             {filteredProducts.map(p => (
-                 <button key={p.id} onClick={() => addToCart(p)} className="group relative bg-white rounded-2xl p-4 shadow-sm hover:shadow-xl border border-slate-100 hover:border-indigo-100 transition-all duration-300 flex flex-col justify-between h-40 overflow-hidden text-left active:scale-95">
+                 <button key={p.id} onClick={() => addToCart(p)} className="group relative bg-white rounded-2xl p-4 shadow-sm hover:shadow-xl border border-slate-100 hover:border-indigo-100 transition-all duration-300 flex flex-col justify-between h-40 overflow-hidden text-left active:scale-95 touch-manipulation">
                  <div className="absolute inset-0 bg-gradient-to-br from-transparent to-indigo-50 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                  <div className="relative z-10">
                     {p.category && (
@@ -360,71 +358,106 @@ export function PosPage() {
       </div>
 
       {/* DERECHA: Carrito */}
-      <div className="w-full md:w-1/3 bg-white border-l shadow-xl flex flex-col h-full z-10">
-        <div className="p-4 bg-slate-50 border-b flex justify-between items-center">
-             <h2 className="font-bold text-lg flex items-center gap-2">
-               Ticket <span className="text-xs font-normal text-slate-400 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">F1</span>
+      <div className="w-full md:w-1/3 bg-white shadow-2xl flex flex-col h-full z-20">
+        <div className="p-4 bg-slate-50 border-b flex justify-between items-center shrink-0">
+             <h2 className="font-bold text-lg flex items-center gap-2 text-slate-800">
+               Ticket <span className="text-xs font-normal text-slate-400 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 hidden md:inline">F1</span>
              </h2>
-             <span className="text-xs bg-white border px-2 py-1 rounded text-slate-500">{cart.length} productos</span>
+             <span className="text-xs bg-indigo-100 text-indigo-700 font-bold px-2 py-1 rounded-full">{cart.length} ítems</span>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
+            {cart.length === 0 && (
+              <div className="h-full flex flex-col items-center justify-center text-slate-300 opacity-60">
+                <ClipboardList size={48} className="mb-2" />
+                <p>Carrito vacío</p>
+              </div>
+            )}
+            
             {cart.map(item => {
-              // ✅ REGLA DE NEGOCIO: ADVERTENCIA DE STOCK VISUAL
               const isStockProblem = item.quantity > item.stock;
 
               return (
-                <div key={item.id} className={`flex justify-between items-center bg-white p-2 rounded-lg border shadow-sm animate-in slide-in-from-right duration-200 ${isStockProblem ? 'border-amber-200 bg-amber-50' : 'border-slate-100'}`}>
-                  <div className="flex-1">
-                    <div className="font-medium text-sm">{item.name}</div>
-                    <div className="text-xs text-gray-500">${item.price} x {item.unit || 'un'}</div>
-                    {/* Texto de advertencia si excede el stock */}
-                    {isStockProblem && (
-                      <div className="flex items-center gap-1 text-[10px] font-bold text-amber-600 mt-1">
-                        <AlertTriangle size={10} />
-                        <span>Stock insuficiente ({item.stock})</span>
+                <div key={item.id} className={`flex flex-col gap-2 bg-white p-3 rounded-xl border shadow-sm animate-in slide-in-from-right duration-200 ${isStockProblem ? 'border-amber-200 bg-amber-50' : 'border-slate-100'}`}>
+                  
+                  {/* Fila Superior: Nombre y Precio */}
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-slate-800 truncate">{item.name}</div>
+                      <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-2">
+                        <span>{currency.format(item.price)} x {item.unit || 'un'}</span>
+                        {isStockProblem && (
+                          <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600 bg-amber-100 px-1.5 rounded">
+                            <AlertTriangle size={10} /> Stock: {item.stock}
+                          </span>
+                        )}
                       </div>
-                    )}
+                    </div>
+                    <div className="font-bold text-slate-900 text-lg ml-2">
+                        {currency.format(currency.multiply(item.price, item.quantity))}
+                    </div>
                   </div>
                   
-                  <div className="flex items-center gap-1 bg-gray-50 rounded px-1 py-1 mx-2 border">
-                    <button onClick={() => updateQuantity(item.id, item.quantity - 1)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-white rounded-lg font-bold transition-all">-</button>
-                    <div className="relative">
-                      <input 
-                          type="number" step="0.01" min="0"
-                          className="w-14 text-center bg-transparent font-mono text-sm font-bold focus:outline-none p-0 appearance-none"
-                          value={item.quantity}
-                          onChange={(e) => updateQuantity(item.id, parseFloat(e.target.value) || 0)}
-                          onFocus={(e) => e.target.select()}
-                      />
+                  {/* ✅ UX FIX 2: Controles Táctiles Mejorados */}
+                  {/* Botones más grandes (h-10/12) y separados para dedos */}
+                  <div className="flex items-center justify-between mt-1">
+                    <div className="flex items-center bg-slate-100 rounded-lg p-1 gap-1 border border-slate-200">
+                      <button 
+                        onClick={() => updateQuantity(item.id, item.quantity - 1)} 
+                        className="w-10 h-10 flex items-center justify-center bg-white text-slate-600 rounded-md shadow-sm active:scale-95 transition-all border border-slate-200"
+                      >
+                        <Minus size={18} />
+                      </button>
+                      
+                      <div className="relative">
+                        <input 
+                            type="text" 
+                            inputMode="numeric" /* ✅ UX FIX: Teclado numérico en móvil */
+                            pattern="[0-9]*"
+                            className="w-12 text-center bg-transparent font-bold text-slate-800 focus:outline-none p-0 appearance-none text-base" /* text-base evita zoom en iOS */
+                            value={item.quantity}
+                            onChange={(e) => updateQuantity(item.id, parseFloat(e.target.value) || 0)}
+                            onFocus={(e) => e.target.select()}
+                        />
+                      </div>
+                      
+                      <button 
+                        onClick={() => updateQuantity(item.id, item.quantity + 1)} 
+                        className="w-10 h-10 flex items-center justify-center bg-indigo-600 text-white rounded-md shadow-sm shadow-indigo-200 active:scale-95 transition-all"
+                      >
+                        <Plus size={18} />
+                      </button>
                     </div>
-                    <button onClick={() => updateQuantity(item.id, item.quantity + 1)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-green-600 hover:bg-white rounded-lg font-bold transition-all">+</button>
+
+                    <button 
+                      onClick={() => removeFromCart(item.id)} 
+                      className="w-10 h-10 flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                    >
+                      <X size={20} />
+                    </button>
                   </div>
 
-                  <div className="font-bold text-sm w-16 text-right">
-                      {currency.format(currency.multiply(item.price, item.quantity))}
-                  </div>
-                  <button onClick={() => removeFromCart(item.id)} className="text-slate-300 hover:text-red-500 px-2 transition-colors">×</button>
                 </div>
               );
             })}
         </div>
 
-        <div className="p-4 bg-slate-50 border-t space-y-3 pb-24 md:pb-4">
+        {/* Footer del Carrito */}
+        <div className="p-4 bg-white border-t border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] shrink-0 z-30 pb- safe-area-inset-bottom">
           
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-3 mb-4">
              <button
                onClick={handleParkOrder}
                disabled={cart.length === 0}
-               className="flex items-center justify-center gap-2 py-3 bg-orange-100 text-orange-700 font-bold rounded-xl hover:bg-orange-200 transition-colors disabled:opacity-50"
+               className="flex items-center justify-center gap-2 py-3 bg-orange-50 text-orange-700 font-bold rounded-xl border border-orange-100 hover:bg-orange-100 transition-colors disabled:opacity-50 touch-manipulation"
              >
                <PauseCircle size={20} />
-               <span className="text-sm">En Espera</span>
+               <span className="text-sm">Espera</span>
              </button>
 
              <button
                onClick={() => setShowParkedModal(true)}
-               className="relative flex items-center justify-center gap-2 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-colors"
+               className="relative flex items-center justify-center gap-2 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl border border-slate-200 hover:bg-slate-200 transition-colors touch-manipulation"
              >
                <ClipboardList size={20} />
                <span className="text-sm">Pendientes</span>
@@ -436,18 +469,19 @@ export function PosPage() {
              </button>
           </div>
 
-          <div className="flex justify-between text-xl font-bold text-slate-800 pt-2">
-            <span className="flex items-center gap-2">
-                <Keyboard size={18} className="text-slate-400"/> Total
+          <div className="flex justify-between items-end mb-3">
+            <span className="text-slate-500 font-medium flex items-center gap-2">
+                <Keyboard size={18} className="hidden md:block"/> Total
             </span>
-            <span>{currency.format(totalAmount)}</span>
+            <span className="text-3xl font-black text-slate-900 tracking-tight">{currency.format(totalAmount)}</span>
           </div>
+          
           <button 
             onClick={() => setShowPaymentModal(true)} 
             disabled={cart.length === 0 || isCheckout} 
-            className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-xl shadow-lg transition-transform active:scale-95 disabled:bg-slate-300 text-lg"
+            className="w-full bg-slate-900 hover:bg-black text-white font-bold py-4 rounded-xl shadow-lg shadow-slate-300 transition-transform active:scale-[0.98] disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none text-xl touch-manipulation"
           >
-            {isCheckout ? 'Procesando...' : `Cobrar ${currency.format(totalAmount)}`}
+            {isCheckout ? 'Procesando...' : `COBRAR`}
           </button>
         </div>
       </div>
