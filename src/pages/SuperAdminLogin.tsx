@@ -1,108 +1,260 @@
-import { useState } from 'react';
-import { supabase } from '../lib/supabase';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ShieldCheck, Lock, Mail, Loader2, AlertTriangle } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { Store, Mail, Lock, Loader2, ArrowRight, User, Phone } from 'lucide-react';
+import { toast } from 'sonner';
 
 export function SuperAdminLogin() {
+  const navigate = useNavigate();
+  
+  // Estados
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [loading, setLoading] = useState(false); // Inicializado en false para no bloquear inputs
+  
+  // Formulario
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const navigate = useNavigate();
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [businessName, setBusinessName] = useState('');
 
-  const handleAdminLogin = async (e: React.FormEvent) => {
+  // Verificación de sesión NO bloqueante
+  useEffect(() => {
+    let mounted = true;
+
+    const checkSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      
+      if (data.session && mounted) {
+        navigate('/'); 
+      }
+    };
+
+    checkSession();
+
+    return () => { mounted = false; };
+  }, [navigate]);
+
+  // Manejo de Login
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    setError(null);
+    setLoading(true); // Bloqueamos solo al intentar entrar
 
     try {
-      // 1. Iniciar sesión en Supabase
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      const { error } = await supabase.auth.signInWithPassword({
         email,
-        password
+        password,
       });
 
-      if (authError) throw authError;
-      if (!authData.user) throw new Error("No se pudo identificar al usuario.");
-
-      // 2. VERIFICACIÓN DE SEGURIDAD (¿Es realmente Super Admin?)
-      // Consultamos la base de datos para ver si tiene la "corona" (is_super_admin)
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('is_super_admin')
-        .eq('id', authData.user.id)
-        .single();
-
-      if (profileError || !profile?.is_super_admin) {
-        // Si entra aquí, es un usuario normal intentando hackear
-        await supabase.auth.signOut(); // Lo expulsamos inmediatamente
-        throw new Error("⛔ ACCESO DENEGADO: No tienes privilegios de Super Administrador.");
+      if (error) {
+        if (error.message.includes('Invalid login credentials')) {
+          toast.error('Credenciales incorrectas');
+        } else {
+          toast.error(error.message);
+        }
+      } else {
+        // El onAuthStateChange en App.tsx manejará la redirección
+        toast.success('Bienvenido de nuevo');
       }
+    } catch (error) {
+      console.error(error);
+      toast.error('Error de conexión');
+    } finally {
+      // ✅ CORRECCIÓN (no-unsafe-finally): Eliminamos el return dentro del finally.
+      // Simplemente desbloqueamos. Si la navegación ocurre por el éxito del login,
+      // el componente se desmontará de todas formas.
+      setLoading(false);
+    }
+  };
 
-      // 3. Éxito: Pase usted, Jefe.
-      navigate('/super-panel'); 
+  // Manejo de Registro
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
 
-    } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : "Error de autenticación";
-        setError(msg);
+    if (!fullName || !phone || !businessName) {
+        toast.warning("Por favor completa todos los campos");
+        setLoading(false);
+        return;
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+            phone: phone,
+            business_name_request: businessName, // Dato para el SuperAdmin aprobar
+            role: 'admin', // Solicitud de rol inicial
+            status: 'pending' // Estado pendiente de aprobación
+          },
+        },
+      });
+
+      if (error) throw error;
+
+      if (data.user) {
+        toast.success('Cuenta creada exitosamente', {
+            description: 'Espera la aprobación del administrador para acceder.'
+        });
+        setIsRegistering(false); // Volver al login
+      }
+    } catch (error: unknown) { // ✅ CORRECCIÓN (no-explicit-any): Usamos unknown
+      const errorMessage = error instanceof Error ? error.message : "Error desconocido";
+      toast.error('Error al registrarse', {
+          description: errorMessage
+      });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-      <div className="bg-slate-800 p-8 rounded-2xl shadow-2xl w-full max-w-md border border-slate-700">
-        <div className="flex flex-col items-center mb-8">
-          <div className="bg-red-600 p-4 rounded-full shadow-lg shadow-red-900/50 mb-4">
-            <ShieldCheck className="w-12 h-12 text-white" />
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col md:flex-row h-auto md:h-[600px] max-h-[90vh]">
+        
+        {/* Panel Izquierdo (Imagen/Logo) - Visible solo en desktop */}
+        <div className="hidden md:flex w-2/5 bg-indigo-600 p-8 flex-col justify-between text-white relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-b from-indigo-600 to-purple-700 opacity-90"></div>
+          <div className="relative z-10">
+            <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center mb-6 backdrop-blur-sm">
+              <Store size={28} className="text-white" />
+            </div>
+            <h1 className="text-3xl font-bold mb-2">Nexus POS</h1>
+            <p className="text-indigo-100 text-sm">Gestiona tu negocio con inteligencia y velocidad.</p>
           </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">Acceso Restringido</h1>
-          <p className="text-slate-400 text-sm mt-2">Solo personal autorizado</p>
+          <div className="relative z-10 text-xs text-indigo-200">
+            © 2024 Agencia Seniors
+          </div>
         </div>
 
-        {error && (
-          <div className="mb-6 p-4 bg-red-900/30 border border-red-800 text-red-200 text-sm rounded-lg flex items-center gap-3">
-            <AlertTriangle className="shrink-0" size={18} />
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleAdminLogin} className="space-y-5">
-          <div className="relative">
-            <Mail className="absolute left-3 top-3.5 text-slate-500 w-5 h-5" />
-            <input 
-              type="email" 
-              required
-              className="w-full bg-slate-900 border border-slate-700 text-white pl-10 pr-4 py-3 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all placeholder:text-slate-600"
-              placeholder="admin@nexus.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </div>
-          <div className="relative">
-            <Lock className="absolute left-3 top-3.5 text-slate-500 w-5 h-5" />
-            <input 
-              type="password" 
-              required
-              className="w-full bg-slate-900 border border-slate-700 text-white pl-10 pr-4 py-3 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all placeholder:text-slate-600"
-              placeholder="••••••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
+        {/* Panel Derecho (Formulario) */}
+        <div className="w-full md:w-3/5 p-8 flex flex-col justify-center bg-slate-50 overflow-y-auto">
+          <div className="text-center mb-8 md:hidden">
+             <h2 className="text-2xl font-bold text-slate-800">Nexus POS</h2>
           </div>
 
-          <button 
-            type="submit" 
-            disabled={loading}
-            className="w-full bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 mt-4"
-          >
-            {loading ? <Loader2 className="animate-spin" /> : "Entrar al Sistema"}
-          </button>
-        </form>
-        
-        <div className="mt-8 text-center">
-            <p className="text-slate-600 text-xs">Sistema de Seguridad Nexus v2.0</p>
+          <h2 className="text-2xl font-bold text-slate-800 mb-2">
+            {isRegistering ? 'Crear Cuenta' : 'Iniciar Sesión'}
+          </h2>
+          <p className="text-slate-500 mb-6 text-sm">
+            {isRegistering ? 'Completa tus datos para solicitar acceso.' : 'Ingresa tus credenciales para continuar.'}
+          </p>
+
+          <form onSubmit={isRegistering ? handleRegister : handleLogin} className="space-y-4">
+            
+            {/* Campos extra para Registro */}
+            {isRegistering && (
+              <>
+                <div className="space-y-1 animate-in slide-in-from-top duration-300">
+                    <div className="relative">
+                        <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                        <input
+                        type="text"
+                        placeholder="Nombre Completo"
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-sm transition-all"
+                        required={isRegistering}
+                        disabled={loading}
+                        />
+                    </div>
+                </div>
+                <div className="space-y-1 animate-in slide-in-from-top duration-300 delay-75">
+                    <div className="relative">
+                        <Store className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                        <input
+                        type="text"
+                        placeholder="Nombre del Negocio"
+                        value={businessName}
+                        onChange={(e) => setBusinessName(e.target.value)}
+                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-sm transition-all"
+                        required={isRegistering}
+                        disabled={loading}
+                        />
+                    </div>
+                </div>
+                <div className="space-y-1 animate-in slide-in-from-top duration-300 delay-100">
+                    <div className="relative">
+                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                        <input
+                        type="tel"
+                        placeholder="Teléfono"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-sm transition-all"
+                        required={isRegistering}
+                        disabled={loading}
+                        />
+                    </div>
+                </div>
+              </>
+            )}
+
+            {/* Campos Comunes */}
+            <div className="space-y-1">
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input
+                  type="email"
+                  placeholder="Correo electrónico"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-sm transition-all"
+                  required
+                  disabled={loading} 
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input
+                  type="password"
+                  placeholder="Contraseña"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-sm transition-all"
+                  required
+                  disabled={loading}
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-indigo-200 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed mt-4"
+            >
+              {loading ? (
+                <Loader2 className="animate-spin" size={20} />
+              ) : (
+                <>
+                  <span>{isRegistering ? 'Solicitar Acceso' : 'Entrar'}</span>
+                  <ArrowRight size={18} />
+                </>
+              )}
+            </button>
+          </form>
+
+          <div className="mt-6 text-center">
+            <button
+              onClick={() => {
+                  setIsRegistering(!isRegistering);
+                  setEmail('');
+                  setPassword('');
+              }}
+              className="text-indigo-600 hover:text-indigo-800 text-sm font-semibold transition-colors"
+              disabled={loading}
+            >
+              {isRegistering
+                ? '¿Ya tienes cuenta? Inicia sesión'
+                : '¿No tienes cuenta? Regístrate aquí'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

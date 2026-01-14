@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
-import { db, type Staff } from './lib/db';
+import { type Staff } from './lib/db';
+import { type Session } from '@supabase/supabase-js'; // ✅ Importamos tipo Session
+import { Toaster, toast } from 'sonner';
 
 // --- IMPORTACIONES DE PÁGINAS Y COMPONENTES ---
 import { Layout } from './components/Layout';
-import { AuthGuard } from './components/AuthGuard';
 import { PinPad } from './components/PinPad';
 import { PosPage } from './pages/PosPage';
 import { InventoryPage } from './pages/InventoryPage'; 
@@ -14,364 +15,361 @@ import { SettingsPage } from './pages/SettingsPage';
 import { StaffPage } from './pages/StaffPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
 import { SuperAdminLogin } from './pages/SuperAdminLogin';
-import { CustomersPage } from './components/CustomersPage'; // Asegúrate de tener esto importado si lo usas
+import { CustomersPage } from './components/CustomersPage';
 
-import { Loader2, Store, User, Lock, WifiOff, UserPlus, LogIn, CheckCircle, AlertTriangle, LogOut } from 'lucide-react';
+import { Loader2, Store, User, Lock, Mail, Phone, ArrowRight, CheckCircle } from 'lucide-react';
 
 // =============================================================================
-// 1. COMPONENTE LOGIN SCREEN (Para Clientes/Negocios)
+// 1. COMPONENTE LOGIN SCREEN
 // =============================================================================
-function LoginScreen({ onLoginSuccess }: { onLoginSuccess: () => void }) {
+function LoginScreen() {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   
-  // Estados Login
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   
-  // Estados Registro
-  const [fullName, setFullName] = useState(''); 
-  const [phone, setPhone] = useState(''); 
-  const [months, setMonths] = useState(1); 
-  const [userPin, setUserPin] = useState('');
-
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [businessName, setBusinessName] = useState('');
+  
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // --- LÓGICA DE REGISTRO ---
-  const handleRegister = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError(null);
-
-    if (userPin.length !== 4 || isNaN(Number(userPin))) {
-      setError("El PIN debe ser de 4 números exactos.");
-      setLoading(false); return;
-    }
 
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email, 
-        password, 
-        options: { data: { full_name: fullName } }
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password
       });
 
-      if (authError) throw authError;
+      if (error) throw error;
+      toast.success("Bienvenido de nuevo");
+    } catch (error: unknown) { // ✅ Tipado seguro
+      console.error(error);
+      const errorMessage = error instanceof Error ? error.message : "Error desconocido";
       
-      if (authData.user) {
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .upsert({
-            id: authData.user.id,
-            email: email,
-            full_name: fullName,
-            phone: phone,
-            months_requested: months,
-            initial_pin: userPin,
-            status: 'pending',
-            role: 'admin',
-            business_id: null
-          });
-
-        if (profileError) console.error("Error perfil:", profileError);
+      if (errorMessage.includes("Invalid login")) {
+        toast.error("Credenciales incorrectas");
+      } else {
+        toast.error("Error al iniciar sesión: " + errorMessage);
       }
-
-      setSuccessMsg("¡Solicitud enviada! Espera a que el administrador active tu licencia.");
-      setMode('login'); 
-      setPassword(''); 
-      setUserPin('');
-
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Error al registrarse";
-      setError(msg);
-    } finally {
       setLoading(false);
     }
   };
 
-  // --- LÓGICA DE LOGIN (Verificación y Protección de Datos) ---
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError(null);
-    
+
+    if (!fullName || !phone || !businessName) {
+      toast.warning("Todos los campos son obligatorios");
+      setLoading(false);
+      return;
+    }
+
     try {
-      // 1. Autenticar credenciales
-      const { data, error: authError } = await supabase.auth.signInWithPassword({ email, password });
-      
-      if (authError) throw new Error("Credenciales incorrectas o problema de conexión.");
-      if (!data.session) throw new Error("No se pudo iniciar sesión.");
-      
-      // 2. Verificar estado del perfil
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('business_id, status, initial_pin, full_name, role')
-        .eq('id', data.session.user.id)
-        .single();
-
-      if (profileError) throw new Error("Error verificando tu perfil.");
-
-      // 3. Validaciones de Estado
-      if (profile?.status === 'pending') throw new Error("⏳ Tu cuenta está en revisión.");
-      if (profile?.status === 'rejected') throw new Error("⛔ Tu solicitud ha sido rechazada.");
-      if (profile?.status === 'suspended') throw new Error("⚠️ Tu licencia ha sido suspendida.");
-      if (profile?.status === 'deleted') throw new Error("⛔ Cuenta eliminada.");
-      if (!profile?.business_id) throw new Error("⚠️ Cuenta sin negocio asignado.");
-
-      // 4. 🛡️ PROTECCIÓN DE DATOS AL CAMBIAR DE CUENTA
-      const previousBusinessId = localStorage.getItem('nexus_business_id');
-      
-      if (previousBusinessId && previousBusinessId !== profile.business_id) {
-        // Verificar si hay ventas sin sincronizar antes de borrar la DB local
-        const pendingSales = await db.sales.where('synced').equals(0).count();
-        
-        if (pendingSales > 0) {
-          throw new Error(`⚠️ ¡ALTO! Hay ${pendingSales} ventas NO sincronizadas. Entra con el usuario anterior para subirlas.`);
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+            phone: phone,
+            business_name_request: businessName,
+            role: 'admin',
+            status: 'pending'
+          }
         }
+      });
 
-        console.log("♻️ Cambio seguro. Limpiando datos locales...");
-        await db.delete(); 
-        await db.open(); 
-      }
+      if (error) throw error;
 
-      // 5. Configuración Local
-      localStorage.setItem('nexus_device_authorized', 'true');
-      localStorage.setItem('nexus_business_id', profile.business_id);
-      localStorage.setItem('nexus_last_verification', new Date().toISOString());
-
-      // 6. Autoconfiguración Admin Local
-      const staffCount = await db.staff.count();
-      if (staffCount === 0 && profile.initial_pin) {
-        await db.staff.add({
-          id: 'admin-owner', 
-          name: profile.full_name || 'Admin', 
-          pin: profile.initial_pin, 
-          role: 'admin', 
-          active: true
+      if (data.user) {
+        toast.success("Cuenta creada exitosamente", {
+          description: "Tu solicitud está pendiente de aprobación."
         });
+        setMode('login');
       }
-      
-      onLoginSuccess();
-
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Error de acceso";
-      setError(msg);
-      localStorage.removeItem('nexus_device_authorized');
-      await supabase.auth.signOut();
+    } catch (error: unknown) { // ✅ Tipado seguro
+      const errorMessage = error instanceof Error ? error.message : "Error desconocido";
+      toast.error("Error en registro: " + errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-      <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-slate-200">
-        <div className="flex flex-col items-center mb-6">
-          <div className="bg-indigo-600 p-3 rounded-xl shadow-lg shadow-indigo-200 mb-4">
-            <Store className="w-10 h-10 text-white" />
-          </div>
-          <h1 className="text-2xl font-bold text-slate-800">Nexus POS</h1>
-          <p className="text-slate-500 text-sm">{mode === 'login' ? 'Acceso Clientes' : 'Solicitar Licencia'}</p>
-        </div>
-
-        <div className="flex bg-slate-100 p-1 rounded-lg mb-6">
-          <button onClick={() => { setMode('login'); setError(null); }} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${mode === 'login' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>Iniciar Sesión</button>
-          <button onClick={() => { setMode('register'); setError(null); }} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${mode === 'register' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>Crear Cuenta</button>
-        </div>
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col md:flex-row h-auto md:h-[600px]">
         
-        {error && (
-          <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-center gap-2 border border-red-100">
-            <WifiOff size={16} /> {error}
+        {/* Panel Izquierdo */}
+        <div className="w-full md:w-1/2 bg-indigo-600 p-12 flex flex-col justify-between text-white relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-full bg-cover opacity-10 mix-blend-overlay"></div>
+          <div className="relative z-10">
+            <div className="w-16 h-16 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center mb-6 shadow-inner">
+              <Store size={32} className="text-white" />
+            </div>
+            <h1 className="text-4xl font-bold mb-4">Nexus POS</h1>
+            <p className="text-indigo-100 text-lg leading-relaxed">
+              El sistema operativo para negocios modernos. Control total, incluso sin internet.
+            </p>
           </div>
-        )}
-        {successMsg && (
-          <div className="mb-4 p-3 bg-green-50 text-green-700 text-sm rounded-lg flex items-center gap-2 border border-green-100">
-            <CheckCircle size={16} /> {successMsg}
+          <div className="relative z-10 flex items-center gap-2 text-indigo-200 text-sm">
+            <CheckCircle size={16} />
+            <span>Versión Enterprise 2.0</span>
           </div>
-        )}
+        </div>
 
-        {mode === 'login' ? (
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div className="relative">
-              <User className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
-              <input type="email" required className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-indigo-500" placeholder="correo@ejemplo.com" value={email} onChange={(e) => setEmail(e.target.value)}/>
+        {/* Panel Derecho */}
+        <div className="w-full md:w-1/2 p-8 md:p-12 bg-slate-50 flex flex-col justify-center">
+          <div className="max-w-sm mx-auto w-full">
+            <h2 className="text-2xl font-bold text-slate-800 mb-2">
+              {mode === 'login' ? 'Iniciar Sesión' : 'Crear Cuenta'}
+            </h2>
+            <p className="text-slate-500 mb-8">
+              {mode === 'login' ? 'Accede a tu terminal de punto de venta' : 'Solicita acceso para tu negocio'}
+            </p>
+
+            <form onSubmit={mode === 'login' ? handleLogin : handleRegister} className="space-y-4">
+              
+              {mode === 'register' && (
+                <>
+                  <div className="relative group">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={18} />
+                    <input 
+                      type="text" 
+                      placeholder="Nombre Completo"
+                      className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      value={fullName}
+                      onChange={e => setFullName(e.target.value)}
+                      disabled={loading}
+                    />
+                  </div>
+                  <div className="relative group">
+                    <Store className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={18} />
+                    <input 
+                      type="text" 
+                      placeholder="Nombre del Negocio"
+                      className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      value={businessName}
+                      onChange={e => setBusinessName(e.target.value)}
+                      disabled={loading}
+                    />
+                  </div>
+                  <div className="relative group">
+                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={18} />
+                    <input 
+                      type="tel" 
+                      placeholder="Teléfono"
+                      className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      value={phone}
+                      onChange={e => setPhone(e.target.value)}
+                      disabled={loading}
+                    />
+                  </div>
+                </>
+              )}
+
+              <div className="relative group">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={18} />
+                <input 
+                  type="email" 
+                  placeholder="Correo electrónico"
+                  className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  disabled={loading}
+                  required
+                />
+              </div>
+
+              <div className="relative group">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={18} />
+                <input 
+                  type="password" 
+                  placeholder="Contraseña"
+                  className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  disabled={loading}
+                  required
+                />
+              </div>
+
+              <button 
+                type="submit" 
+                disabled={loading}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-indigo-200 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed mt-2"
+              >
+                {loading ? <Loader2 className="animate-spin" /> : (
+                  <>
+                    {mode === 'login' ? 'Ingresar al Sistema' : 'Solicitar Acceso'}
+                    <ArrowRight size={18} />
+                  </>
+                )}
+              </button>
+            </form>
+
+            <div className="mt-6 text-center">
+              <button 
+                onClick={() => {
+                    setMode(mode === 'login' ? 'register' : 'login');
+                    setEmail('');
+                    setPassword('');
+                }}
+                disabled={loading}
+                className="text-slate-500 hover:text-indigo-600 text-sm font-medium transition-colors"
+              >
+                {mode === 'login' 
+                  ? '¿No tienes cuenta? Registra tu negocio' 
+                  : '¿Ya tienes cuenta? Inicia sesión'}
+              </button>
             </div>
-            <div className="relative">
-              <Lock className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
-              <input type="password" required className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-indigo-500" placeholder="Contraseña" value={password} onChange={(e) => setPassword(e.target.value)}/>
-            </div>
-            <button type="submit" disabled={loading} className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-transform">
-              {loading ? <Loader2 className="animate-spin" /> : <><LogIn size={18}/> Entrar</>}
-            </button>
-          </form>
-        ) : (
-          <form onSubmit={handleRegister} className="space-y-4">
-            <div>
-              <label className="text-xs font-bold text-slate-500 uppercase">Nombre Negocio</label>
-              <input type="text" required className="w-full px-3 py-2 border rounded-lg outline-none focus:border-indigo-500" placeholder="Mi Tienda" value={fullName} onChange={(e) => setFullName(e.target.value)}/>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase">Teléfono</label>
-                  <input type="tel" required className="w-full px-3 py-2 border rounded-lg outline-none focus:border-indigo-500" value={phone} onChange={(e) => setPhone(e.target.value)}/>
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase">PIN (4 #)</label>
-                  <input type="text" maxLength={4} required className="w-full px-3 py-2 border rounded-lg outline-none text-center font-mono font-bold focus:border-indigo-500" placeholder="0000" value={userPin} onChange={(e) => setUserPin(e.target.value)}/>
-                </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase">Correo</label>
-                  <input type="email" required className="w-full px-3 py-2 border rounded-lg outline-none focus:border-indigo-500" value={email} onChange={(e) => setEmail(e.target.value)}/>
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase">Clave</label>
-                  <input type="password" required className="w-full px-3 py-2 border rounded-lg outline-none focus:border-indigo-500" value={password} onChange={(e) => setPassword(e.target.value)}/>
-                </div>
-            </div>
-            <div>
-              <label className="text-xs font-bold text-slate-500 uppercase">Plan Solicitado</label>
-              <select value={months} onChange={(e) => setMonths(Number(e.target.value))} className="w-full px-3 py-2 border rounded-lg bg-white outline-none focus:border-indigo-500">
-                <option value={1}>1 Mes</option>
-                <option value={3}>3 Meses</option>
-                <option value={6}>6 Meses</option>
-                <option value={12}>1 Año</option>
-              </select>
-            </div>
-            <button type="submit" disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-transform">
-              {loading ? <Loader2 className="animate-spin" /> : <><UserPlus size={18}/> Enviar Solicitud</>}
-            </button>
-          </form>
-        )}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
 // =============================================================================
-// 2. COMPONENTE BUSINESS APP (Con Watchdog y Pantalla de Bloqueo)
+// 2. COMPONENTE BUSINESS APP
 // =============================================================================
 function BusinessApp() {
-  const [isAuthorized, setIsAuthorized] = useState(() => localStorage.getItem('nexus_device_authorized') === 'true');
+  const [session, setSession] = useState<Session | null>(null); // ✅ Tipado
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
+  const [loading, setLoading] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
-  const [blockReason, setBlockReason] = useState<string | null>(null);
 
-  // 🐕 WATCHDOG: Vigila la licencia en tiempo real
-  useEffect(() => {
-    const verifyLicenseStatus = async () => {
-      if (!isAuthorized || !navigator.onLine) return; // Solo online y si ya entró
+  const fetchProfile = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
 
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return;
+      if (error) throw error;
 
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('status, license_expiry, business_id')
-          .eq('id', session.user.id)
-          .single();
-
-        if (!profile) return;
-
-        let reason = null;
-        if (profile.status === 'suspended') reason = "Licencia Suspendida";
-        if (profile.status === 'deleted') reason = "Cuenta Eliminada";
-        if (profile.license_expiry && new Date(profile.license_expiry) < new Date()) {
-          reason = "Licencia Expirada";
+      if (data) {
+        if (data.status === 'pending') {
+          toast.info("Tu cuenta está pendiente de aprobación.");
+          await supabase.auth.signOut();
+          return;
+        }
+        if (data.status === 'suspended' || data.status === 'rejected') {
+          toast.error("Acceso denegado. Contacta a soporte.");
+          await supabase.auth.signOut();
+          return;
         }
 
-        // Si detecta bloqueo, activa la pantalla roja
-        if (reason) {
-          setBlockReason(reason);
-        }
+        // Construimos el objeto Staff
+        const staffData: Staff = {
+          id: data.id,
+          name: data.full_name || data.email,
+          role: (data.role === 'admin' || data.role === 'super_admin') ? 'admin' : 'vendedor',
+          pin: data.initial_pin || '0000',
+          active: true,
+          // Forzamos el tipado para incluir business_id si la interfaz Staff lo permite (o lo extendemos)
+          // Nota: Asegúrate de que tu interfaz Staff en db.ts tenga business_id
+          business_id: data.business_id 
+        } as unknown as Staff;
 
-      } catch (err) {
-        console.error("Error watchdog:", err);
+        if (data.business_id) {
+          localStorage.setItem('nexus_business_id', data.business_id);
+        }
+        
+        // ✅ USAMOS staffData: Actualizamos la caché local por seguridad
+        localStorage.setItem('nexus_current_staff', JSON.stringify(staffData));
       }
-    };
-
-    // Revisar cada 1 minuto
-    const interval = setInterval(verifyLicenseStatus, 60000);
-    verifyLicenseStatus(); // Revisar al montar
-
-    return () => clearInterval(interval);
-  }, [isAuthorized]);
-
-  // FUNCIÓN DE SALIDA DE EMERGENCIA (Para el botón de la pantalla roja)
-  const handleForceLogout = async () => {
-    // 1. Limpieza Local
-    localStorage.removeItem('nexus_device_authorized');
-    localStorage.removeItem('nexus_business_id');
-    localStorage.removeItem('nexus_last_verification');
-    
-    // 2. Limpieza Servidor
-    await supabase.auth.signOut();
-    
-    // 3. Recarga Total (Rompe bucles)
-    window.location.href = '/';
+    } catch (error: unknown) { // ✅ Tipado
+      const errorMessage = error instanceof Error ? error.message : "Error desconocido";
+      console.error("Error fetching profile:", errorMessage);
+      toast.error("Error al cargar perfil de usuario");
+    }
   };
 
-  // --- RENDERS CONDICIONALES ---
+  useEffect(() => {
+    const initSession = async () => {
+      const { data: { session: initialSession } } = await supabase.auth.getSession();
+      if (initialSession) {
+        setSession(initialSession);
+        await fetchProfile(initialSession.user.id);
+      } else {
+        setSession(null);
+        setCurrentStaff(null);
+        localStorage.removeItem('nexus_business_id');
+      }
+      setLoading(false);
+    };
+    initSession();
 
-  // A. Si no está autorizado, mostrar Login
-  if (!isAuthorized) return <LoginScreen onLoginSuccess={() => setIsAuthorized(true)} />;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+      if (event === 'SIGNED_IN' && newSession) {
+        setSession(newSession);
+        setLoading(true);
+        await fetchProfile(newSession.user.id);
+        setLoading(false);
+      } 
+      else if (event === 'SIGNED_OUT') {
+        setSession(null);
+        setCurrentStaff(null);
+        setIsLocked(false);
+        localStorage.removeItem('nexus_business_id');
+        localStorage.removeItem('nexus_current_staff');
+      }
+    });
 
-  // B. PANTALLA DE SERVICIO SUSPENDIDO (La que pediste recuperar)
-  if (blockReason) {
+    return () => subscription.unsubscribe();
+  }, []);
+
+  if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-md w-full text-center border border-slate-200">
-          <div className="bg-red-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
-            <AlertTriangle className="w-10 h-10 text-red-600" />
-          </div>
-          
-          <h1 className="text-2xl font-bold text-slate-800">Servicio Suspendido</h1>
-          
-          <p className="text-slate-500 mt-4 mb-8">
-            {blockReason === "Licencia Expirada" 
-              ? "El periodo de vigencia de tu licencia ha terminado. Por favor renueva tu suscripción."
-              : "El acceso a este negocio ha sido revocado temporal o permanentemente."}
-            <br/><br/>
-            Contacta al administrador para reactivar el servicio.
-          </p>
-          
-          <button 
-            onClick={handleForceLogout}
-            className="w-full px-6 py-3 bg-slate-800 text-white font-bold rounded-xl hover:bg-slate-900 transition-colors flex items-center justify-center gap-2"
-          >
-            <LogOut size={20}/> Cerrar Sesión
-          </button>
-        </div>
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50 gap-4">
+        <Loader2 className="animate-spin text-indigo-600 w-10 h-10" />
+        <p className="text-slate-500 font-medium animate-pulse">Cargando sistema...</p>
       </div>
     );
   }
 
-  // C. PinPad o Layout Principal
-  if (isLocked || !currentStaff) {
-    return <PinPad onSuccess={(s) => { setCurrentStaff(s); setIsLocked(false); }} />;
+  if (!session) {
+    return <LoginScreen />; 
   }
 
+  if (!currentStaff || isLocked) {
+    return (
+      <PinPad 
+        onSuccess={(staff) => {
+          setCurrentStaff(staff);
+          setIsLocked(false);
+        }} 
+        // Descomenta si tu componente PinPad soporta onLogout
+        // onLogout={async () => await supabase.auth.signOut()} 
+      />
+    );
+  }
+
+  // ✅ CORRECCIÓN DE RUTAS: Usamos Rutas Anidadas para el Layout
   return (
-    <AuthGuard>
-      <Routes>
-        <Route element={<Layout currentStaff={currentStaff} onLock={() => { setCurrentStaff(null); setIsLocked(true); }} />}>
-          <Route path="/" element={<PosPage />} />
-          <Route path="/inventario" element={<InventoryPage />} />
-          <Route path="/finanzas" element={<FinancePage />} />
-          <Route path="/configuracion" element={<SettingsPage />} />
-          <Route path="/equipo" element={<StaffPage />} />
-          <Route path="/clientes" element={<CustomersPage />} /> 
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
-    </AuthGuard>
+    <Routes>
+      <Route element={<Layout currentStaff={currentStaff} onLock={() => setIsLocked(true)} />}>
+        <Route path="/" element={<PosPage />} />
+        <Route path="/clientes" element={<CustomersPage />} />
+        <Route path="/inventario" element={<InventoryPage />} />
+        <Route path="/finanzas" element={<FinancePage />} />
+        <Route path="/equipo" element={<StaffPage />} />
+        <Route path="/configuracion" element={<SettingsPage />} />
+        {/* Ruta para manejar URLs desconocidas dentro de la sesión */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
   );
 }
 
 // =============================================================================
-// 3. ADMIN ROUTE (Protección Super Admin)
+// 3. RUTA PROTEGIDA SUPER ADMIN
 // =============================================================================
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const [authorized, setAuthorized] = useState<boolean | null>(null);
@@ -406,12 +404,15 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
 // =============================================================================
 export default function App() {
   return (
-    <HashRouter>
-      <Routes>
-        <Route path="/admin-login" element={<SuperAdminLogin />} />
-        <Route path="/super-panel" element={<AdminRoute><SuperAdminPage /></AdminRoute>} />
-        <Route path="/*" element={<BusinessApp />} />
-      </Routes>
-    </HashRouter>
+    <>
+      <Toaster position="top-right" richColors />
+      <HashRouter>
+        <Routes>
+          <Route path="/admin-login" element={<SuperAdminLogin />} />
+          <Route path="/super-panel" element={<AdminRoute><SuperAdminPage /></AdminRoute>} />
+          <Route path="/*" element={<BusinessApp />} />
+        </Routes>
+      </HashRouter>
+    </>
   );
 }
