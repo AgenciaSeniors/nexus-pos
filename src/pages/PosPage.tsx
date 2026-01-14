@@ -1,14 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Product, type Sale, type ParkedOrder, type SaleItem, type Staff } from '../lib/db';
+import { db, type Product, type Sale, type ParkedOrder, type SaleItem, type Staff, type InventoryMovement } from '../lib/db';
 import { supabase } from '../lib/supabase';
-import { syncPush } from '../lib/sync';
-import { currency } from '../lib/currency'; // ✅ Librería financiera
+import { addToQueue } from '../lib/sync'; // ✅ CORRECCIÓN: Quitamos syncPush
+import { currency } from '../lib/currency';
+import { logAuditAction } from '../lib/audit';
 import { TicketModal } from '../components/TicketModal';
 import { PaymentModal } from '../components/PaymentModal';
 import { ParkedOrdersModal } from '../components/ParkedOrdersModal';
-import { PauseCircle, ClipboardList, Users, Search, Barcode } from 'lucide-react';
+import { PauseCircle, ClipboardList, Users, Search, Barcode, Keyboard } from 'lucide-react';
 
 interface CartItem extends Product {
   quantity: number;
@@ -17,7 +18,6 @@ interface CartItem extends Product {
 export function PosPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
   
-  // ✅ UX: Referencia para el auto-focus del buscador/scanner
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [query, setQuery] = useState('');
@@ -25,27 +25,53 @@ export function PosPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCheckout, setIsCheckout] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
   
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showParkedModal, setShowParkedModal] = useState(false);
+  
   const parkedCount = useLiveQuery(() => db.parked_orders.count()) || 0;
-
   const allProducts = useLiveQuery(() => db.products.toArray()) || [];
-
   const categories = ['Todo', ...new Set(allProducts.map(p => p.category).filter((c): c is string => !!c))].sort();
 
-  // ✅ UX: Auto-focus al entrar a la pantalla
   useEffect(() => {
     if (searchInputRef.current) {
       searchInputRef.current.focus();
     }
   }, []);
 
-  // Lógica original de cacheo de ID de negocio (Mantenida)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F1') {
+        e.preventDefault();
+        if (cart.length > 0 && !showPaymentModal && !lastSale && !isCheckout) {
+          setShowPaymentModal(true);
+        }
+      }
+      
+      if (e.key === 'F2') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        setQuery('');
+      }
+
+      if (e.key === 'Escape') {
+        if (showPaymentModal) setShowPaymentModal(false);
+        else if (showParkedModal) setShowParkedModal(false);
+        else if (lastSale) setLastSale(null);
+        else if (document.activeElement === searchInputRef.current) {
+            if(query) setQuery('');
+            else searchInputRef.current?.blur();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [cart, showPaymentModal, showParkedModal, lastSale, isCheckout, query]);
+
   useEffect(() => {
     const cacheBusinessId = async () => {
       if (!navigator.onLine) return;
-
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         const { data: perfil } = await supabase
@@ -53,7 +79,6 @@ export function PosPage() {
           .select('business_id')
           .eq('id', session.user.id)
           .single();
-        
         if (perfil?.business_id) {
           localStorage.setItem('nexus_business_id', perfil.business_id);
         }
@@ -76,17 +101,13 @@ export function PosPage() {
     });
   };
 
-  // ✅ UX: Lógica de Scanner (Enter para agregar exactos)
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && query.trim() !== '') {
-        // Buscar coincidencia EXACTA por SKU (Comportamiento de Scanner)
         const exactMatch = allProducts.find(p => p.sku === query.trim());
-        
         if (exactMatch) {
             addToCart(exactMatch);
-            setQuery(''); // Limpiar para el siguiente escaneo
+            setQuery(''); 
         } else {
-            // Si filtra y solo queda uno, lo agregamos (comodidad)
             if (filteredProducts.length === 1) {
                 addToCart(filteredProducts[0]);
                 setQuery('');
@@ -107,15 +128,11 @@ export function PosPage() {
     }));
   };
 
-  // ✅ FINANZAS: Cálculo seguro del total
   const totalAmount = currency.calculateTotal(cart);
 
-  // --- LÓGICA DE CUENTAS EN ESPERA ---
   const handleParkOrder = async () => {
     if (cart.length === 0) return;
-    
     const businessId = localStorage.getItem('nexus_business_id') || 'unknown';
-
     const itemsToPark: SaleItem[] = cart.map(item => ({
         product_id: item.id,
         name: item.name,
@@ -133,7 +150,6 @@ export function PosPage() {
     });
     
     setCart([]);
-    // ✅ UX: Devolver el foco al buscador
     setTimeout(() => searchInputRef.current?.focus(), 100);
   };
 
@@ -141,14 +157,13 @@ export function PosPage() {
     if (cart.length > 0) {
       if (!confirm("Hay una venta en curso. ¿Deseas reemplazarla?")) return;
     }
-    
     const restoredCart: CartItem[] = order.items.map(item => ({
         id: item.product_id,
         name: item.name,
         price: item.price,
         quantity: item.quantity,
         unit: item.unit,
-        stock: 999, // Stock visual temporal
+        stock: 999,
         sku: '',
         business_id: order.business_id,
         sync_status: 'synced'
@@ -159,7 +174,6 @@ export function PosPage() {
     setShowParkedModal(false);
   };
 
-  // --- FUNCIÓN DE COBRO (CON TRAZABILIDAD Y SEGURIDAD) ---
   const handleCheckout = async (paymentMethod: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto', tendered: number, change: number) => {
     if (cart.length === 0) return;
     setIsCheckout(true);
@@ -167,9 +181,8 @@ export function PosPage() {
 
     try {
       const businessId = localStorage.getItem('nexus_business_id');
-      
       if (!businessId) {
-        alert("⚠️ Error: No se detecta el ID del negocio. Inicia sesión con internet al menos una vez.");
+        alert("⚠️ Error: No se detecta el ID del negocio.");
         setIsCheckout(false);
         return;
       }
@@ -190,51 +203,75 @@ export function PosPage() {
             unit: item.unit,
             cost: item.cost 
         })),
-        
         staff_id: currentStaff.id,
         staff_name: currentStaff.name,
-        
         payment_method: paymentMethod,
         amount_tendered: tendered,
         change: change,
         sync_status: 'pending_create'
       };
 
-      // 🛡️ TRANSACCIÓN ATÓMICA: Venta + Descuento Stock + Historial Movimiento
-      await db.transaction('rw', db.products, db.sales, db.movements, async () => {
-        // 1. Guardar la venta
+      const saleItemsForQueue = cart.map(item => ({
+        sale_id: saleId,
+        business_id: businessId,
+        product_id: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price,
+        unit_cost: item.cost || 0,
+        total: currency.multiply(item.price, item.quantity)
+      }));
+
+      // ✅ CORRECCIÓN: Pasamos las tablas como un array [] para evitar el error de argumentos
+      await db.transaction('rw', [db.products, db.sales, db.movements, db.audit_logs, db.action_queue], async () => {
+        
         await db.sales.add(newSale);
+
+        await addToQueue('SALE', {
+            sale: newSale,
+            items: saleItemsForQueue
+        });
 
         for (const item of cart) {
           const product = await db.products.get(item.id);
           if (product) {
-            // 2. Actualizar Stock
             await db.products.update(item.id, { 
               stock: product.stock - item.quantity, 
               sync_status: 'pending_update' 
             });
 
-            // 3. REGISTRAR EL MOVIMIENTO (Trazabilidad)
-            await db.movements.add({
+            const movement: InventoryMovement = {
                 id: crypto.randomUUID(),
                 business_id: businessId,
                 product_id: item.id,
-                qty_change: -item.quantity, // Negativo porque es venta
+                qty_change: -item.quantity, 
                 reason: 'sale',
                 created_at: saleDate,
                 staff_id: currentStaff.id,
                 sync_status: 'pending_create'
-            });
+            };
+
+            await db.movements.add(movement);
+            await addToQueue('MOVEMENT', movement);
           }
         }
-      });
+        
+        await logAuditAction('SALE', {
+            sale_id: saleId,
+            total: totalAmount,
+            items_count: cart.length,
+            payment_method: paymentMethod
+        }, {
+            id: currentStaff.id,
+            name: currentStaff.name,
+            business_id: businessId
+        });
+
+      }); 
 
       setCart([]);
       setLastSale(newSale);
       
-      syncPush().catch(() => console.log("Guardado localmente.")); 
-      
-      // ✅ UX: Re-enfoque automático tras cobrar
       setTimeout(() => {
           setQuery('');
           searchInputRef.current?.focus();
@@ -242,7 +279,7 @@ export function PosPage() {
 
     } catch (error) {
       console.error(error);
-      alert("Error al guardar venta");
+      alert("Error crítico al guardar venta. Revise la consola.");
     } finally {
       setIsCheckout(false);
     }
@@ -251,11 +288,9 @@ export function PosPage() {
   return (
     <div className="flex h-full flex-col md:flex-row h-[calc(100vh-4rem)] md:h-[calc(100vh-2rem)] overflow-hidden">
       
-      {/* IZQUIERDA: Catálogo */}
       <div className="w-full md:w-2/3 p-4 flex flex-col gap-4 bg-slate-50">
         <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
             
-            {/* ✅ UX: Buscador Mejorado con Icono de Barcode y Scanner */}
             <div className="relative w-full flex-1">
                 <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
                     <Search size={20} />
@@ -264,21 +299,21 @@ export function PosPage() {
                     ref={searchInputRef}
                     type="text" 
                     className="w-full pl-10 pr-12 py-3 border border-slate-300 rounded-xl shadow-sm focus:ring-2 focus:ring-indigo-500 outline-none text-lg" 
-                    placeholder="Escanear código o buscar..." 
+                    placeholder="Escanear código o buscar (F2)..." 
                     value={query} 
                     onChange={(e) => setQuery(e.target.value)}
                     onKeyDown={handleKeyDown}
                 />
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300">
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 flex items-center gap-2">
+                    <span className="hidden sm:inline text-[10px] font-bold bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 border border-slate-200">F2</span>
                     <Barcode size={24} />
                 </div>
             </div>
             
-            {/* INDICADOR DE EMPLEADO */}
             <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2 shadow-sm flex-shrink-0 self-end sm:self-auto">
                <Users size={18} className="text-indigo-600" />
                <div className="flex flex-col">
-                 <span className="text-[10px] text-indigo-400 leading-none font-bold uppercase">Atendiendo</span>
+                 <span className="text-[10px] text-indigo-400 leading-none font-bold uppercase">Cajero</span>
                  <span className="text-sm font-bold text-indigo-700 leading-none">{currentStaff.name}</span>
                </div>
             </div>
@@ -309,7 +344,6 @@ export function PosPage() {
                         <span>Stock:</span>
                         <span className={`${p.stock < 5 ? 'text-red-500' : 'text-slate-600'}`}>{p.stock} <span className="text-[10px] uppercase">{p.unit || 'un'}</span></span>
                     </div>
-                    {/* ✅ FINANZAS: Formato de Moneda Seguro */}
                     <div className="bg-slate-50 text-slate-900 font-bold px-3 py-1.5 rounded-lg text-sm shadow-sm group-hover:bg-indigo-600 group-hover:text-white group-hover:shadow-indigo-200 transition-all">
                         {currency.format(p.price)}
                     </div>
@@ -319,10 +353,11 @@ export function PosPage() {
         </div>
       </div>
 
-      {/* DERECHA: Carrito */}
       <div className="w-full md:w-1/3 bg-white border-l shadow-xl flex flex-col h-full z-10">
         <div className="p-4 bg-slate-50 border-b flex justify-between items-center">
-             <h2 className="font-bold text-lg">Ticket Actual</h2>
+             <h2 className="font-bold text-lg flex items-center gap-2">
+               Ticket <span className="text-xs font-normal text-slate-400 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">F1</span>
+             </h2>
              <span className="text-xs bg-white border px-2 py-1 rounded text-slate-500">{cart.length} productos</span>
         </div>
 
@@ -344,12 +379,10 @@ export function PosPage() {
                         onChange={(e) => updateQuantity(item.id, parseFloat(e.target.value) || 0)}
                         onFocus={(e) => e.target.select()}
                     />
-                    <span className="absolute -top-2 -right-1 text-[8px] text-gray-400 font-bold uppercase pointer-events-none">{item.unit || 'un'}</span>
                   </div>
                   <button onClick={() => updateQuantity(item.id, item.quantity + 1)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-green-600 hover:bg-white rounded-lg font-bold transition-all">+</button>
                 </div>
 
-                {/* ✅ FINANZAS: Cálculo por ítem seguro */}
                 <div className="font-bold text-sm w-16 text-right">
                     {currency.format(currency.multiply(item.price, item.quantity))}
                 </div>
@@ -385,11 +418,16 @@ export function PosPage() {
           </div>
 
           <div className="flex justify-between text-xl font-bold text-slate-800 pt-2">
-            <span>Total</span>
-            {/* ✅ FINANZAS: Total seguro */}
+            <span className="flex items-center gap-2">
+                <Keyboard size={18} className="text-slate-400"/> Total
+            </span>
             <span>{currency.format(totalAmount)}</span>
           </div>
-          <button onClick={() => setShowPaymentModal(true)} disabled={cart.length === 0 || isCheckout} className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-xl shadow-lg transition-transform active:scale-95 disabled:bg-slate-300 text-lg">
+          <button 
+            onClick={() => setShowPaymentModal(true)} 
+            disabled={cart.length === 0 || isCheckout} 
+            className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-xl shadow-lg transition-transform active:scale-95 disabled:bg-slate-300 text-lg"
+          >
             {isCheckout ? 'Procesando...' : `Cobrar ${currency.format(totalAmount)}`}
           </button>
         </div>
@@ -401,7 +439,6 @@ export function PosPage() {
             sale={lastSale} 
             onClose={() => { 
                 setLastSale(null); 
-                // ✅ UX: Re-enfoque tras cerrar ticket
                 setTimeout(() => searchInputRef.current?.focus(), 100);
             }} 
         />

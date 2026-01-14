@@ -1,218 +1,214 @@
-import { db, type Product } from './db';
+import { 
+  db, 
+  type QueueItem, 
+  type QueuePayload, // Asegúrate de que esto esté exportado en db.ts
+  type SalePayload, 
+  type InventoryMovement, 
+  type AuditLog, 
+  type Product, 
+  type Customer 
+} from './db';
 import { supabase } from './supabase';
 
 // Helper para verificar conexión
 const isOnline = () => navigator.onLine;
 
-export async function syncPush() {
-  if (!isOnline()) return;
-
-  try {
-    const businessId = localStorage.getItem('nexus_business_id');
-    if (!businessId) return;
-
-    // --------------------------------------------------------
-    // 1. SINCRONIZAR PRODUCTOS (¡SIN SOBRESCRIBIR STOCK!)
-    // --------------------------------------------------------
-    const pendingProducts = await db.products
-      .where('sync_status')
-      .anyOf('pending_create', 'pending_update')
-      .toArray();
-
-    if (pendingProducts.length > 0) {
-      for (const p of pendingProducts) {
-        // Preparamos los datos base
-        // ✅ CORRECCIÓN: Usamos Partial<Product> en lugar de 'any'
-        const productPayload: Partial<Product> = {
-          id: p.id,
-          business_id: p.business_id,
-          name: p.name,
-          price: p.price,
-          cost: p.cost,
-          sku: p.sku,
-          category: p.category,
-          unit: p.unit,
-          expiration_date: p.expiration_date
-        };
-
-        // 🛡️ LÓGICA ANTI-RACE CONDITION:
-        // Solo enviamos el stock si es un producto NUEVO ('pending_create').
-        // Si es una actualización ('pending_update'), NO enviamos el stock,
-        // confiamos en que los 'movements' mantendrán el stock correcto en la nube.
-        if (p.sync_status === 'pending_create') {
-           productPayload.stock = p.stock;
-        }
-
-        const { error } = await supabase
-          .from('products')
-          .upsert(productPayload);
-
-        if (!error) {
-          await db.products.update(p.id, { sync_status: 'synced' });
-        } else {
-          console.error("Error sync product:", p.name, error);
-        }
-      }
-    }
-
-    // --------------------------------------------------------
-    // 2. SINCRONIZAR MOVIMIENTOS DE INVENTARIO (CRÍTICO)
-    // --------------------------------------------------------
-    const pendingMovements = await db.movements
-        .where('sync_status')
-        .equals('pending_create')
-        .toArray();
-
-    if (pendingMovements.length > 0) {
-        // Mapeamos para quitar campos locales internos si fuera necesario
-        const movementsToPush = pendingMovements.map(m => ({
-            id: m.id,
-            business_id: m.business_id,
-            product_id: m.product_id,
-            qty_change: m.qty_change,
-            reason: m.reason,
-            created_at: m.created_at,
-            staff_id: m.staff_id
-        }));
-
-        // Enviamos a Supabase
-        // ALERTA: El Trigger SQL que creamos se ejecutará aquí automáticamente
-        const { error } = await supabase.from('inventory_movements').insert(movementsToPush);
-
-        if (!error) {
-            // Si éxito, marcamos como synced localmente
-            const ids = pendingMovements.map(m => m.id);
-            await db.movements.where('id').anyOf(ids).modify({ sync_status: 'synced' });
-        } else {
-            console.error("Error sync movements:", error);
-        }
-    }
-
-    // --------------------------------------------------------
-    // 3. SINCRONIZAR VENTAS (Transformación: Documento -> Relacional)
-    // --------------------------------------------------------
-    const pendingSales = await db.sales
-      .where('sync_status')
-      .equals('pending_create')
-      .toArray();
-
-    if (pendingSales.length > 0) {
-      
-      // A. Preparamos las CABECERAS (Tabla sales)
-      // Nota: Ya no enviamos la columna 'items' JSON a Supabase, o la enviamos null/vacía
-      const salesToPush = pendingSales.map(s => ({
-        id: s.id,
-        business_id: s.business_id,
-        date: s.date,
-        total: s.total,
-        payment_method: s.payment_method,
-        staff_id: s.staff_id,
-        staff_name: s.staff_name,
-        amount_tendered: s.amount_tendered,
-        change: s.change,
-        // Opcional: items: null (si aún no has borrado la columna jsonb en supabase)
-      }));
-
-      // B. Preparamos los DETALLES (Tabla sale_items)
-      // "Aplanamos" los arrays de todas las ventas en una sola lista gigante de items
-      const allSaleItems = pendingSales.flatMap(s => 
-        s.items.map(item => {
-            // Calcular total de línea de forma segura (evitando decimales raros)
-            const lineTotal = (Math.round(item.price * 100) * item.quantity) / 100;
-
-            return {
-              sale_id: s.id,
-              business_id: s.business_id,
-              product_id: item.product_id, // Compatibilidad por si el campo se llama id o product_id
-              name: item.name,
-              quantity: item.quantity,
-              price: item.price,
-              unit_cost: item.cost || 0, // Guardamos el costo para calcular ganancias luego
-              total: lineTotal
-            };
-        })
-      );
-
-      // C. Transacción de Red: Enviamos primero Ventas, luego Items
-      // Usamos upsert para evitar errores si se reintenta
-      const { error: salesError } = await supabase.from('sales').upsert(salesToPush);
-
-      if (!salesError) {
-        // Solo si la cabecera entró bien, insertamos los detalles
-        if (allSaleItems.length > 0) {
-            const { error: itemsError } = await supabase.from('sale_items').insert(allSaleItems);
-            
-            if (itemsError) {
-                console.error("Error crítico subiendo items:", itemsError);
-                // Aquí podrías implementar lógica de rollback o reintento, 
-                // pero por ahora dejamos que el siguiente sync lo intente de nuevo.
-                return; 
-            }
-        }
-        
-        // D. Éxito Total: Marcar ventas locales como sincronizadas
-        const ids = pendingSales.map(s => s.id);
-        await db.sales.where('id').anyOf(ids).modify({ sync_status: 'synced' });
-        
-      } else {
-        console.error("Error subiendo cabeceras de venta:", salesError);
-      }
-    }
-    // --------------------------------------------------------
-    // 4. SINCRONIZAR CLIENTES
-    // --------------------------------------------------------
-    const pendingCustomers = await db.customers
-      .where('sync_status')
-      .anyOf('pending_create', 'pending_update')
-      .toArray();
-
-    if (pendingCustomers.length > 0) {
-        for (const c of pendingCustomers) {
-            const { error } = await supabase.from('customers').upsert({
-                id: c.id,
-                business_id: c.business_id,
-                name: c.name,
-                phone: c.phone,
-                email: c.email,
-                address: c.address,
-                notes: c.notes
-            });
-            if(!error) {
-                await db.customers.update(c.id, { sync_status: 'synced' });
-            }
-        }
-    }
-
-  } catch (error) {
-    console.error("Error general de sincronización:", error);
+// ============================================================================
+// 1. ENCOLADOR (El Frontend llama a esto para guardar acciones pendientes)
+// ============================================================================
+// ✅ CORRECCIÓN: Usamos QueuePayload en lugar de 'any'
+export async function addToQueue(type: QueueItem['type'], payload: QueuePayload) {
+  await db.action_queue.add({
+    id: crypto.randomUUID(),
+    type,
+    payload,
+    timestamp: Date.now(),
+    retries: 0,
+    status: 'pending'
+  });
+  
+  if (isOnline()) {
+    processQueue();
   }
 }
 
-// Función para TRAER datos frescos (Pull)
-// Esto es importante para corregir el stock local con el valor real del servidor
+// ============================================================================
+// 2. PROCESADOR DE COLA (Worker: Sube los datos uno por uno)
+// ============================================================================
+export async function processQueue() {
+  if (!isOnline()) return;
+
+  const pendingItems = await db.action_queue
+    .where('status').equals('pending')
+    .sortBy('timestamp');
+
+  if (pendingItems.length === 0) return;
+
+  for (const item of pendingItems) {
+    try {
+      await db.action_queue.update(item.id, { status: 'processing' });
+
+      let entityId = ''; 
+
+      switch (item.type) {
+        
+        // --- CASO A: NUEVA VENTA ---
+        case 'SALE': { // ✅ CORRECCIÓN: Llaves agregadas para scope local
+          const saleData = item.payload as SalePayload;
+          entityId = saleData.sale.id;
+
+          const { error: saleErr } = await supabase.from('sales').upsert(saleData.sale);
+          if (saleErr) throw new Error(`Error subiendo venta: ${saleErr.message}`);
+          
+          if (saleData.items && saleData.items.length > 0) {
+             const { error: itemsErr } = await supabase.from('sale_items').insert(saleData.items);
+             if (itemsErr) throw new Error(`Error subiendo items: ${itemsErr.message}`);
+          }
+          break;
+        }
+
+        // --- CASO B: MOVIMIENTO DE INVENTARIO ---
+        case 'MOVEMENT': {
+          const movData = item.payload as InventoryMovement;
+          entityId = movData.id;
+          
+          const { error: movErr } = await supabase.from('inventory_movements').insert(movData);
+          if (movErr) throw new Error(`Error subiendo movimiento: ${movErr.message}`);
+          break;
+        }
+
+        // --- CASO C: LOG DE AUDITORÍA ---
+        case 'AUDIT': {
+          const auditData = item.payload as AuditLog;
+          entityId = auditData.id;
+
+          const { error: auditErr } = await supabase.from('audit_logs').insert(auditData);
+          if (auditErr) throw new Error(`Error subiendo audit log: ${auditErr.message}`);
+          break;
+        }
+
+        // --- CASO D: PRODUCTO ---
+        case 'PRODUCT_SYNC': {
+           const prodData = item.payload as Product;
+           entityId = prodData.id;
+
+           const { error: prodErr } = await supabase.from('products').upsert(prodData);
+           if (prodErr) throw new Error(`Error subiendo producto: ${prodErr.message}`);
+           break;
+        }
+           
+        // --- CASO E: CLIENTE ---
+        case 'CUSTOMER_SYNC': {
+           const custData = item.payload as Customer;
+           entityId = custData.id;
+
+           const { error: custErr } = await supabase.from('customers').upsert(custData);
+           if (custErr) throw new Error(`Error subiendo cliente: ${custErr.message}`);
+           break;
+        }
+      }
+
+      // === ÉXITO ===
+      await db.action_queue.delete(item.id);
+      
+      if (entityId) {
+          await updateLocalEntityStatus(item.type, entityId);
+      }
+
+    } catch (err: unknown) { // ✅ CORRECCIÓN: 'unknown' en lugar de 'any'
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error(`Error procesando item de cola [${item.type}]:`, errorMessage);
+      
+      if (item.retries < 5) {
+        await db.action_queue.update(item.id, { 
+            status: 'pending', 
+            retries: item.retries + 1, 
+            error: errorMessage 
+        });
+      } else {
+        await db.action_queue.update(item.id, { 
+            status: 'failed', 
+            error: 'Max retries reached: ' + errorMessage
+        });
+      }
+    }
+  }
+}
+
+// ============================================================================
+// 3. ACTUALIZADOR DE ESTADO LOCAL
+// ============================================================================
+async function updateLocalEntityStatus(type: QueueItem['type'], id: string) {
+    if (!id) return;
+    try {
+        switch (type) {
+            case 'SALE':
+                await db.sales.update(id, { sync_status: 'synced' });
+                break;
+            case 'MOVEMENT':
+                await db.movements.update(id, { sync_status: 'synced' });
+                break;
+            case 'AUDIT':
+                await db.audit_logs.update(id, { sync_status: 'synced' });
+                break;
+            case 'PRODUCT_SYNC':
+                await db.products.update(id, { sync_status: 'synced' });
+                break;
+            case 'CUSTOMER_SYNC':
+                await db.customers.update(id, { sync_status: 'synced' });
+                break;
+        }
+    } catch (e) {
+        console.warn(`No se pudo actualizar el estado local para ${type} ID: ${id}`, e);
+    }
+}
+
+// ============================================================================
+// 4. PULL: BAJADA DE DATOS
+// ============================================================================
 export async function syncPull() {
     if (!isOnline()) return;
+    
     const businessId = localStorage.getItem('nexus_business_id');
     if (!businessId) return;
 
-    // 1. Traer Productos (para actualizar Stock real calculado por el servidor)
-    const { data: remoteProducts } = await supabase
-        .from('products')
-        .select('*')
-        .eq('business_id', businessId);
-    
-    if (remoteProducts) {
-        await db.transaction('rw', db.products, async () => {
-            for (const p of remoteProducts) {
-                const local = await db.products.get(p.id);
-                // Solo actualizamos si localmente no tenemos cambios pendientes
-                // para no sobrescribir el trabajo del usuario actual
-                if (!local || local.sync_status === 'synced') {
-                    // Usamos casting a any temporalmente si hay discrepancias de tipos estrictos
-                    // o aseguramos que p cumple con Product
-                    await db.products.put({ ...p, sync_status: 'synced' } as Product);
+    try {
+        const { data: remoteProducts } = await supabase
+            .from('products')
+            .select('*')
+            .eq('business_id', businessId);
+        
+        if (remoteProducts) {
+            await db.transaction('rw', db.products, async () => {
+                for (const p of remoteProducts) {
+                    const local = await db.products.get(p.id);
+                    if (!local || local.sync_status === 'synced') {
+                        await db.products.put({ ...p, sync_status: 'synced' } as Product);
+                    }
                 }
-            }
-        });
+            });
+        }
+
+        const { data: remoteCustomers } = await supabase
+            .from('customers')
+            .select('*')
+            .eq('business_id', businessId);
+
+        if (remoteCustomers) {
+             await db.transaction('rw', db.customers, async () => {
+                for (const c of remoteCustomers) {
+                    const local = await db.customers.get(c.id);
+                    if (!local || local.sync_status === 'synced') {
+                        await db.customers.put({ ...c, sync_status: 'synced' } as Customer);
+                    }
+                }
+             });
+        }
+    } catch (error) {
+        console.error("Error en syncPull:", error);
     }
+}
+
+export async function syncPush() {
+    await processQueue();
 }
