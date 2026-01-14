@@ -83,6 +83,7 @@ export interface Staff {
   role: 'admin' | 'vendedor';
   pin: string;
   active: boolean;
+  business_id: string;
 }
 
 // --- 🆕 NUEVAS DEFINICIONES STRICT-TYPE ---

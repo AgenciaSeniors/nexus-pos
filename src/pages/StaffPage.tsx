@@ -10,7 +10,6 @@ export function StaffPage() {
   const [newName, setNewName] = useState('');
   const [newPin, setNewPin] = useState('');
   
-  // ✅ CORRECCIÓN 1: El tipo debe ser "vendedor" para coincidir con db.ts
   const [newRole, setNewRole] = useState<'admin' | 'vendedor'>('vendedor');
 
   const loadStaff = async () => {
@@ -32,20 +31,28 @@ export function StaffPage() {
     e.preventDefault();
     if (newPin.length !== 4) return alert("El PIN debe ser de 4 dígitos");
 
+    // ✅ CORRECCIÓN: Obtener el ID del negocio actual
+    const businessId = localStorage.getItem('nexus_business_id');
+    
+    if (!businessId) {
+        alert("Error crítico: No se encuentra el ID del negocio. Por favor reinicia sesión.");
+        return;
+    }
+
     try {
       await db.staff.add({
         id: crypto.randomUUID(),
         name: newName,
         pin: newPin,
-        role: newRole, // Ahora sí coincide el tipo
-        active: true
+        role: newRole,
+        active: true,
+        business_id: businessId // ✅ Ahora incluimos el campo obligatorio
       });
       setIsAdding(false);
       setNewName('');
       setNewPin('');
       loadStaff();
     } catch (error) {
-      // ✅ CORRECCIÓN 2: Usamos la variable 'error' para que ESLint no se queje
       console.error(error);
       alert("Error al agregar (quizás el PIN ya existe)");
     }
@@ -102,7 +109,6 @@ export function StaffPage() {
             </div>
             <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Rol</label>
-                {/* ✅ CORRECCIÓN 3: Eliminamos el 'any' y usamos el tipo correcto */}
                 <select 
                   value={newRole} 
                   onChange={e => setNewRole(e.target.value as 'admin' | 'vendedor')} 

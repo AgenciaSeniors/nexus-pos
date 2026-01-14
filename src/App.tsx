@@ -243,6 +243,7 @@ function BusinessApp() {
   const [loading, setLoading] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
 
+  // --- LOGICA DE RECUPERACIÓN DE PERFIL ---
   const fetchProfile = async (userId: string) => {
     try {
       const { data, error } = await supabase
@@ -251,43 +252,55 @@ function BusinessApp() {
         .eq('id', userId)
         .single();
 
+      // Si hay error (ej: usuario no encontrado porque se eliminó), lanzamos error
       if (error) throw error;
 
       if (data) {
+        // Verificar si está suspendido o eliminado lógicamente
+        if (data.status === 'suspended' || data.status === 'rejected' || data.status === 'deleted') {
+          throw new Error("Cuenta desactivada o eliminada");
+        }
+
         if (data.status === 'pending') {
           toast.info("Tu cuenta está pendiente de aprobación.");
           await supabase.auth.signOut();
           return;
         }
-        if (data.status === 'suspended' || data.status === 'rejected') {
-          toast.error("Acceso denegado. Contacta a soporte.");
-          await supabase.auth.signOut();
-          return;
-        }
 
-        // Construimos el objeto Staff
+        // Construir objeto Staff
         const staffData: Staff = {
           id: data.id,
           name: data.full_name || data.email,
           role: (data.role === 'admin' || data.role === 'super_admin') ? 'admin' : 'vendedor',
           pin: data.initial_pin || '0000',
           active: true,
-          // Forzamos el tipado para incluir business_id si la interfaz Staff lo permite (o lo extendemos)
-          // Nota: Asegúrate de que tu interfaz Staff en db.ts tenga business_id
           business_id: data.business_id 
-        } as unknown as Staff;
+        };
 
         if (data.business_id) {
           localStorage.setItem('nexus_business_id', data.business_id);
         }
         
-        // ✅ USAMOS staffData: Actualizamos la caché local por seguridad
         localStorage.setItem('nexus_current_staff', JSON.stringify(staffData));
+        // Opcional: Si quieres auto-login sin PinPad para admins:
+        // setCurrentStaff(staffData); 
       }
-    } catch (error: unknown) { // ✅ Tipado
-      const errorMessage = error instanceof Error ? error.message : "Error desconocido";
-      console.error("Error fetching profile:", errorMessage);
-      toast.error("Error al cargar perfil de usuario");
+    } catch (error: unknown) {
+      // 🚨 AQUÍ ESTÁ EL ARREGLO:
+      // Si falla obtener el perfil (406, 404, etc), asumimos que el usuario ya no es válido.
+      console.error("Error crítico de perfil:", error);
+      
+      // 1. Cerramos la sesión de Supabase
+      await supabase.auth.signOut();
+      
+      // 2. Limpiamos estado local
+      setSession(null);
+      setCurrentStaff(null);
+      localStorage.removeItem('nexus_business_id');
+      localStorage.removeItem('nexus_current_staff');
+      
+      // 3. Avisamos al usuario
+      toast.error("Sesión caducada o usuario no encontrado.");
     }
   };
 
