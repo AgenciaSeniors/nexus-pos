@@ -1,8 +1,15 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Store, Package, PieChart, Settings, Lock, Shield } from 'lucide-react';
-import type { Staff } from '../lib/db';
-import logo from '../logo.png';
+import { 
+  Store, Package, PieChart, Settings, Lock, Shield, 
+  Cloud, AlertCircle, RefreshCw 
+} from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db, type Staff } from '../lib/db';
+import { syncPush } from '../lib/sync';
+import logo from '../logo.png'; // Asegúrate de que el logo exista
 
+// Definimos las props para que App.tsx no se queje
 interface LayoutProps {
   currentStaff: Staff | null;
   onLock: () => void;
@@ -11,84 +18,173 @@ interface LayoutProps {
 export function Layout({ currentStaff, onLock }: LayoutProps) {
   const location = useLocation();
   
-  // VERIFICAMOS SI ES ADMIN
+  // --- LÓGICA DE SINCRONIZACIÓN (UX MEJORADO) ---
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Monitor de datos pendientes (Badge reactivo)
+  const pendingCount = useLiveQuery(async () => {
+    const sales = await db.sales.where('sync_status').equals('pending_create').count();
+    const movements = await db.movements.where('sync_status').equals('pending_create').count();
+    return sales + movements; 
+  }) || 0;
+
+  const handleManualSync = async () => {
+    if (!isOnline) return;
+    setIsSyncing(true);
+    await syncPush();
+    setTimeout(() => setIsSyncing(false), 1000); // Feedback visual
+  };
+
+  // --- LÓGICA DE MENÚ Y ROL ---
   const isAdmin = currentStaff?.role === 'admin';
 
-  // DEFINIMOS EL MENÚ SEGÚN EL ROL
-  const allMenuItems = [
-    // Visible para TODOS (Admin y Vendedor)
+  const menuItems = [
     { path: '/', icon: <Store size={22} />, label: 'Vender', show: true },
-    
-    // Visible SOLO para ADMIN
     { path: '/inventario', icon: <Package size={22} />, label: 'Stock', show: isAdmin },
     { path: '/finanzas', icon: <PieChart size={22} />, label: 'Finanzas', show: isAdmin },
     { path: '/equipo', icon: <Shield size={22} />, label: 'Equipo', show: isAdmin },
+    { path: '/clientes', icon: <Shield size={22} />, label: 'Clientes', show: true }, // Agregado Clientes
     { path: '/configuracion', icon: <Settings size={22} />, label: 'Ajustes', show: isAdmin }
   ];
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 overflow-hidden">
+    <div className="flex h-screen w-full bg-slate-50 overflow-hidden font-sans">
       
-      {/* 🖥️ SIDEBAR (PC) */}
-      <aside className="hidden md:flex w-24 bg-white border-r border-slate-200 flex-col items-center py-6 z-20 shadow-sm">
-        {/* Opción con imagen */}
-<div className="mb-4 p-1 bg-white rounded-xl shadow-lg">
-  <img src={logo} alt="Logo" className="w-10 h-10 object-contain" />
-</div>
+      {/* 🖥️ SIDEBAR (Escritorio) */}
+      <aside className="hidden md:flex w-24 bg-white border-r border-slate-200 flex-col items-center py-6 z-20 shadow-sm transition-all">
         
-        {/* FOTO/INICIALES DEL EMPLEADO */}
-        <div className="mb-6 text-center px-1">
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center mx-auto mb-1 text-white font-bold text-xs shadow-sm ${isAdmin ? 'bg-purple-600' : 'bg-blue-500'}`}>
-            {currentStaff?.name.substring(0, 2).toUpperCase()}
+        {/* LOGO */}
+        <div className="mb-4 p-1 bg-white rounded-xl shadow-sm border border-slate-100">
+          <img src={logo} alt="Logo" className="w-10 h-10 object-contain" />
+        </div>
+        
+        {/* USUARIO (Avatar) */}
+        <div className="mb-6 text-center px-1 w-full group relative">
+          <div className={`w-9 h-9 rounded-full flex items-center justify-center mx-auto mb-1 text-white font-bold text-sm shadow-md transition-colors ${isAdmin ? 'bg-purple-600' : 'bg-indigo-500'}`}>
+            {currentStaff?.name.substring(0, 2).toUpperCase() || 'ST'}
           </div>
-          <p className="text-[10px] font-medium text-slate-500 truncate w-full">
-            {currentStaff?.name}
+          <p className="text-[10px] font-bold text-slate-600 truncate w-full px-1">
+            {currentStaff?.name?.split(' ')[0]}
           </p>
         </div>
 
-        {/* MENÚ FILTRADO */}
-        <nav className="flex-1 flex flex-col gap-4 w-full px-4 overflow-y-auto scrollbar-hide">
-          {allMenuItems.filter(i => i.show).map((item) => (
+        {/* NAVEGACIÓN */}
+        <nav className="flex-1 flex flex-col gap-3 w-full px-2">
+          {menuItems.filter(i => i.show).map((item) => (
             <Link
               key={item.path}
               to={item.path}
-              className={`flex flex-col items-center justify-center p-3 rounded-2xl transition-all duration-300 ${
+              className={`flex flex-col items-center justify-center p-3 rounded-xl transition-all duration-200 group relative ${
                 location.pathname === item.path
-                  ? 'bg-indigo-50 text-indigo-600 shadow-sm translate-x-1'
-                  : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'
+                  ? 'bg-indigo-50 text-indigo-600 shadow-sm ring-1 ring-indigo-100'
+                  : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
               }`}
             >
               {item.icon}
-              <span className="text-[10px] mt-1 font-semibold">{item.label}</span>
+              {/* Tooltip casero */}
+              <span className="absolute left-full ml-2 px-2 py-1 bg-slate-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 shadow-lg">
+                {item.label}
+              </span>
             </Link>
           ))}
         </nav>
 
-        {/* BOTÓN BLOQUEAR */}
-        <button 
-          onClick={onLock} 
-          className="mt-4 p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors flex flex-col items-center group"
-          title="Bloquear Pantalla"
-        >
-          <Lock size={22} className="group-hover:scale-110 transition-transform"/>
-          <span className="text-[9px] font-bold mt-1">Bloquear</span>
-        </button>
+        {/* ACCIONES FOOTER (Sync & Lock) */}
+        <div className="flex flex-col gap-2 w-full px-2 mt-4 border-t border-slate-100 pt-4">
+            {/* Botón de Sincronización */}
+            <button 
+                onClick={handleManualSync}
+                disabled={!isOnline || isSyncing}
+                className={`p-3 rounded-xl flex flex-col items-center justify-center transition-all relative group ${
+                    pendingCount > 0 ? 'bg-amber-50 text-amber-600' : 'text-slate-300 hover:text-indigo-500 hover:bg-slate-50'
+                }`}
+            >
+                {isSyncing ? <RefreshCw size={20} className="animate-spin"/> : pendingCount > 0 ? <AlertCircle size={20}/> : <Cloud size={20}/>}
+                
+                {/* Contador flotante */}
+                {pendingCount > 0 && (
+                    <span className="absolute top-1 right-1 flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500 text-[8px] text-white justify-center items-center font-bold"></span>
+                    </span>
+                )}
+            </button>
+
+            {/* Botón de Bloqueo */}
+            <button 
+                onClick={onLock} 
+                className="p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors flex flex-col items-center justify-center"
+                title="Bloquear Pantalla"
+            >
+                <Lock size={20}/>
+            </button>
+        </div>
       </aside>
 
-      {/* 📱 MOBILE NAV (Solo muestra lo esencial) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-4 py-2 flex justify-between items-center z-50 pb-safe">
-        {allMenuItems.filter(i => i.show).slice(0, 4).map((item) => (
-          <Link key={item.path} to={item.path} className={`flex flex-col items-center p-2 ${location.pathname === item.path ? 'text-indigo-600' : 'text-slate-400'}`}>
-            {item.icon}
-          </Link>
-        ))}
-        <button onClick={onLock} className="text-slate-400 p-2"><Lock size={22}/></button>
-      </nav>
+      {/* 📱 HEADER & NAV (Móvil) */}
+      <div className="flex-1 flex flex-col min-w-0">
+        
+        {/* Header Móvil */}
+        <header className="bg-white border-b border-slate-200 px-4 py-3 flex justify-between items-center md:hidden z-10 shadow-sm">
+            <div className="font-bold text-slate-800 flex items-center gap-2">
+                <img src={logo} alt="" className="w-6 h-6 object-contain"/> 
+                <span className="text-sm">Nexus POS</span>
+            </div>
+            
+            <div className="flex items-center gap-3">
+                {/* Indicador Sync Móvil */}
+                <button 
+                    onClick={handleManualSync}
+                    className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${
+                        pendingCount > 0 
+                            ? 'bg-amber-100 text-amber-700 border border-amber-200' 
+                            : isOnline 
+                                ? 'bg-slate-100 text-slate-600' 
+                                : 'bg-red-100 text-red-600'
+                    }`}
+                >
+                    {isSyncing ? <RefreshCw size={14} className="animate-spin"/> : pendingCount > 0 ? <AlertCircle size={14}/> : <Cloud size={14}/>}
+                    {pendingCount > 0 ? <span className="ml-1">{pendingCount}</span> : null}
+                </button>
+                
+                <button onClick={onLock} className="p-2 text-slate-500 active:bg-slate-100 rounded-full">
+                    <Lock size={20}/>
+                </button>
+            </div>
+        </header>
 
-      {/* ÁREA PRINCIPAL */}
-      <main className="flex-1 overflow-auto relative w-full pb-20 md:pb-0">
-        <Outlet context={{ currentStaff }} /> 
-      </main>
+        {/* ÁREA PRINCIPAL */}
+        <main className="flex-1 overflow-y-auto overflow-x-hidden relative bg-slate-50 pb-safe">
+            <Outlet context={{ currentStaff }} /> 
+        </main>
+
+        {/* Bottom Nav Móvil */}
+        <nav className="md:hidden bg-white border-t border-slate-200 flex justify-around items-center p-2 pb-safe z-30 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+            {menuItems.filter(i => i.show).slice(0, 5).map((item) => (
+            <Link 
+                key={item.path} 
+                to={item.path} 
+                className={`p-2 rounded-xl flex flex-col items-center transition-colors ${
+                    location.pathname === item.path ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400'
+                }`}
+            >
+                {item.icon}
+            </Link>
+            ))}
+        </nav>
+      </div>
     </div>
   );
 }
