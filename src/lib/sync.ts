@@ -1,4 +1,4 @@
-import { db, type Product, type Sale, type InventoryMovement, type Customer } from './db';
+import { db, type Product } from './db';
 import { supabase } from './supabase';
 
 // Helper para verificar conexión
@@ -22,7 +22,8 @@ export async function syncPush() {
     if (pendingProducts.length > 0) {
       for (const p of pendingProducts) {
         // Preparamos los datos base
-        const productPayload: any = {
+        // ✅ CORRECCIÓN: Usamos Partial<Product> en lugar de 'any'
+        const productPayload: Partial<Product> = {
           id: p.id,
           business_id: p.business_id,
           name: p.name,
@@ -96,6 +97,8 @@ export async function syncPush() {
       .toArray();
 
     if (pendingSales.length > 0) {
+      
+      // A. Preparamos las CABECERAS de las ventas
       const salesToPush = pendingSales.map(s => ({
         id: s.id,
         business_id: s.business_id,
@@ -104,15 +107,40 @@ export async function syncPush() {
         payment_method: s.payment_method,
         staff_id: s.staff_id,
         staff_name: s.staff_name,
-        // Convertimos items a JSON si tu DB usa JSONB, o mantén estructura si normalizaste
-        items: s.items 
+        // Ya no enviamos 'items' como JSON a la columna antigua (o mandamos null)
       }));
 
-      const { error } = await supabase.from('sales').insert(salesToPush);
+      // B. Preparamos los ÍTEMS individuales (Desglose)
+      const allSaleItems = pendingSales.flatMap(s => 
+        s.items.map(item => ({
+          sale_id: s.id,
+          business_id: s.business_id,
+          product_id: item.product_id, // Asegúrate que tu SaleItem tenga product_id
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          cost: item.cost || 0
+        }))
+      );
 
-      if (!error) {
-        const ids = pendingSales.map(s => s.id);
-        await db.sales.where('id').anyOf(ids).modify({ sync_status: 'synced' });
+      // C. Enviamos en orden: Primero Ventas, luego Ítems
+      const { error: salesError } = await supabase.from('sales').insert(salesToPush);
+
+      if (!salesError) {
+        // Solo si la cabecera se guardó, guardamos los ítems
+        const { error: itemsError } = await supabase.from('sale_items').insert(allSaleItems);
+        
+        if (!itemsError) {
+          // Si todo salió bien, marcamos como sincronizado
+          const ids = pendingSales.map(s => s.id);
+          await db.sales.where('id').anyOf(ids).modify({ sync_status: 'synced' });
+        } else {
+          console.error("Error sincronizando ítems de venta:", itemsError);
+          // Opcional: Podrías borrar las ventas huérfanas si fallan los ítems, 
+          // pero el retry del siguiente sync suele arreglarlo.
+        }
+      } else {
+        console.error("Error sincronizando ventas:", salesError);
       }
     }
 
@@ -166,7 +194,9 @@ export async function syncPull() {
                 // Solo actualizamos si localmente no tenemos cambios pendientes
                 // para no sobrescribir el trabajo del usuario actual
                 if (!local || local.sync_status === 'synced') {
-                    await db.products.put({ ...p, sync_status: 'synced' });
+                    // Usamos casting a any temporalmente si hay discrepancias de tipos estrictos
+                    // o aseguramos que p cumple con Product
+                    await db.products.put({ ...p, sync_status: 'synced' } as Product);
                 }
             }
         });
