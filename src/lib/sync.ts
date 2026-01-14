@@ -6,8 +6,9 @@ import {
   type InventoryMovement, 
   type AuditLog, 
   type Product, 
-  type Customer 
+  type Customer,
 } from './db';
+
 import { supabase } from './supabase';
 
 const isOnline = () => navigator.onLine;
@@ -122,6 +123,7 @@ export async function processQueue() {
            if (custErr) throw new Error(`Error subiendo cliente: ${custErr.message}`);
            break;
         }
+        
       }
 
       await db.action_queue.delete(item.id);

@@ -17,11 +17,11 @@ export function CustomersPage() {
   });
 
   const customers = useLiveQuery(() => 
-    db.customers
-      .filter(c => c.name.toLowerCase().includes(query.toLowerCase()) || c.phone?.includes(query) || false)
-      .toArray()
-  , [query]);
-
+  db.customers
+    .filter(c => !c.deleted_at) // 👁️ Filtro de soft delete
+    .toArray()
+) || [];
+  
   const openCreate = () => {
     setEditingId(null);
     setFormData({ name: '', phone: '', email: '' });

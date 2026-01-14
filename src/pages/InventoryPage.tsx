@@ -4,9 +4,15 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { Plus, Search, Edit2, Trash2, Package, Loader2 } from 'lucide-react';
 import { syncPush } from '../lib/sync';
 import { currency } from '../lib/currency';
+import { toast } from 'sonner';
+import { addToQueue } from '../lib/sync';
 
 export function InventoryPage() {
-  const products = useLiveQuery(() => db.products.toArray());
+  const products = useLiveQuery(() => 
+  db.products
+    .filter(p => !p.deleted_at) // 👁️ Solo mostramos los que NO tienen fecha de borrado
+    .toArray()
+) || [];
   const [searchTerm, setSearchTerm] = useState('');
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -162,36 +168,34 @@ export function InventoryPage() {
     setIsFormOpen(true);
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('¿Eliminar este producto?')) return;
-    try {
-      const product = await db.products.get(id);
-      
-      // Trazabilidad: Registrar que se eliminó el stock remanente
-      if (product && product.stock !== 0) {
-          await db.movements.add({
-              id: crypto.randomUUID(),
-              business_id: product.business_id,
-              product_id: id,
-              qty_change: -product.stock, // Restamos todo lo que quedaba
-              reason: 'correction', // Salida por eliminación
-              created_at: new Date().toISOString(),
-              sync_status: 'pending_create'
-          });
-      }
+  // En InventoryPage.tsx
 
-      if (product?.sync_status === 'pending_create') {
-        await db.products.delete(id); 
-      } else {
-        await db.products.update(id, { sync_status: 'pending_delete' }); 
-        await db.products.delete(id); 
-      }
-      syncPush();
-    } catch (error) {
-      console.error(error);
-      alert("Error al eliminar");
-    }
-  };
+const handleDelete = async (id: string) => {
+  if (!confirm('¿Estás seguro de eliminar este producto?')) return;
+
+  try {
+    const product = await db.products.get(id);
+    if (!product) return;
+
+    // 1. SOFT DELETE LOCAL
+    // En lugar de db.products.delete(id), hacemos update:
+    const changes = {
+      deleted_at: new Date().toISOString(),
+      sync_status: 'pending_update' as const// ⚠️ Importante: Lo marcamos para sincronizar como UPDATE
+    };
+
+    await db.products.update(id, changes);
+
+    // 2. ENCOLAR SINCRONIZACIÓN
+    // Enviamos el producto actualizado a la cola, no una orden de borrado
+    await addToQueue('PRODUCT_SYNC', { ...product, ...changes });
+
+    toast.success('Producto eliminado correctamente');
+  } catch (error) {
+    console.error(error);
+    toast.error('Error al eliminar');
+  }
+};
 
   const resetForm = () => {
     setFormData({

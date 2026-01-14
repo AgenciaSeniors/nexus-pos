@@ -13,6 +13,7 @@ export interface Product {
   unit?: string;
   expiration_date?: string;
   sync_status: 'synced' | 'pending_create' | 'pending_update' | 'pending_delete';
+  deleted_at?: string | null;
 }
 
 export interface SaleItem {
@@ -65,6 +66,7 @@ export interface Customer {
   address?: string;
   notes?: string;
   sync_status: 'synced' | 'pending_create' | 'pending_update';
+  deleted_at?: string | null;
 }
 
 export interface ParkedOrder {
@@ -84,7 +86,38 @@ export interface Staff {
   active: boolean;
   business_id: string;
 }
+export interface CashRegister {
+  id: string;
+  business_id: string;
+  name: string;
+  sync_status?: 'synced' | 'pending_create';
+}
 
+export interface CashShift {
+  id: string;
+  business_id: string;
+  staff_id: string;
+  start_amount: number;
+  end_amount?: number;
+  expected_amount?: number;
+  difference?: number;
+  opened_at: string;
+  closed_at?: string;
+  status: 'open' | 'closed';
+  sync_status?: 'synced' | 'pending_create' | 'pending_update';
+}
+
+export interface CashMovement {
+  id: string;
+  shift_id: string;
+  business_id: string; // Útil para filtrar rápido
+  type: 'in' | 'out';
+  amount: number;
+  reason: string;
+  staff_id: string;
+  created_at: string;
+  sync_status?: 'synced' | 'pending_create';
+}
 // --- 🆕 NUEVAS DEFINICIONES STRICT-TYPE ---
 
 // 1. Definimos la estructura exacta del payload de venta
@@ -137,6 +170,9 @@ export class NexusDB extends Dexie {
   staff!: Table<Staff>;
   audit_logs!: Table<AuditLog>;
   action_queue!: Table<QueueItem>;
+  cash_registers!: Table<CashRegister>;
+  cash_shifts!: Table<CashShift>;
+  cash_movements!: Table<CashMovement>;
 
   constructor() {
     super('NexusPOS_DB');
