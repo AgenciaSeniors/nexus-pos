@@ -149,7 +149,7 @@ export class NexusDB extends Dexie {
       customers: 'id, business_id, name, phone, sync_status',
       parked_orders: 'id, business_id, date',
       settings: 'id',
-      staff: 'id, pin, active',
+      staff: 'id, business_id, pin, active',
       audit_logs: 'id, business_id, action, created_at, sync_status',
       action_queue: 'id, type, timestamp, status'
     });
