@@ -1,7 +1,7 @@
 import { 
   db, 
   type QueueItem, 
-  type QueuePayload, // Asegúrate de que esto esté exportado en db.ts
+  type QueuePayload, 
   type SalePayload, 
   type InventoryMovement, 
   type AuditLog, 
@@ -10,13 +10,11 @@ import {
 } from './db';
 import { supabase } from './supabase';
 
-// Helper para verificar conexión
 const isOnline = () => navigator.onLine;
 
 // ============================================================================
-// 1. ENCOLADOR (El Frontend llama a esto para guardar acciones pendientes)
+// 1. ENCOLADOR 
 // ============================================================================
-// ✅ CORRECCIÓN: Usamos QueuePayload en lugar de 'any'
 export async function addToQueue(type: QueueItem['type'], payload: QueuePayload) {
   await db.action_queue.add({
     id: crypto.randomUUID(),
@@ -53,16 +51,37 @@ export async function processQueue() {
       switch (item.type) {
         
         // --- CASO A: NUEVA VENTA ---
-        case 'SALE': { // ✅ CORRECCIÓN: Llaves agregadas para scope local
+        case 'SALE': {
           const saleData = item.payload as SalePayload;
           entityId = saleData.sale.id;
 
-          const { error: saleErr } = await supabase.from('sales').upsert(saleData.sale);
+          // 🧹 LIMPIEZA: Quitamos 'items' y 'sync_status' antes de subir a tabla 'sales'
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { items, sync_status, ...saleClean } = saleData.sale;
+
+          // 1. Subir Venta (Limpia)
+          const { error: saleErr } = await supabase.from('sales').upsert(saleClean);
           if (saleErr) throw new Error(`Error subiendo venta: ${saleErr.message}`);
           
+          // 2. Subir Items
           if (saleData.items && saleData.items.length > 0) {
              const { error: itemsErr } = await supabase.from('sale_items').insert(saleData.items);
              if (itemsErr) throw new Error(`Error subiendo items: ${itemsErr.message}`);
+
+             // 3. 🛡️ ACTUALIZACIÓN DE STOCK ATÓMICA
+             for (const saleItem of saleData.items) {
+               if (saleItem.product_id) {
+                 const { error: stockErr } = await supabase.rpc('decrease_stock', {
+                   p_product_id: saleItem.product_id,
+                   p_qty: saleItem.quantity
+                 });
+
+                 if (stockErr) {
+                   console.error(`⚠️ Error descontando stock para ${saleItem.name}:`, stockErr);
+                   // Aquí podrías agregar lógica de auditoría si falla el stock
+                 }
+               }
+             }
           }
           break;
         }
@@ -72,7 +91,11 @@ export async function processQueue() {
           const movData = item.payload as InventoryMovement;
           entityId = movData.id;
           
-          const { error: movErr } = await supabase.from('inventory_movements').insert(movData);
+          // 🧹 LIMPIEZA: Quitamos 'sync_status'
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { sync_status, ...movClean } = movData;
+
+          const { error: movErr } = await supabase.from('inventory_movements').insert(movClean);
           if (movErr) throw new Error(`Error subiendo movimiento: ${movErr.message}`);
           break;
         }
@@ -82,7 +105,11 @@ export async function processQueue() {
           const auditData = item.payload as AuditLog;
           entityId = auditData.id;
 
-          const { error: auditErr } = await supabase.from('audit_logs').insert(auditData);
+          // 🧹 LIMPIEZA: Quitamos 'sync_status' y 'staff_name' (que no existe en BD)
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { sync_status, staff_name, ...auditClean } = auditData;
+
+          const { error: auditErr } = await supabase.from('audit_logs').insert(auditClean);
           if (auditErr) throw new Error(`Error subiendo audit log: ${auditErr.message}`);
           break;
         }
@@ -92,7 +119,11 @@ export async function processQueue() {
            const prodData = item.payload as Product;
            entityId = prodData.id;
 
-           const { error: prodErr } = await supabase.from('products').upsert(prodData);
+           // 🧹 LIMPIEZA
+           // eslint-disable-next-line @typescript-eslint/no-unused-vars
+           const { sync_status, ...prodClean } = prodData;
+
+           const { error: prodErr } = await supabase.from('products').upsert(prodClean);
            if (prodErr) throw new Error(`Error subiendo producto: ${prodErr.message}`);
            break;
         }
@@ -102,7 +133,11 @@ export async function processQueue() {
            const custData = item.payload as Customer;
            entityId = custData.id;
 
-           const { error: custErr } = await supabase.from('customers').upsert(custData);
+           // 🧹 LIMPIEZA
+           // eslint-disable-next-line @typescript-eslint/no-unused-vars
+           const { sync_status, ...custClean } = custData;
+
+           const { error: custErr } = await supabase.from('customers').upsert(custClean);
            if (custErr) throw new Error(`Error subiendo cliente: ${custErr.message}`);
            break;
         }
@@ -115,7 +150,7 @@ export async function processQueue() {
           await updateLocalEntityStatus(item.type, entityId);
       }
 
-    } catch (err: unknown) { // ✅ CORRECCIÓN: 'unknown' en lugar de 'any'
+    } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(`Error procesando item de cola [${item.type}]:`, errorMessage);
       
@@ -183,6 +218,7 @@ export async function syncPull() {
                 for (const p of remoteProducts) {
                     const local = await db.products.get(p.id);
                     if (!local || local.sync_status === 'synced') {
+                        // Al bajar, agregamos el sync_status 'synced' para que Dexie esté feliz
                         await db.products.put({ ...p, sync_status: 'synced' } as Product);
                     }
                 }

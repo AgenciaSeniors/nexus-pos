@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState,useRef } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import { type Staff } from './lib/db';
@@ -245,6 +245,7 @@ function LoginScreen() {
 function BusinessApp() {
   const [session, setSession] = useState<Session | null>(null);
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
+  const lastLoadedUserId = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
 
@@ -276,6 +277,7 @@ function BusinessApp() {
           role: (data.role === 'admin' || data.role === 'super_admin') ? 'admin' : 'vendedor',
           pin: data.initial_pin || '0000',
           active: true,
+          
           // Casting seguro para incluir business_id
           business_id: data.business_id 
         } as unknown as Staff;
@@ -289,6 +291,7 @@ function BusinessApp() {
         }
         localStorage.setItem('nexus_current_staff', JSON.stringify(staffData));
         
+        lastLoadedUserId.current = userId;
         // Actualizamos estado en memoria
         setCurrentStaff(staffData);
       }
@@ -326,6 +329,11 @@ function BusinessApp() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       
       if (event === 'SIGNED_IN' && newSession) {
+        if (lastLoadedUserId.current === newSession.user.id) {
+            console.log("Sesión restaurada, omitiendo recarga de perfil.");
+            setSession(newSession); // Actualizar token si es necesario, pero no borrar data
+            return;
+        }
         // Al entrar, limpiamos el staff anterior para evitar "nombres fantasmas"
         setCurrentStaff(null); 
         setSession(newSession);
@@ -337,6 +345,7 @@ function BusinessApp() {
         // Limpieza total
         setSession(null);
         setCurrentStaff(null);
+        lastLoadedUserId.current = null; // Limpiar referencia
         setIsLocked(false);
         localStorage.removeItem('nexus_business_id');
         localStorage.removeItem('nexus_current_staff');
