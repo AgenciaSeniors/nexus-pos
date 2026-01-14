@@ -3,13 +3,14 @@ import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Product, type Sale, type ParkedOrder, type SaleItem, type Staff, type InventoryMovement } from '../lib/db';
 import { supabase } from '../lib/supabase';
-import { addToQueue } from '../lib/sync'; // ✅ CORRECCIÓN: Quitamos syncPush
+import { addToQueue } from '../lib/sync';
 import { currency } from '../lib/currency';
 import { logAuditAction } from '../lib/audit';
 import { TicketModal } from '../components/TicketModal';
 import { PaymentModal } from '../components/PaymentModal';
 import { ParkedOrdersModal } from '../components/ParkedOrdersModal';
-import { PauseCircle, ClipboardList, Users, Search, Barcode, Keyboard } from 'lucide-react';
+import { PauseCircle, ClipboardList, Users, Search, Barcode, Keyboard, AlertTriangle } from 'lucide-react';
+import { toast } from 'sonner'; // ✅ Importamos Toast
 
 interface CartItem extends Product {
   quantity: number;
@@ -47,13 +48,11 @@ export function PosPage() {
           setShowPaymentModal(true);
         }
       }
-      
       if (e.key === 'F2') {
         e.preventDefault();
         searchInputRef.current?.focus();
         setQuery('');
       }
-
       if (e.key === 'Escape') {
         if (showPaymentModal) setShowPaymentModal(false);
         else if (showParkedModal) setShowParkedModal(false);
@@ -96,7 +95,9 @@ export function PosPage() {
   const addToCart = (product: Product) => {
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
-      if (existing) return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
+      if (existing) {
+        return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
+      }
       return [...prev, { ...product, quantity: 1 }];
     });
   };
@@ -111,6 +112,9 @@ export function PosPage() {
             if (filteredProducts.length === 1) {
                 addToCart(filteredProducts[0]);
                 setQuery('');
+            } else {
+                // Feedback sutil si no encuentra nada
+                toast.warning("Producto no encontrado");
             }
         }
     }
@@ -150,28 +154,47 @@ export function PosPage() {
     });
     
     setCart([]);
+    toast.info("Orden puesta en espera"); // ✅ Feedback
     setTimeout(() => searchInputRef.current?.focus(), 100);
   };
 
+  // ✅ CONFIRMACIÓN NO BLOQUEANTE (Reemplaza confirm nativo)
   const handleRestoreOrder = (order: ParkedOrder) => {
-    if (cart.length > 0) {
-      if (!confirm("Hay una venta en curso. ¿Deseas reemplazarla?")) return;
-    }
-    const restoredCart: CartItem[] = order.items.map(item => ({
-        id: item.product_id,
-        name: item.name,
-        price: item.price,
-        quantity: item.quantity,
-        unit: item.unit,
-        stock: 999,
-        sku: '',
-        business_id: order.business_id,
-        sync_status: 'synced'
-    }));
+    const doRestore = () => {
+        const restoredCart: CartItem[] = order.items.map(item => ({
+            id: item.product_id,
+            name: item.name,
+            price: item.price,
+            quantity: item.quantity,
+            unit: item.unit,
+            stock: 999, // Stock temporal visual
+            sku: '',
+            business_id: order.business_id,
+            sync_status: 'synced'
+        }));
+        setCart(restoredCart);
+        db.parked_orders.delete(order.id);
+        setShowParkedModal(false);
+        toast.success("Venta recuperada");
+    };
 
-    setCart(restoredCart);
-    db.parked_orders.delete(order.id);
-    setShowParkedModal(false);
+    if (cart.length > 0) {
+      toast("Hay una venta en curso", {
+        description: "¿Deseas reemplazarla por la orden en espera?",
+        action: {
+          label: "Reemplazar",
+          onClick: doRestore
+        },
+        cancel: {
+          label: "Cancelar",
+          onClick:()=>{}
+        },
+        duration: 5000,
+      });
+      return;
+    }
+
+    doRestore();
   };
 
   const handleCheckout = async (paymentMethod: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto', tendered: number, change: number) => {
@@ -179,118 +202,101 @@ export function PosPage() {
     setIsCheckout(true);
     setShowPaymentModal(false);
 
-    try {
-      const businessId = localStorage.getItem('nexus_business_id');
-      if (!businessId) {
-        alert("⚠️ Error: No se detecta el ID del negocio.");
-        setIsCheckout(false);
-        return;
-      }
+    // Promise Toast para dar feedback durante el proceso
+    const checkoutPromise = async () => {
+        const businessId = localStorage.getItem('nexus_business_id');
+        if (!businessId) throw new Error("No se detecta el ID del negocio");
 
-      const saleId = crypto.randomUUID();
-      const saleDate = new Date().toISOString();
-      
-      const newSale: Sale = {
-        id: saleId,
-        business_id: businessId,
-        total: totalAmount,
-        date: saleDate,
-        items: cart.map(item => ({ 
-            product_id: item.id, 
-            name: item.name, 
-            quantity: item.quantity, 
-            price: item.price,
-            unit: item.unit,
-            cost: item.cost 
-        })),
-        staff_id: currentStaff.id,
-        staff_name: currentStaff.name,
-        payment_method: paymentMethod,
-        amount_tendered: tendered,
-        change: change,
-        sync_status: 'pending_create'
-      };
-
-      const saleItemsForQueue = cart.map(item => ({
-        sale_id: saleId,
-        business_id: businessId,
-        product_id: item.id,
-        name: item.name,
-        quantity: item.quantity,
-        price: item.price,
-        unit_cost: item.cost || 0,
-        total: currency.multiply(item.price, item.quantity)
-      }));
-
-      // ✅ CORRECCIÓN: Pasamos las tablas como un array [] para evitar el error de argumentos
-      await db.transaction('rw', [db.products, db.sales, db.movements, db.audit_logs, db.action_queue], async () => {
+        const saleId = crypto.randomUUID();
+        const saleDate = new Date().toISOString();
         
-        await db.sales.add(newSale);
+        const newSale: Sale = {
+          id: saleId,
+          business_id: businessId,
+          total: totalAmount,
+          date: saleDate,
+          items: cart.map(item => ({ 
+              product_id: item.id, 
+              name: item.name, 
+              quantity: item.quantity, 
+              price: item.price,
+              unit: item.unit,
+              cost: item.cost 
+          })),
+          staff_id: currentStaff.id,
+          staff_name: currentStaff.name,
+          payment_method: paymentMethod,
+          amount_tendered: tendered,
+          change: change,
+          sync_status: 'pending_create'
+        };
 
-        await addToQueue('SALE', {
-            sale: newSale,
-            items: saleItemsForQueue
-        });
+        const saleItemsForQueue = cart.map(item => ({
+          sale_id: saleId,
+          business_id: businessId,
+          product_id: item.id,
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          unit_cost: item.cost || 0,
+          total: currency.multiply(item.price, item.quantity)
+        }));
 
-        for (const item of cart) {
-          const product = await db.products.get(item.id);
-          if (product) {
-            await db.products.update(item.id, { 
-              stock: product.stock - item.quantity, 
-              sync_status: 'pending_update' 
-            });
+        await db.transaction('rw', [db.products, db.sales, db.movements, db.audit_logs, db.action_queue], async () => {
+          await db.sales.add(newSale);
+          await addToQueue('SALE', { sale: newSale, items: saleItemsForQueue });
 
-            const movement: InventoryMovement = {
-                id: crypto.randomUUID(),
-                business_id: businessId,
-                product_id: item.id,
-                qty_change: -item.quantity, 
-                reason: 'sale',
-                created_at: saleDate,
-                staff_id: currentStaff.id,
-                sync_status: 'pending_create'
-            };
-
-            await db.movements.add(movement);
-            await addToQueue('MOVEMENT', movement);
+          for (const item of cart) {
+            const product = await db.products.get(item.id);
+            if (product) {
+              await db.products.update(item.id, { stock: product.stock - item.quantity, sync_status: 'pending_update' });
+              const movement: InventoryMovement = {
+                  id: crypto.randomUUID(),
+                  business_id: businessId,
+                  product_id: item.id,
+                  qty_change: -item.quantity, 
+                  reason: 'sale',
+                  created_at: saleDate,
+                  staff_id: currentStaff.id,
+                  sync_status: 'pending_create'
+              };
+              await db.movements.add(movement);
+              await addToQueue('MOVEMENT', movement);
+            }
           }
-        }
-        
-        await logAuditAction('SALE', {
-            sale_id: saleId,
-            total: totalAmount,
-            items_count: cart.length,
-            payment_method: paymentMethod
-        }, {
-            id: currentStaff.id,
-            name: currentStaff.name,
-            business_id: businessId
+          await logAuditAction('SALE', { sale_id: saleId, total: totalAmount }, {
+              id: currentStaff.id, name: currentStaff.name, business_id: businessId
+          });
         });
 
-      }); 
+        return newSale;
+    };
 
-      setCart([]);
-      setLastSale(newSale);
-      
-      setTimeout(() => {
-          setQuery('');
-          searchInputRef.current?.focus();
-      }, 200);
-
-    } catch (error) {
-      console.error(error);
-      alert("Error crítico al guardar venta. Revise la consola.");
-    } finally {
-      setIsCheckout(false);
-    }
+    toast.promise(checkoutPromise(), {
+        loading: 'Procesando venta...',
+        success: (newSale) => {
+            setCart([]);
+            setLastSale(newSale);
+            setTimeout(() => {
+                setQuery('');
+                searchInputRef.current?.focus();
+            }, 200);
+            return `Venta registrada: ${currency.format(totalAmount)}`;
+        },
+        error: (err) => {
+            console.error(err);
+            return "Error al guardar la venta";
+        },
+        finally: () => setIsCheckout(false)
+    });
   };
 
   return (
     <div className="flex h-full flex-col md:flex-row h-[calc(100vh-4rem)] md:h-[calc(100vh-2rem)] overflow-hidden">
       
+      {/* IZQUIERDA: Catálogo */}
       <div className="w-full md:w-2/3 p-4 flex flex-col gap-4 bg-slate-50">
         <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-            
             <div className="relative w-full flex-1">
                 <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
                     <Search size={20} />
@@ -353,6 +359,7 @@ export function PosPage() {
         </div>
       </div>
 
+      {/* DERECHA: Carrito */}
       <div className="w-full md:w-1/3 bg-white border-l shadow-xl flex flex-col h-full z-10">
         <div className="p-4 bg-slate-50 border-b flex justify-between items-center">
              <h2 className="font-bold text-lg flex items-center gap-2">
@@ -362,33 +369,45 @@ export function PosPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {cart.map(item => (
-              <div key={item.id} className="flex justify-between items-center bg-white p-2 rounded-lg border border-slate-100 shadow-sm animate-in slide-in-from-right duration-200">
-                <div className="flex-1">
-                  <div className="font-medium text-sm">{item.name}</div>
-                  <div className="text-xs text-gray-500">${item.price} x {item.unit || 'un'}</div>
-                </div>
-                
-                <div className="flex items-center gap-1 bg-gray-50 rounded px-1 py-1 mx-2 border">
-                  <button onClick={() => updateQuantity(item.id, item.quantity - 1)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-white rounded-lg font-bold transition-all">-</button>
-                  <div className="relative">
-                    <input 
-                        type="number" step="0.01" min="0"
-                        className="w-14 text-center bg-transparent font-mono text-sm font-bold focus:outline-none p-0 appearance-none"
-                        value={item.quantity}
-                        onChange={(e) => updateQuantity(item.id, parseFloat(e.target.value) || 0)}
-                        onFocus={(e) => e.target.select()}
-                    />
-                  </div>
-                  <button onClick={() => updateQuantity(item.id, item.quantity + 1)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-green-600 hover:bg-white rounded-lg font-bold transition-all">+</button>
-                </div>
+            {cart.map(item => {
+              // ✅ REGLA DE NEGOCIO: ADVERTENCIA DE STOCK VISUAL
+              const isStockProblem = item.quantity > item.stock;
 
-                <div className="font-bold text-sm w-16 text-right">
-                    {currency.format(currency.multiply(item.price, item.quantity))}
+              return (
+                <div key={item.id} className={`flex justify-between items-center bg-white p-2 rounded-lg border shadow-sm animate-in slide-in-from-right duration-200 ${isStockProblem ? 'border-amber-200 bg-amber-50' : 'border-slate-100'}`}>
+                  <div className="flex-1">
+                    <div className="font-medium text-sm">{item.name}</div>
+                    <div className="text-xs text-gray-500">${item.price} x {item.unit || 'un'}</div>
+                    {/* Texto de advertencia si excede el stock */}
+                    {isStockProblem && (
+                      <div className="flex items-center gap-1 text-[10px] font-bold text-amber-600 mt-1">
+                        <AlertTriangle size={10} />
+                        <span>Stock insuficiente ({item.stock})</span>
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="flex items-center gap-1 bg-gray-50 rounded px-1 py-1 mx-2 border">
+                    <button onClick={() => updateQuantity(item.id, item.quantity - 1)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-white rounded-lg font-bold transition-all">-</button>
+                    <div className="relative">
+                      <input 
+                          type="number" step="0.01" min="0"
+                          className="w-14 text-center bg-transparent font-mono text-sm font-bold focus:outline-none p-0 appearance-none"
+                          value={item.quantity}
+                          onChange={(e) => updateQuantity(item.id, parseFloat(e.target.value) || 0)}
+                          onFocus={(e) => e.target.select()}
+                      />
+                    </div>
+                    <button onClick={() => updateQuantity(item.id, item.quantity + 1)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-green-600 hover:bg-white rounded-lg font-bold transition-all">+</button>
+                  </div>
+
+                  <div className="font-bold text-sm w-16 text-right">
+                      {currency.format(currency.multiply(item.price, item.quantity))}
+                  </div>
+                  <button onClick={() => removeFromCart(item.id)} className="text-slate-300 hover:text-red-500 px-2 transition-colors">×</button>
                 </div>
-                <button onClick={() => removeFromCart(item.id)} className="text-slate-300 hover:text-red-500 px-2 transition-colors">×</button>
-              </div>
-            ))}
+              );
+            })}
         </div>
 
         <div className="p-4 bg-slate-50 border-t space-y-3 pb-24 md:pb-4">
