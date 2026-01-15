@@ -152,39 +152,35 @@ export function SuperAdminPage() {
     }
   };
 
-  // --- ELIMINAR (SOFT DELETE) ---
+  // --- ELIMINAR (HARD DELETE) ---
   const handleDelete = async (userId: string) => {
-    if (!confirm("⚠️ ¿ELIMINAR USUARIO? Desaparecerá de la lista pero sus datos se conservarán en la base de datos por seguridad.")) return;
+    // Advertencia clara para el Admin
+    if (!confirm("⚠️ ¿ELIMINAR DEFINITIVAMENTE?\n\nEsto borrará al usuario de Auth y liberará el correo electrónico.\nSi el usuario tiene ventas o historial, la operación podría bloquearse por seguridad.")) return;
     
+    setLoading(true); // Bloqueamos la UI mientras procesa
     try {
-        // 1. Marcamos el perfil como 'deleted' en lugar de borrarlo
-        const { error } = await supabase
-            .from('profiles')
-            .update({ status: 'deleted' }) 
-            .eq('id', userId);
+        // Llamamos a la función RPC que creamos en el Paso 1
+        const { error } = await supabase.rpc('delete_user_completely', { 
+            target_user_id: userId 
+        });
 
         if (error) throw error;
-        
-        // 2. (Seguridad Extra) Si tiene negocio, lo suspendemos para bloquear acceso por API
-        const { data: user } = await supabase
-            .from('profiles')
-            .select('business_id')
-            .eq('id', userId)
-            .single();
 
-        if (user?.business_id) {
-            await supabase
-                .from('businesses')
-                .update({ status: 'suspended' })
-                .eq('id', user.business_id);
-        }
+        alert("🗑️ Usuario eliminado y correo liberado correctamente.");
+        fetchData(); // Recargamos la lista
 
-        alert("🗑️ Usuario eliminado correctamente.");
-        fetchData(); // Recargamos la lista (el filtro ocultará al 'deleted')
-
-    } catch (err) {
+    } catch (err: unknown) { // Tipado seguro para el error
         console.error(err);
-        alert("Error al eliminar usuario.");
+        const msg = err instanceof Error ? err.message : "Error desconocido";
+        
+        // Manejo específico si falla por datos vinculados (Foreign Keys)
+        if (msg.includes("foreign key constraint")) {
+            alert("❌ No se puede eliminar: El usuario tiene historial de ventas o datos vinculados. Debes suspenderlo en su lugar.");
+        } else {
+            alert("Error al eliminar usuario: " + msg);
+        }
+    } finally {
+        setLoading(false);
     }
   };
 

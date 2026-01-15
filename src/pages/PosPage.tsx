@@ -26,20 +26,25 @@ export function PosPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCheckout, setIsCheckout] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
-  
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showParkedModal, setShowParkedModal] = useState(false);
-  
   const parkedCount = useLiveQuery(() => db.parked_orders.count()) || 0;
-  const allProducts = useLiveQuery(() => db.products.toArray()) || [];
-  const categories = ['Todo', ...new Set(allProducts.map(p => p.category).filter((c): c is string => !!c))].sort();
+  const businessId = localStorage.getItem('nexus_business_id');
+  const allProducts = useLiveQuery(async () => {
 
+    if (!businessId) return [];
+    return await db.products
+      .where('business_id')
+      .equals(businessId)
+      .toArray();
+  }, [businessId]) || [];
   useEffect(() => {
     if (searchInputRef.current) {
       searchInputRef.current.focus();
     }
   }, []);
-
+  
+  const categories = ['Todo', ...new Set(allProducts.map(p => p.category).filter((c): c is string => !!c))].sort();
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F1') {
