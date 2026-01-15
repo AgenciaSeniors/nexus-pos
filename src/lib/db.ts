@@ -121,10 +121,7 @@ export interface CashMovement {
 // --- 🆕 NUEVAS DEFINICIONES STRICT-TYPE ---
 
 // 1. Definimos la estructura exacta del payload de venta
-export interface SalePayload {
-    sale: Sale;
-    items: SaleItem[];
-}
+export type SalePayload = { sale: Sale; items: SaleItem[] };
 
 // 2. Definimos todos los posibles payloads (Union Type)
 // Esto reemplaza al 'any' en QueueItem
@@ -177,10 +174,10 @@ export class NexusDB extends Dexie {
   constructor() {
     super('NexusPOS_DB');
 
-    this.version(3).stores({
+    this.version(4).stores({
       businesses: 'id',
       products: 'id, business_id, sku, name, sync_status',
-      sales: 'id, business_id, date, sync_status',
+      sales: 'id, business_id, shift_id, date, sync_status',
       movements: 'id, business_id, product_id, created_at, sync_status',
       inventory_movements: 'id, business_id, product_id, sync_status',
       customers: 'id, business_id, name, phone, sync_status',
@@ -188,7 +185,11 @@ export class NexusDB extends Dexie {
       settings: 'id',
       staff: 'id, business_id, pin, active',
       audit_logs: 'id, business_id, action, created_at, sync_status',
-      action_queue: 'id, type, timestamp, status'
+      action_queue: 'id, type, timestamp, status',
+      cash_registers: 'id, business_id',
+      // Índice compuesto [business_id+status] para detectar turnos abiertos al instante
+      cash_shifts: 'id, business_id, staff_id, status, [business_id+status]', 
+      cash_movements: 'id, shift_id, business_id'
     });
   }
 }
