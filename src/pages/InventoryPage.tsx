@@ -37,14 +37,14 @@ export function InventoryPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-
+    
     try {
       const storedBusinessId = localStorage.getItem('nexus_business_id');
       
       if (!editingId && !storedBusinessId) {
         throw new Error("No se identificó el negocio (Falta business_id en sesión local).");
       }
-
+      
       // Preparamos los datos base
       const productData: Partial<Product> = {
         name: formData.name,
@@ -196,7 +196,6 @@ const handleDelete = async (id: string) => {
     toast.error('Error al eliminar');
   }
 };
-
   const resetForm = () => {
     setFormData({
       name: '', price: '', stock: '', sku: '', cost: '',
