@@ -29,6 +29,7 @@ export interface Sale {
   id: string;
   business_id: string;
   date: string;
+  shift_id?: string;
   total: number;
   items: SaleItem[];
   staff_id?: string;
@@ -50,12 +51,16 @@ export interface InventoryMovement {
   sync_status: 'synced' | 'pending_create';
 }
 
+// En src/lib/db.ts
+
 export interface BusinessConfig {
-  id: string;
+  id: string; // Usaremos el business_id aquí para asegurar relación 1:1
   name: string;
   address?: string;
   phone?: string;
   receipt_message?: string;
+  // ✅ AGREGADO: Para que los cambios viajen a la nube
+  sync_status?: 'synced' | 'pending_create' | 'pending_update'; 
 }
 export interface Customer {
   id: string;
@@ -131,7 +136,8 @@ export type QueuePayload =
     | InventoryMovement 
     | AuditLog 
     | Product 
-    | Customer;
+    | Customer
+    | BusinessConfig; // <--- NUEVO
 
 export interface AuditLog {
   id: string;
@@ -147,8 +153,8 @@ export interface AuditLog {
 
 export interface QueueItem {
   id: string;
-  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC';
-  // ✅ CORRECCIÓN: Usamos el Union Type definido arriba
+  // ✅ 2. Agregamos SETTINGS_SYNC a los tipos permitidos
+  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC';
   payload: QueuePayload; 
   timestamp: number;
   retries: number;

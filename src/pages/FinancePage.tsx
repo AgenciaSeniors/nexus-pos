@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Sale } from '../lib/db';
+import { db, type Sale, type Product } from '../lib/db';
 import { syncPull } from '../lib/sync';
 import { TicketModal } from '../components/TicketModal';
 import { 
@@ -8,23 +8,13 @@ import {
   PieChart, Pie, Cell, Legend 
 } from 'recharts';
 import { 
-  Calendar, 
-  TrendingUp, 
-  ArrowLeft, 
-  ArrowRight, 
-  CalendarOff,
-  RefreshCw,
-  Eye,
-  BarChart3,
-  DollarSign,
-  Wallet,
-  PieChart as PieChartIcon,
-  ClipboardCheck,
-  Printer,
-  Trophy,
-  User,
-  ShoppingBag
+  Calendar, TrendingUp, ArrowLeft, ArrowRight, CalendarOff, RefreshCw, Eye,
+  BarChart3, DollarSign, Wallet, PieChart as PieChartIcon, ClipboardCheck,
+  Printer, Trophy, User, ShoppingBag
 } from 'lucide-react';
+
+// ✅ CORRECCIÓN 1: 'never[]' asegura que este array vacío sea compatible con cualquier tipo de lista (Ventas o Productos)
+const EMPTY_ARRAY: never[] = [];
 
 export function FinancePage() {
   // --- ESTADOS DE LA VISTA ---
@@ -38,18 +28,30 @@ export function FinancePage() {
   // Estado para MODO TENDENCIAS
   const [trendFilter, setTrendFilter] = useState<'week' | 'month'>('week');
 
-  // --- DATOS (Consultas en tiempo real a Dexie) ---
-  const rawSales = useLiveQuery(() => db.sales.toArray());
-  const allSales = useMemo(() => rawSales ?? [], [rawSales]);
+  // 1. OBTENER BUSINESS ID (Contexto de Seguridad)
+  const businessId = localStorage.getItem('nexus_business_id');
 
-  const rawProducts = useLiveQuery(() => db.products.toArray());
-  const products = useMemo(() => rawProducts ?? [], [rawProducts]);
+  // --- DATOS (Consultas BLINDADAS por Negocio y TIPADAS) ---
+  
+  // ✅ CORRECCIÓN 2: Tipamos explícitamente <Product[]> para que TypeScript sepa qué devuelve
+  const products = useLiveQuery<Product[]>(async () => {
+    if (!businessId) return [];
+    return await db.products.where('business_id').equals(businessId).toArray();
+  }, [businessId]) || EMPTY_ARRAY;
 
-  // Mapa de Metadatos (Costos y Categorías) para cálculo rápido
+  // ✅ CORRECCIÓN 3: Tipamos explícitamente <Sale[]>
+  const allSales = useLiveQuery<Sale[]>(async () => {
+    if (!businessId) return [];
+    return await db.sales.where('business_id').equals(businessId).toArray();
+  }, [businessId]) || EMPTY_ARRAY;
+
+  // Mapa de Metadatos (Costos ACTUALES y Categorías)
   const productMeta = useMemo(() => {
-    const costs = new Map();
-    const cats = new Map();
-    products.forEach(p => {
+    const costs = new Map<string, number>();
+    const cats = new Map<string, string>();
+    
+    // Al haber tipado 'products' arriba, aquí 'p' ya se detecta como Product automáticamente
+    products.forEach((p) => {
       costs.set(p.id, p.cost || 0);
       cats.set(p.id, p.category || 'General');
     });
@@ -60,39 +62,38 @@ export function FinancePage() {
   // 1. LÓGICA DIARIA (El corazón de los cálculos)
   // ==========================================
   const dailyStats = useMemo(() => {
-    const salesForDay = allSales.filter(sale => sale.date.startsWith(selectedDate));
+    // TypeScript ya sabe que 'sale' es de tipo Sale
+    const salesForDay = allSales.filter((sale) => sale.date.startsWith(selectedDate));
     
     let revenue = 0, cost = 0;
     const hourlyCounts: Record<string, number> = {};
     const categoryCounts: Record<string, number> = {};
-    const productCounts: Record<string, number> = {}; // Para el Best Seller
+    const productCounts: Record<string, number> = {}; 
 
-    // Inicializar horas (07:00 a 23:00)
     for (let i = 7; i <= 23; i++) hourlyCounts[i.toString().padStart(2, '0') + ":00"] = 0;
 
-    salesForDay.forEach(sale => {
+    salesForDay.forEach((sale) => {
       revenue += sale.total;
       
-      // Hora del gráfico
       const h = new Date(sale.date).getHours().toString().padStart(2, '0') + ":00";
       if (hourlyCounts[h] !== undefined) hourlyCounts[h] += sale.total;
 
-      // Iterar productos de la venta
-      sale.items.forEach(item => {
-        // Acumular Costos
-        const itemCost = productMeta.costs.get(item.product_id) || 0;
-        cost += itemCost * item.quantity;
+      // 'item' se infiere correctamente como SaleItem
+      sale.items.forEach((item) => {
+        // Costo Histórico vs Actual
+        const historicalCost = item.cost !== undefined 
+            ? item.cost 
+            : (productMeta.costs.get(item.product_id) || 0);
+            
+        cost += historicalCost * item.quantity;
         
-        // Acumular Categorías
         const cat = productMeta.cats.get(item.product_id) || 'General';
         categoryCounts[cat] = (categoryCounts[cat] || 0) + (item.price * item.quantity);
 
-        // Contar para Best Seller
         productCounts[item.name] = (productCounts[item.name] || 0) + item.quantity;
       });
     });
 
-    // Calcular Producto Más Vendido
     let bestSeller = { name: 'N/A', count: 0 };
     Object.entries(productCounts).forEach(([name, count]) => {
       if (count > bestSeller.count) bestSeller = { name, count };
@@ -101,7 +102,6 @@ export function FinancePage() {
     const profit = revenue - cost;
     const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
     
-    // Formatear datos para Gráficos
     const chartData = Object.entries(hourlyCounts).map(([time, total]) => ({ time, total }));
     const pieData = Object.entries(categoryCounts)
       .map(([name, value]) => ({ name, value }))
@@ -120,13 +120,15 @@ export function FinancePage() {
     const sales = dailyStats.sales;
     let cashTotal = 0;
     let transferTotal = 0;
+    let cardTotal = 0;
     const productSummary: Record<string, { quantity: number, total: number }> = {};
 
-    sales.forEach(sale => {
+    sales.forEach((sale) => {
       if (sale.payment_method === 'efectivo') cashTotal += sale.total;
+      else if (sale.payment_method === 'tarjeta') cardTotal += sale.total;
       else transferTotal += sale.total;
 
-      sale.items.forEach(item => {
+      sale.items.forEach((item) => {
         if (!productSummary[item.name]) productSummary[item.name] = { quantity: 0, total: 0 };
         productSummary[item.name].quantity += item.quantity;
         productSummary[item.name].total += (item.price * item.quantity);
@@ -137,7 +139,7 @@ export function FinancePage() {
       .map(([name, data]) => ({ name, ...data }))
       .sort((a, b) => b.quantity - a.quantity);
 
-    return { cashTotal, transferTotal, productsList, ticketCount: sales.length };
+    return { cashTotal, transferTotal, cardTotal, productsList, ticketCount: sales.length };
   }, [dailyStats.sales]);
 
   // ==========================================
@@ -149,15 +151,20 @@ export function FinancePage() {
     const cutoffDate = new Date();
     cutoffDate.setDate(now.getDate() - daysToShow);
 
-    const filteredSales = allSales.filter(s => new Date(s.date) >= cutoffDate);
+    const filteredSales = allSales.filter((s) => new Date(s.date) >= cutoffDate);
 
     let totalRevenue = 0, totalCost = 0;
     const salesByDate: Record<string, number> = {};
 
-    filteredSales.forEach(sale => {
+    filteredSales.forEach((sale) => {
       totalRevenue += sale.total;
       let saleCost = 0;
-      sale.items.forEach(i => saleCost += (productMeta.costs.get(i.product_id) || 0) * i.quantity);
+      sale.items.forEach((i) => {
+          const historicalCost = i.cost !== undefined 
+            ? i.cost 
+            : (productMeta.costs.get(i.product_id) || 0);
+          saleCost += historicalCost * i.quantity;
+      });
       totalCost += saleCost;
 
       const dateKey = new Date(sale.date).toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' });
@@ -208,9 +215,7 @@ export function FinancePage() {
         </div>
       </div>
 
-      {/* ========================================================= */}
-      {/* VISTA 1: DETALLE DIARIO                                   */}
-      {/* ========================================================= */}
+      {/* VISTA 1: DETALLE DIARIO */}
       {viewMode === 'daily' && (
         <div className="animate-fade-in">
           {/* Controles de Fecha */}
@@ -225,9 +230,8 @@ export function FinancePage() {
              <button onClick={() => syncPull()} className="p-2 bg-white text-indigo-600 border border-slate-200 rounded-lg shadow-sm hover:bg-indigo-50" title="Sincronizar Nube"><RefreshCw size={20}/></button>
           </div>
 
-          {/* KPI CARDS (4 Tarjetas) */}
+          {/* KPI CARDS */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            {/* Ventas */}
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden group">
                <div className="absolute right-0 top-0 w-16 h-16 bg-indigo-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
                <div className="relative">
@@ -236,7 +240,6 @@ export function FinancePage() {
                </div>
             </div>
             
-            {/* Costos */}
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden group">
                <div className="absolute right-0 top-0 w-16 h-16 bg-orange-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
                <div className="relative">
@@ -245,7 +248,6 @@ export function FinancePage() {
                </div>
             </div>
 
-            {/* Ganancia */}
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden group">
                <div className="absolute right-0 top-0 w-16 h-16 bg-emerald-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
                <div className="relative">
@@ -255,7 +257,6 @@ export function FinancePage() {
                </div>
             </div>
 
-            {/* Producto Estrella */}
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden group">
                <div className="absolute right-0 top-0 w-16 h-16 bg-yellow-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
                <div className="relative">
@@ -288,7 +289,7 @@ export function FinancePage() {
                 </div>
               </div>
 
-              {/* LISTA DE TICKETS (Con productos y vendedor) */}
+              {/* LISTA DE TICKETS */}
               <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                 <div className="p-4 border-b border-slate-100 bg-slate-50/50">
                     <h3 className="font-bold text-slate-700 text-sm">Transacciones Detalladas</h3>
@@ -305,30 +306,26 @@ export function FinancePage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {dailyStats.sales.map(sale => (
+                    {dailyStats.sales.map((sale) => (
                       <tr key={sale.id} className="hover:bg-slate-50 transition-colors">
                          <td className="p-4 font-mono text-slate-600 font-bold whitespace-nowrap">
                             {new Date(sale.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
                          </td>
-                         
                          <td className="p-4 whitespace-nowrap">
                             <div className="flex items-center gap-2 text-slate-700">
                                 <User size={14} className="text-slate-400"/>
                                 <span className="capitalize font-medium">{sale.staff_name}</span>
                             </div>
                          </td>
-
-                         {/* COLUMNA PRODUCTOS RESUMIDA */}
                          <td className="p-4 w-full">
                             <div className="flex items-center gap-2 max-w-[200px] md:max-w-md">
                                 <ShoppingBag size={14} className="text-slate-300 min-w-[14px]" />
                                 <div className="text-slate-600 text-xs truncate" 
-                                     title={sale.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}>
-                                    {sale.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}
+                                     title={sale.items.map((i) => `${i.quantity}x ${i.name}`).join(', ')}>
+                                    {sale.items.map((i) => `${i.quantity}x ${i.name}`).join(', ')}
                                 </div>
                             </div>
                          </td>
-
                          <td className="p-4 whitespace-nowrap">
                             <span className={`uppercase text-[10px] font-bold px-2 py-1 rounded ${sale.payment_method === 'efectivo' ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'}`}>
                                 {sale.payment_method}
@@ -356,9 +353,7 @@ export function FinancePage() {
         </div>
       )}
 
-      {/* ========================================================= */}
-      {/* VISTA 2: TENDENCIAS (SEMANA / MES)                        */}
-      {/* ========================================================= */}
+      {/* VISTA 2: TENDENCIAS */}
       {viewMode === 'trends' && (
         <div className="animate-fade-in">
           <div className="flex gap-2 mb-6">
@@ -372,7 +367,7 @@ export function FinancePage() {
                 <h3 className="text-2xl font-bold text-slate-800">${trendStats.totalRevenue.toFixed(2)}</h3>
              </div>
              <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
-                <p className="text-slate-500 text-xs font-bold uppercase mb-1">Costos Estimados</p>
+                <p className="text-slate-500 text-xs font-bold uppercase mb-1">Costos Reales</p>
                 <h3 className="text-2xl font-bold text-slate-800">${trendStats.totalCost.toFixed(2)}</h3>
              </div>
              <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
@@ -391,9 +386,7 @@ export function FinancePage() {
         </div>
       )}
 
-      {/* ========================================================= */}
-      {/* VISTA 3: CIERRE (REPORTE Z)                               */}
-      {/* ========================================================= */}
+      {/* VISTA 3: CIERRE Z */}
       {viewMode === 'closing' && (
         <div className="animate-fade-in max-w-3xl mx-auto">
           <div className="flex justify-between items-center mb-6 print:hidden">
@@ -410,17 +403,16 @@ export function FinancePage() {
                 <p className="text-sm text-slate-400 mt-1">Fecha: {new Date(selectedDate).toLocaleDateString()}</p>
              </div>
              
-             {/* Resumen Financiero */}
              <div className="mb-8">
                <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 tracking-wider">Balance</h3>
                <div className="space-y-3 font-mono text-sm">
                  <div className="flex justify-between p-2 bg-slate-50 rounded print:bg-white"><span>Efectivo</span><span className="font-bold">${closingStats.cashTotal.toFixed(2)}</span></div>
+                 {closingStats.cardTotal > 0 && <div className="flex justify-between p-2 bg-slate-50 rounded print:bg-white"><span>Tarjeta</span><span className="font-bold">${closingStats.cardTotal.toFixed(2)}</span></div>}
                  <div className="flex justify-between p-2 bg-slate-50 rounded print:bg-white"><span>Transferencia</span><span className="font-bold">${closingStats.transferTotal.toFixed(2)}</span></div>
-                 <div className="border-t border-slate-800 pt-3 flex justify-between text-lg font-bold mt-2"><span>TOTAL</span><span>${(closingStats.cashTotal + closingStats.transferTotal).toFixed(2)}</span></div>
+                 <div className="border-t border-slate-800 pt-3 flex justify-between text-lg font-bold mt-2"><span>TOTAL</span><span>${(closingStats.cashTotal + closingStats.transferTotal + closingStats.cardTotal).toFixed(2)}</span></div>
                </div>
              </div>
              
-             {/* Detalle de Productos Agrupados */}
              <div>
                <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 tracking-wider">Productos Vendidos</h3>
                {closingStats.productsList.length > 0 ? (
@@ -444,7 +436,6 @@ export function FinancePage() {
         </div>
       )}
 
-      {/* MODAL DETALLE */}
       {selectedTicket && <TicketModal sale={selectedTicket} onClose={() => setSelectedTicket(null)} />}
     </div>
   );
