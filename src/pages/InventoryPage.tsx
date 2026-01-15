@@ -10,18 +10,21 @@ import { logAuditAction } from '../lib/audit';
 import { InventoryHistory } from '../components/InventoryHistory';
 
 export function InventoryPage() {
-  // Obtenemos el usuario actual del contexto para saber QUIÉN edita
+  // 1. Obtener usuario y Negocio (Contexto y LocalStorage)
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
+  // ✅ CORRECCIÓN: Definimos businessId aquí para usarlo en toda la página
+  const businessId = localStorage.getItem('nexus_business_id');
 
-  // Estado para las pestañas
   const [activeTab, setActiveTab] = useState<'stock' | 'history'>('stock');
 
-  // Consulta de productos (Filtro Soft Delete)
-  const products = useLiveQuery(() => 
-    db.products
-      .filter(p => !p.deleted_at)
-      .toArray()
-  ) || [];
+  // 2. Consulta de productos (BLINDADA por Negocio)
+  const products = useLiveQuery(async () => {
+    if (!businessId) return [];
+    return await db.products
+      .where('business_id').equals(businessId) // ✅ Solo productos de este negocio
+      .filter(p => !p.deleted_at)            // ✅ Solo activos
+      .toArray();
+  }, [businessId]) || [];
 
   const [searchTerm, setSearchTerm] = useState('');
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -49,10 +52,22 @@ export function InventoryPage() {
     setIsLoading(true);
 
     try {
-      const storedBusinessId = localStorage.getItem('nexus_business_id');
-      
-      if (!storedBusinessId) {
-        throw new Error("No se identificó el negocio (Falta business_id en sesión local).");
+      if (!businessId) {
+        throw new Error("No se identificó el negocio. Reinicia sesión.");
+      }
+
+      // ✅ VALIDACIÓN: SKU ÚNICO (Evita duplicados en el mismo negocio)
+      if (formData.sku && formData.sku.trim() !== '') {
+        const duplicate = await db.products
+          .where({ business_id: businessId, sku: formData.sku })
+          .first();
+        
+        // Si existe y no es el que estamos editando
+        if (duplicate && duplicate.id !== editingId) {
+          toast.error(`El SKU "${formData.sku}" ya existe en el producto "${duplicate.name}"`);
+          setIsLoading(false);
+          return;
+        }
       }
 
       const productData: Partial<Product> = {
@@ -69,23 +84,20 @@ export function InventoryPage() {
         (productData as Product & { expiration_date?: string }).expiration_date = formData.expiration_date;
       }
 
-      // --- LÓGICA DE GUARDADO CON TRAZABILIDAD ---
       if (editingId) {
         // === MODO EDICIÓN ===
         const original = await db.products.get(editingId);
         if (!original) return;
 
-        const finalBusinessId = original.business_id || storedBusinessId;
+        // Mantenemos el ID original del negocio por seguridad
+        const finalBusinessId = original.business_id || businessId;
         
-        // 1. Calcular Diferencia
         const oldStock = original.stock;
         const newStock = productData.stock || 0;
         const difference = newStock - oldStock;
 
-        // 2. Transacción Atómica
         await db.transaction('rw', [db.products, db.movements, db.action_queue], async () => {
-            
-            // A. Actualizar Producto
+            // Actualizar Producto
             const updatedProduct = {
               ...original,
               ...productData,
@@ -96,11 +108,11 @@ export function InventoryPage() {
             await db.products.update(editingId, updatedProduct);
             await addToQueue('PRODUCT_SYNC', updatedProduct);
 
-            // B. Registrar Movimiento si cambió el stock
+            // Registrar Movimiento
             if (difference !== 0) {
                 const movement: InventoryMovement = {
                     id: crypto.randomUUID(),
-                    business_id: finalBusinessId,
+                    business_id: finalBusinessId, // ✅ Usamos variable corregida
                     product_id: editingId,
                     staff_id: currentStaff?.id || 'system',
                     qty_change: difference,
@@ -112,17 +124,14 @@ export function InventoryPage() {
                 await db.movements.add(movement);
                 await addToQueue('MOVEMENT', movement);
 
-                // C. Auditoría
                 await logAuditAction('UPDATE_STOCK', {
                     product: productData.name,
-                    old: oldStock,
-                    new: newStock,
                     diff: difference
                 }, currentStaff);
             }
         });
 
-        toast.success(`Producto actualizado. ${difference !== 0 ? `Stock ajustado (${difference > 0 ? '+' : ''}${difference})` : ''}`);
+        toast.success('Producto actualizado');
 
       } else {
         // === MODO CREACIÓN ===
@@ -132,7 +141,7 @@ export function InventoryPage() {
         await db.transaction('rw', [db.products, db.movements, db.action_queue], async () => {
             const newProduct = {
                 id: newProductId,
-                business_id: storedBusinessId,
+                business_id: businessId, // ✅ Usamos businessId del scope superior
                 name: productData.name!,
                 price: productData.price!,
                 stock: initialStock,
@@ -147,11 +156,10 @@ export function InventoryPage() {
             await db.products.add(newProduct);
             await addToQueue('PRODUCT_SYNC', newProduct);
 
-            // Registro inicial
             if (initialStock !== 0) {
                 const movement: InventoryMovement = {
                     id: crypto.randomUUID(),
-                    business_id: storedBusinessId,
+                    business_id: businessId, // ✅ Usamos variable corregida
                     product_id: newProductId,
                     staff_id: currentStaff?.id || 'system',
                     qty_change: initialStock,
@@ -175,7 +183,7 @@ export function InventoryPage() {
     } catch (error: unknown) {
       console.error(error);
       const msg = error instanceof Error ? error.message : "Error desconocido";
-      toast.error("Error al guardar: " + msg);
+      toast.error("Error: " + msg);
     } finally {
       setIsLoading(false);
     }
@@ -212,7 +220,7 @@ export function InventoryPage() {
       await addToQueue('PRODUCT_SYNC', { ...product, ...changes });
       await logAuditAction('DELETE_PRODUCT', { productName: product.name, id: product.id }, currentStaff);
 
-      toast.success('Producto eliminado correctamente');
+      toast.success('Producto eliminado');
     } catch (error) {
       console.error(error);
       toast.error('Error al eliminar');
@@ -229,8 +237,7 @@ export function InventoryPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto pb-24">
-      
-      {/* HEADER Y TABS */}
+      {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
@@ -276,7 +283,7 @@ export function InventoryPage() {
         )}
       </div>
 
-      {/* CONTENIDO SEGÚN PESTAÑA */}
+      {/* CONTENIDO PRINCIPAL */}
       {activeTab === 'stock' ? (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in duration-200">
             {!products ? (
@@ -343,7 +350,7 @@ export function InventoryPage() {
           </div>
       )}
 
-      {/* MODAL (SIN CAMBIOS) */}
+      {/* MODAL FORMULARIO */}
       {isFormOpen && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">

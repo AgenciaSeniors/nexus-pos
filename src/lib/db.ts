@@ -65,6 +65,7 @@ export interface Customer {
   email?: string;
   address?: string;
   notes?: string;
+  loyalty_points?: number;
   sync_status: 'synced' | 'pending_create' | 'pending_update';
   deleted_at?: string | null;
 }
@@ -137,8 +138,8 @@ export interface AuditLog {
   business_id: string;
   staff_id: string;
   staff_name: string;
-  action: 'LOGIN' | 'LOGOUT' | 'SALE' | 'DELETE_PRODUCT' | 'UPDATE_STOCK' | 'OPEN_DRAWER' | 'VOID_SALE';
-  // ✅ CORRECCIÓN: Usamos Record<string, unknown> en lugar de 'any' para JSON genérico seguro
+  // ✅ NUEVAS ACCIONES AGREGADAS A LA LISTA PERMITIDA
+  action: 'LOGIN' | 'LOGOUT' | 'SALE' | 'DELETE_PRODUCT' | 'UPDATE_STOCK' | 'OPEN_DRAWER' | 'VOID_SALE' | 'CREATE_CUSTOMER' | 'UPDATE_CUSTOMER' | 'DELETE_CUSTOMER';
   details: Record<string, unknown> | null;
   created_at: string;
   sync_status: 'pending_create' | 'synced';
