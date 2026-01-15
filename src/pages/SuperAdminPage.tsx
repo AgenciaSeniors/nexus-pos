@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { 
   Shield, Check, X, Search, RefreshCw, UserCheck, Inbox, 
-  CalendarPlus, Key, User, LogOut, Store, Trash2, AlertTriangle, Calendar
+  CalendarPlus, Key, User, LogOut, Store, Trash2, AlertTriangle, Calendar,
 } from 'lucide-react';
 
 // Interfaz completa para manejar todos los datos del usuario y negocio
@@ -162,29 +162,27 @@ export function SuperAdminPage() {
     }
   };
 
-  // 5. ELIMINAR (HARD DELETE)
+  // 6. ELIMINAR (HARD DELETE - Borrado Nuclear)
   const handleDelete = async (userId: string) => {
-    if (!confirm("⚠️ ¿ELIMINAR DEFINITIVAMENTE?\n\nEsto borrará al usuario de Auth y liberará el correo electrónico.")) return;
+    // Advertencia seria
+    if (!confirm("⚠️ ¿ESTÁS SEGURO?\n\nEsto borrará al usuario de la base de datos de Autenticación.\nEl correo quedará libre para registrarse de nuevo.\n\nEsta acción NO se puede deshacer.")) return;
     
     setLoading(true);
     try {
+        // Llamamos a la función SQL que acabamos de crear
         const { error } = await supabase.rpc('delete_user_completely', { 
             target_user_id: userId 
         });
 
         if (error) throw error;
 
-        alert("🗑️ Usuario eliminado y correo liberado correctamente.");
-        fetchData();
+        alert("🗑️ Usuario eliminado completamente. El correo ya está disponible para usarse de nuevo.");
+        fetchData(); // Recargar la lista
 
     } catch (err: unknown) {
         console.error(err);
         const msg = err instanceof Error ? err.message : "Error desconocido";
-        if (msg.includes("foreign key constraint")) {
-            alert("❌ No se puede eliminar: El usuario tiene historial vinculado. Suspéndelo en su lugar.");
-        } else {
-            alert("Error al eliminar usuario: " + msg);
-        }
+        alert("Error al eliminar usuario: " + msg);
     } finally {
         setLoading(false);
     }

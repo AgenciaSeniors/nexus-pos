@@ -1,16 +1,22 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom'; // ✅ Para redirigir al Login
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type BusinessConfig } from '../lib/db';
-import { Save, Building2, MapPin, Phone, Receipt, Loader2 } from 'lucide-react';
+import { supabase } from '../lib/supabase'; // ✅ Para desvincular en la nube
+import { 
+  Save, Building2, MapPin, Phone, Receipt, Loader2, 
+  MonitorX, LogOut // ✅ Iconos nuevos
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { addToQueue } from '../lib/sync';
 
 export function SettingsPage() {
+  const navigate = useNavigate();
+
   // 1. Obtener ID del Negocio (Contexto de Seguridad)
   const businessId = localStorage.getItem('nexus_business_id');
 
-  // 2. Cargar Configuración (Usamos businessId como Key directa)
-  // Esto asegura que cargamos LA configuración de ESTE negocio, y no otra.
+  // 2. Cargar Configuración
   const settings = useLiveQuery(async () => {
     if (!businessId) return null;
     return await db.settings.get(businessId);
@@ -35,20 +41,17 @@ export function SettingsPage() {
         receipt_message: settings.receipt_message || ''
       });
     } else if (businessId) {
-      // Si no existe configuración, sugerimos valores por defecto
       setFormData(prev => ({ ...prev, name: 'Mi Negocio' }));
     }
   }, [settings, businessId]);
 
+  // --- FUNCIÓN GUARDAR CONFIGURACIÓN ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!businessId) return toast.error("Error de sesión: No hay ID de negocio");
 
     setIsLoading(true);
     try {
-      // ✅ ESTRATEGIA: ID Determinista
-      // El ID de la configuración ES el ID del negocio. 
-      // Esto impide tener configuraciones duplicadas o "huerfanas".
       const configToSave: BusinessConfig = {
         id: businessId, 
         name: formData.name || 'Sin Nombre',
@@ -60,24 +63,52 @@ export function SettingsPage() {
 
       // 1. Guardar en local
       await db.settings.put(configToSave);
-      await addToQueue('SETTINGS_SYNC', configToSave);
-      toast.success('Configuración guardada correctamente');
 
-      // 2. Encolar sincronización (necesita soporte en backend para tabla 'businesses')
-      // Nota: Asegúrate de que tu sync.ts maneje el tipo 'BUSINESS_SYNC' o similar si deseas esto.
-      // Por ahora, lo guardamos localmente que es lo crítico para el POS.
-      
-      // Opcional: Si tienes lógica de sync para settings
-      // await addToQueue('SETTINGS_SYNC', configToSave); 
+      // 2. Encolar sincronización
+      await addToQueue('SETTINGS_SYNC', configToSave); 
 
       toast.success('Configuración guardada correctamente');
       
-      // Forzar actualización visual si el nombre cambió en el header
+      // Forzar actualización visual global
       window.dispatchEvent(new Event('storage')); 
 
     } catch (error) {
       console.error(error);
       toast.error('Error al guardar configuración');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // --- FUNCIÓN DESVINCULAR DISPOSITIVO ---
+  const handleUnlinkDevice = async () => {
+    if (!confirm("¿Estás a punto de cambiar de computadora?\n\nAl desvincular, se cerrará tu sesión aquí y tu licencia quedará libre para usarse en otro equipo.")) return;
+
+    setIsLoading(true);
+    try {
+      // 1. Obtener usuario actual para seguridad
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("No hay sesión activa en la nube.");
+
+      // 2. Borrar la huella de hardware en la base de datos (Nube)
+      const { error } = await supabase
+        .from('profiles')
+        .update({ hardware_id: null })
+        .eq('id', user.id);
+
+      if (error) throw error;
+
+      // 3. Limpiar rastro local
+      localStorage.removeItem('nexus_hardware_id');
+
+      // 4. Cerrar sesión y mandar al Login
+      await supabase.auth.signOut();
+      toast.success("Dispositivo desvinculado. Ya puedes entrar en otra PC.");
+      navigate('/login');
+
+    } catch (error) {
+      console.error(error);
+      toast.error("Error al desvincular. Verifica tu conexión a internet.");
     } finally {
       setIsLoading(false);
     }
@@ -91,7 +122,7 @@ export function SettingsPage() {
         <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
           <Building2 className="text-indigo-600"/> Configuración del Negocio
         </h1>
-        <p className="text-slate-500 text-sm">Personaliza la información que aparece en tus recibos.</p>
+        <p className="text-slate-500 text-sm">Personaliza la información de tu empresa y gestiona tu licencia.</p>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -162,7 +193,28 @@ export function SettingsPage() {
             </div>
           </div>
 
-          {/* Botón Guardar */}
+          <hr className="border-slate-100 my-6" />
+
+          {/* ZONA DE DISPOSITIVO (NUEVA SECCIÓN) */}
+          <div className="bg-orange-50/50 rounded-xl p-5 border border-orange-100">
+            <h3 className="font-bold text-slate-700 flex items-center gap-2 mb-2">
+              <MonitorX size={18} className="text-orange-500"/> Gestión de Dispositivo
+            </h3>
+            <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+              Este equipo está vinculado a tu licencia. Si deseas usar el sistema en otra computadora (por ejemplo, en casa o en otra sucursal), debes liberar la licencia primero.
+            </p>
+            
+            <button 
+              type="button" // Importante: type="button" para no enviar el form
+              onClick={handleUnlinkDevice}
+              disabled={isLoading}
+              className="w-full py-3 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl hover:bg-white hover:text-orange-600 hover:border-orange-300 transition-all flex items-center justify-center gap-2 shadow-sm"
+            >
+              <LogOut size={18} /> Liberar Licencia y Cerrar Sesión
+            </button>
+          </div>
+
+          {/* Botón Guardar Principal */}
           <div className="pt-4">
             <button 
               type="submit" 
