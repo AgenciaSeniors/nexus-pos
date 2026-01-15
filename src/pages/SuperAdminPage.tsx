@@ -24,7 +24,7 @@ interface Profile {
 export function SuperAdminPage() {
   const navigate = useNavigate();
   
-  // --- ESTADOS DE LA INTERFAZ (Tu lógica original) ---
+  // --- ESTADOS DE LA INTERFAZ ---
   const [activeTab, setActiveTab] = useState<'requests' | 'active'>('requests');
   const [dataList, setDataList] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(false);
@@ -47,11 +47,9 @@ export function SuperAdminPage() {
         .select('*')
         .order('created_at', { ascending: false });
 
-      // Filtro según la pestaña activa
       if (activeTab === 'requests') {
         query = query.eq('status', 'pending');
       } else {
-        // En activos mostramos active y suspended
         query = query.in('status', ['active', 'suspended', 'rejected']);
       }
 
@@ -71,42 +69,56 @@ export function SuperAdminPage() {
     fetchData();
   }, [fetchData]);
 
-  // 2. APROBACIÓN DE USUARIO (Lógica corregida: Crea el Negocio + Perfil)
+  // 2. APROBACIÓN DE USUARIO (CORREGIDA: Usa variables correctas + PIN)
   const executeApproval = async () => {
+    // Usamos 'approvingItem' que es la variable de estado correcta
     if (!approvingItem) return;
 
+    // ✅ PASO 1: Pedir el PIN Maestro
+    const adminPin = prompt(`Asigna el PIN maestro (4 dígitos) para el usuario "${approvingItem.full_name}":`, "1234");
+    
+    // Validación simple
+    if (!adminPin || !/^\d{4}$/.test(adminPin)) {
+        alert("❌ Error: Debes asignar un PIN numérico de 4 dígitos para crear el negocio.");
+        return;
+    }
+
+    setLoading(true); // Bloqueo de UI opcional si quieres mostrar spinner global
+
     try {
-      // Llamada a la Transacción Atómica en Base de Datos
+      // ✅ PASO 2: Llamada a la Transacción Atómica
       const { error } = await supabase.rpc('approve_client_transaction', {
-        target_user_id: approvingItem.id,
-        months_to_grant: monthsToGrant,
-        admin_user_id: (await supabase.auth.getUser()).data.user?.id // Opcional
+        target_user_id: approvingItem.id,     // Variable correcta
+        months_to_grant: monthsToGrant,       // Variable correcta
+        initial_pin: adminPin,                // PIN capturado
+        admin_user_id: (await supabase.auth.getUser()).data.user?.id 
       });
 
       if (error) throw error;
 
-      setApprovingItem(null);
+      alert(`✅ ${approvingItem.full_name} aprobado y negocio creado con PIN: ${adminPin}`);
+      
+      setApprovingItem(null); // Variable correcta para cerrar modal
       fetchData();
-      alert(`✅ ${approvingItem.full_name} aprobado y negocio creado correctamente.`);
 
     } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Error desconocido";
         console.error(err);
         alert("❌ Error crítico en aprobación: " + msg);
+    } finally {
+        setLoading(false);
     }
   };
 
-  // 3. EXTENSIÓN DE LICENCIA (Sincroniza Perfil y Negocio)
+  // 3. EXTENSIÓN DE LICENCIA
   const executeExtension = async () => {
     if (!extendingItem) return;
 
     try {
-      // Calcular nueva fecha basada en la actual o desde hoy si ya venció
       const currentExpiry = extendingItem.license_expiry ? new Date(extendingItem.license_expiry) : new Date();
       const baseDate = currentExpiry > new Date() ? currentExpiry : new Date();
       baseDate.setMonth(baseDate.getMonth() + extendMonths);
 
-      // Actualizar Perfil
       const { error: profileError } = await supabase
         .from('profiles')
         .update({ license_expiry: baseDate.toISOString(), status: 'active' })
@@ -114,7 +126,6 @@ export function SuperAdminPage() {
 
       if (profileError) throw profileError;
 
-      // Actualizar Negocio (Si tiene uno asignado)
       if (extendingItem.business_id) {
         await supabase
           .from('businesses')
@@ -141,7 +152,6 @@ export function SuperAdminPage() {
 
     try {
       await supabase.from('profiles').update({ status: newStatus }).eq('id', user.id);
-      // También actualizamos el negocio para bloquear acceso inmediato
       if (user.business_id) {
         await supabase.from('businesses').update({ status: newStatus }).eq('id', user.business_id);
       }
@@ -152,14 +162,12 @@ export function SuperAdminPage() {
     }
   };
 
-  // --- ELIMINAR (HARD DELETE) ---
+  // 5. ELIMINAR (HARD DELETE)
   const handleDelete = async (userId: string) => {
-    // Advertencia clara para el Admin
-    if (!confirm("⚠️ ¿ELIMINAR DEFINITIVAMENTE?\n\nEsto borrará al usuario de Auth y liberará el correo electrónico.\nSi el usuario tiene ventas o historial, la operación podría bloquearse por seguridad.")) return;
+    if (!confirm("⚠️ ¿ELIMINAR DEFINITIVAMENTE?\n\nEsto borrará al usuario de Auth y liberará el correo electrónico.")) return;
     
-    setLoading(true); // Bloqueamos la UI mientras procesa
+    setLoading(true);
     try {
-        // Llamamos a la función RPC que creamos en el Paso 1
         const { error } = await supabase.rpc('delete_user_completely', { 
             target_user_id: userId 
         });
@@ -167,15 +175,13 @@ export function SuperAdminPage() {
         if (error) throw error;
 
         alert("🗑️ Usuario eliminado y correo liberado correctamente.");
-        fetchData(); // Recargamos la lista
+        fetchData();
 
-    } catch (err: unknown) { // Tipado seguro para el error
+    } catch (err: unknown) {
         console.error(err);
         const msg = err instanceof Error ? err.message : "Error desconocido";
-        
-        // Manejo específico si falla por datos vinculados (Foreign Keys)
         if (msg.includes("foreign key constraint")) {
-            alert("❌ No se puede eliminar: El usuario tiene historial de ventas o datos vinculados. Debes suspenderlo en su lugar.");
+            alert("❌ No se puede eliminar: El usuario tiene historial vinculado. Suspéndelo en su lugar.");
         } else {
             alert("Error al eliminar usuario: " + msg);
         }
@@ -190,7 +196,6 @@ export function SuperAdminPage() {
     navigate('/admin-login');
   };
 
-  // Filtrado en cliente por buscador
   const filteredList = dataList.filter(item => 
     item.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     item.email?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -221,8 +226,6 @@ export function SuperAdminPage() {
         
         {/* BUSCADOR Y PESTAÑAS */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-            
-            {/* Tabs */}
             <div className="bg-white p-1 rounded-xl shadow-sm border border-slate-200 flex w-full sm:w-auto">
                 <button 
                     onClick={() => setActiveTab('requests')}
@@ -238,7 +241,6 @@ export function SuperAdminPage() {
                 </button>
             </div>
 
-            {/* Search */}
             <div className="relative w-full sm:w-80">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5"/>
                 <input 
@@ -306,7 +308,7 @@ export function SuperAdminPage() {
                                     <td className="p-4">
                                         <div className="flex flex-col gap-1">
                                             <div className="text-sm font-medium flex items-center gap-2 text-slate-700">
-                                                <Key size={14} className="text-slate-400"/> PIN: <span className="font-mono bg-slate-100 px-1.5 rounded">{item.initial_pin}</span>
+                                                <Key size={14} className="text-slate-400"/> PIN Solicitud: <span className="font-mono bg-slate-100 px-1.5 rounded">{item.initial_pin}</span>
                                             </div>
                                             <div className="text-xs text-slate-500">
                                                 Solicitó: <span className="font-bold">{item.months_requested} Meses</span>
@@ -321,7 +323,6 @@ export function SuperAdminPage() {
                                     <td className="p-4 text-right">
                                         <div className="flex items-center justify-end gap-2 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                                             
-                                            {/* BOTONES PARA SOLICITUDES PENDIENTES */}
                                             {activeTab === 'requests' && (
                                                 <>
                                                     <button 
@@ -341,7 +342,6 @@ export function SuperAdminPage() {
                                                 </>
                                             )}
 
-                                            {/* BOTONES PARA CLIENTES ACTIVOS */}
                                             {activeTab === 'active' && (
                                                 <>
                                                     <button 
@@ -382,7 +382,7 @@ export function SuperAdminPage() {
         </div>
       </main>
 
-      {/* --- MODAL DE APROBACIÓN (Tu modal original restaurado) --- */}
+      {/* --- MODAL DE APROBACIÓN --- */}
       {approvingItem && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 animate-in fade-in zoom-in duration-200">
@@ -432,7 +432,7 @@ export function SuperAdminPage() {
         </div>
       )}
 
-      {/* --- MODAL DE EXTENSIÓN (Tu modal original restaurado) --- */}
+      {/* --- MODAL DE EXTENSIÓN --- */}
       {extendingItem && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 animate-in fade-in zoom-in duration-200">

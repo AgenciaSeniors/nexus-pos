@@ -1,191 +1,204 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useOutletContext } from 'react-router-dom';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff } from '../lib/db';
-import { Trash2, UserPlus, Shield, User, Loader2, KeyRound } from 'lucide-react';
-import { toast } from 'sonner'; // Asumiendo que usas sonner por los cambios anteriores
+import { Users, UserPlus, Trash2, Shield, ShieldAlert, KeyRound, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 export function StaffPage() {
-  const [staff, setStaff] = useState<Staff[]>([]);
-  const [loading, setLoading] = useState(true);
-  
-  const [isAdding, setIsAdding] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newPin, setNewPin] = useState('');
-  
-  const [newRole, setNewRole] = useState<'admin' | 'vendedor'>('vendedor');
-
-  // ✅ Obtener business_id seguro
+  // 1. Obtener contexto de seguridad
+  const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
   const businessId = localStorage.getItem('nexus_business_id');
 
-  const loadStaff = async () => {
-    if (!businessId) return;
-    
-    try {
-      // ✅ CORRECCIÓN: Filtramos por business_id
-      const items = await db.staff
-        .where('business_id')
-        .equals(businessId)
-        .toArray();
-        
-      setStaff(items);
-    } catch (error) {
-      console.error("Error cargando personal:", error);
-      toast.error("Error al cargar lista de empleados");
-    } finally {
-      setLoading(false);
-    }
-  };
+  // 2. Carga BLINDADA de empleados (Solo del negocio actual)
+  const staffMembers = useLiveQuery(async () => {
+    if (!businessId) return [];
+    return await db.staff
+      .where('business_id').equals(businessId)
+      .toArray();
+  }, [businessId]) || [];
 
-  useEffect(() => {
-    loadStaff();
-  }, [businessId]);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  const [formData, setFormData] = useState({
+    name: '',
+    role: 'vendedor' as 'admin' | 'vendedor',
+    pin: ''
+  });
 
-  const handleAdd = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newPin.length !== 4) return toast.warning("El PIN debe ser de 4 dígitos");
-    if (!businessId) return toast.error("Error de sesión: Reinicia la aplicación");
+    if (!businessId) return toast.error("Error de sesión: No hay negocio activo");
 
+    // VALIDACIÓN DE PIN (4 Dígitos Numéricos)
+    if (!/^\d{4}$/.test(formData.pin)) {
+        return toast.error("El PIN debe ser de 4 números exactos.");
+    }
+
+    setIsLoading(true);
     try {
+      // Verificar si el PIN ya existe en ESTE negocio
+      const existing = await db.staff
+        .where({ business_id: businessId, pin: formData.pin })
+        .first();
+
+      if (existing) {
+        toast.warning(`El PIN ${formData.pin} ya está en uso por ${existing.name}`);
+        setIsLoading(false);
+        return;
+      }
+
       await db.staff.add({
         id: crypto.randomUUID(),
-        name: newName,
-        pin: newPin,
-        role: newRole,
-        active: true,
-        business_id: businessId // ✅ Guardamos con el ID correcto
+        business_id: businessId, // ✅ Vinculación Crítica
+        name: formData.name,
+        role: formData.role,
+        pin: formData.pin,
+        active: true
       });
-      
-      setIsAdding(false);
-      setNewName('');
-      setNewPin('');
-      toast.success("Empleado registrado");
-      loadStaff();
+
+      toast.success('Empleado registrado correctamente');
+      setIsFormOpen(false);
+      setFormData({ name: '', role: 'vendedor', pin: '' });
+
     } catch (error) {
       console.error(error);
-      toast.error("Error al agregar (verifica que el PIN no esté duplicado)");
+      toast.error('Error al crear empleado');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleDelete = async (id: string) => {
-    const targetStaff = staff.find(s => s.id === id);
-    if (!targetStaff) return;
+  const handleDelete = async (staffId: string, staffName: string, staffRole: string) => {
+    if (!businessId) return;
 
-    if (targetStaff.role === 'admin') {
-      const adminCount = staff.filter(s => s.role === 'admin').length;
-      if (adminCount <= 1) {
-        toast.error("No puedes eliminar al último Administrador.");
-        return; 
-      }
+    // 🛡️ REGLA 1: No puedes borrarte a ti mismo
+    if (staffId === currentStaff.id) {
+        return toast.error("No puedes eliminar tu propio usuario activo.");
     }
 
-    // Usamos toast con promesa o confirmación simple
-    if (!confirm(`¿Eliminar a ${targetStaff.name}?`)) return;
+    // 🛡️ REGLA 2: No puedes dejar al negocio sin administradores
+    if (staffRole === 'admin') {
+        const adminCount = staffMembers.filter(s => s.role === 'admin').length;
+        if (adminCount <= 1) {
+            return toast.error("¡Acción bloqueada! No puedes eliminar al último administrador del negocio.");
+        }
+    }
+
+    if (!confirm(`¿Eliminar acceso a ${staffName}?`)) return;
 
     try {
-      await db.staff.delete(id);
-      toast.success("Empleado eliminado");
-      loadStaff();
+      await db.staff.delete(staffId);
+      toast.success('Empleado eliminado');
     } catch (error) {
       console.error(error);
-      toast.error("Error al eliminar");
+      toast.error('Error al eliminar');
     }
   };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-          <User className="text-indigo-600"/> Gestión de Equipo
-        </h1>
+    <div className="p-6 max-w-5xl mx-auto pb-24">
+      <div className="flex justify-between items-center mb-8">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+            <Users className="text-indigo-600"/> Equipo de Trabajo
+          </h1>
+          <p className="text-slate-500 text-sm">Gestiona el acceso y roles de tus empleados.</p>
+        </div>
         <button 
-          onClick={() => setIsAdding(!isAdding)}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold transition-colors shadow-sm"
+          onClick={() => setIsFormOpen(true)}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl flex items-center gap-2 font-bold shadow-sm transition-colors"
         >
-          <UserPlus size={18}/> {isAdding ? 'Cancelar' : 'Nuevo Empleado'}
+          <UserPlus size={18}/> Nuevo Empleado
         </button>
       </div>
 
-      {isAdding && (
-        <div className="bg-white p-6 rounded-2xl shadow-lg border border-indigo-100 mb-8 animate-in slide-in-from-top-4">
-          <h3 className="font-bold text-slate-700 mb-4">Registrar Nuevo Colaborador</h3>
-          <form onSubmit={handleAdd} className="grid gap-4 sm:grid-cols-4 items-end">
-            <div className="sm:col-span-1">
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nombre</label>
-                <input required type="text" value={newName} onChange={e => setNewName(e.target.value)} className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="Ej. Juan Pérez"/>
+      {/* LISTA DE EMPLEADOS */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {staffMembers.map(staff => (
+          <div key={staff.id} className={`bg-white p-5 rounded-2xl border ${staff.id === currentStaff.id ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-slate-200'} shadow-sm flex justify-between items-start group`}>
+            <div className="flex gap-4">
+                <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg ${staff.role === 'admin' ? 'bg-purple-100 text-purple-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                    {staff.name.substring(0, 2).toUpperCase()}
+                </div>
+                <div>
+                    <h3 className="font-bold text-slate-800">{staff.name}</h3>
+                    <div className="flex items-center gap-2 text-xs font-bold uppercase mt-1">
+                        {staff.role === 'admin' ? (
+                            <span className="text-purple-600 flex items-center gap-1"><Shield size={12}/> Admin</span>
+                        ) : (
+                            <span className="text-emerald-600 flex items-center gap-1"><UserPlus size={12}/> Vendedor</span>
+                        )}
+                        {staff.id === currentStaff.id && <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">TÚ</span>}
+                    </div>
+                    <div className="mt-2 text-slate-400 text-xs flex items-center gap-1">
+                        <KeyRound size={12}/> PIN: ••••
+                    </div>
+                </div>
             </div>
-            <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">PIN (4 Dígitos)</label>
-                <input required type="text" maxLength={4} value={newPin} onChange={e => setNewPin(e.target.value)} className="w-full p-2 border rounded-lg font-mono text-center focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="0000"/>
-            </div>
-            <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Rol</label>
-                <select 
-                  value={newRole} 
-                  onChange={e => setNewRole(e.target.value as 'admin' | 'vendedor')} 
-                  className="w-full p-2 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                >
-                    <option value="vendedor">Vendedor</option>
-                    <option value="admin">Administrador</option>
-                </select>
-            </div>
-            <button type="submit" className="bg-green-600 hover:bg-green-700 text-white p-2 rounded-lg font-bold shadow-sm transition-colors">
-                Guardar
+
+            <button 
+                onClick={() => handleDelete(staff.id, staff.name, staff.role)}
+                className={`p-2 rounded-lg transition-colors ${staff.id === currentStaff.id ? 'text-slate-300 cursor-not-allowed' : 'text-slate-400 hover:text-red-600 hover:bg-red-50'}`}
+                disabled={staff.id === currentStaff.id}
+                title={staff.id === currentStaff.id ? "No puedes eliminarte a ti mismo" : "Eliminar empleado"}
+            >
+                <Trash2 size={18}/>
             </button>
-          </form>
+          </div>
+        ))}
+      </div>
+
+      {/* MODAL DE REGISTRO */}
+      {isFormOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
+                <div className="p-6 border-b border-slate-100 bg-slate-50/50">
+                    <h2 className="text-xl font-bold text-slate-800">Nuevo Acceso</h2>
+                    <p className="text-xs text-slate-500 mt-1">Crea un PIN único para que tu empleado inicie sesión.</p>
+                </div>
+                
+                <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nombre del Empleado</label>
+                        <input autoFocus required type="text" className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
+                            value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Ej. Ana García" />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Rol</label>
+                            <select className="w-full p-3 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                                value={formData.role} onChange={e => setFormData({...formData, role: e.target.value as never})}>
+                                <option value="vendedor">Vendedor</option>
+                                <option value="admin">Administrador</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">PIN de Acceso</label>
+                            <input required type="text" maxLength={4} pattern="\d{4}" className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-center tracking-widest text-lg"
+                                value={formData.pin} onChange={e => setFormData({...formData, pin: e.target.value.replace(/\D/g,'')})} placeholder="0000" />
+                        </div>
+                    </div>
+
+                    {formData.role === 'admin' && (
+                        <div className="bg-purple-50 p-3 rounded-xl flex gap-3 items-start text-xs text-purple-700 border border-purple-100">
+                            <ShieldAlert size={16} className="shrink-0 mt-0.5"/>
+                            <p>Los administradores tienen acceso total: pueden ver finanzas, modificar inventario y gestionar empleados.</p>
+                        </div>
+                    )}
+
+                    <div className="flex gap-3 pt-2">
+                        <button type="button" onClick={() => setIsFormOpen(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors">Cancelar</button>
+                        <button type="submit" disabled={isLoading} className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 flex justify-center items-center gap-2 transition-colors">
+                            {isLoading ? <Loader2 className="animate-spin"/> : 'Crear Acceso'}
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
       )}
-
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        {loading ? (
-            <div className="p-8 flex justify-center"><Loader2 className="animate-spin text-indigo-500"/></div>
-        ) : staff.length === 0 ? (
-            <div className="p-12 text-center flex flex-col items-center gap-2">
-                <User size={48} className="text-slate-200" />
-                <p className="text-slate-500 font-medium">No hay empleados registrados en este negocio.</p>
-                <p className="text-slate-400 text-sm">Agrega el primero usando el botón superior.</p>
-            </div>
-        ) : (
-            <table className="w-full text-left">
-                <thead className="bg-slate-50 text-slate-500 uppercase text-xs font-bold border-b border-slate-100">
-                    <tr>
-                        <th className="p-4 pl-6">Nombre</th>
-                        <th className="p-4">Rol</th>
-                        <th className="p-4">PIN</th>
-                        <th className="p-4 text-right pr-6">Acciones</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                    {staff.map(member => (
-                        <tr key={member.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="p-4 pl-6 font-bold text-slate-700 flex items-center gap-3">
-                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white ${member.role === 'admin' ? 'bg-purple-500' : 'bg-indigo-500'}`}>
-                                    {member.name.substring(0,2).toUpperCase()}
-                                </div>
-                                {member.name}
-                            </td>
-                            <td className="p-4">
-                                <span className={`px-2 py-1 rounded-full text-xs font-bold flex w-fit items-center gap-1 ${member.role === 'admin' ? 'bg-purple-100 text-purple-700 border border-purple-200' : 'bg-blue-100 text-blue-700 border border-blue-200'}`}>
-                                    {member.role === 'admin' ? <Shield size={12}/> : <User size={12}/>}
-                                    {member.role === 'admin' ? 'ADMIN' : 'VENDEDOR'}
-                                </span>
-                            </td>
-                            <td className="p-4 font-mono text-slate-500 flex items-center gap-2">
-                                <KeyRound size={14} className="text-slate-300"/> ****
-                            </td>
-                            <td className="p-4 text-right pr-6">
-                                <button 
-                                    onClick={() => handleDelete(member.id)}
-                                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                    title="Eliminar"
-                                >
-                                    <Trash2 size={18}/>
-                                </button>
-                            </td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        )}
-      </div>
     </div>
   );
 }

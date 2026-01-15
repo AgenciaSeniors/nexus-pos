@@ -3,6 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import { db, type Product, type Staff, type InventoryMovement } from '../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Plus, Search, Edit2, Trash2, Package, Loader2, History as HistoryIcon, LayoutList } from 'lucide-react';
+// ✅ CORRECCIÓN: Importamos syncPush que faltaba
 import { syncPush, addToQueue } from '../lib/sync';
 import { currency } from '../lib/currency';
 import { toast } from 'sonner';
@@ -12,7 +13,6 @@ import { InventoryHistory } from '../components/InventoryHistory';
 export function InventoryPage() {
   // 1. Obtener usuario y Negocio (Contexto y LocalStorage)
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
-  // ✅ CORRECCIÓN: Definimos businessId aquí para usarlo en toda la página
   const businessId = localStorage.getItem('nexus_business_id');
 
   const [activeTab, setActiveTab] = useState<'stock' | 'history'>('stock');
@@ -21,8 +21,8 @@ export function InventoryPage() {
   const products = useLiveQuery(async () => {
     if (!businessId) return [];
     return await db.products
-      .where('business_id').equals(businessId) // ✅ Solo productos de este negocio
-      .filter(p => !p.deleted_at)            // ✅ Solo activos
+      .where('business_id').equals(businessId)
+      .filter(p => !p.deleted_at)
       .toArray();
   }, [businessId]) || [];
 
@@ -56,13 +56,12 @@ export function InventoryPage() {
         throw new Error("No se identificó el negocio. Reinicia sesión.");
       }
 
-      // ✅ VALIDACIÓN: SKU ÚNICO (Evita duplicados en el mismo negocio)
+      // VALIDACIÓN: SKU ÚNICO
       if (formData.sku && formData.sku.trim() !== '') {
         const duplicate = await db.products
           .where({ business_id: businessId, sku: formData.sku })
           .first();
         
-        // Si existe y no es el que estamos editando
         if (duplicate && duplicate.id !== editingId) {
           toast.error(`El SKU "${formData.sku}" ya existe en el producto "${duplicate.name}"`);
           setIsLoading(false);
@@ -89,15 +88,14 @@ export function InventoryPage() {
         const original = await db.products.get(editingId);
         if (!original) return;
 
-        // Mantenemos el ID original del negocio por seguridad
         const finalBusinessId = original.business_id || businessId;
-        
         const oldStock = original.stock;
         const newStock = productData.stock || 0;
         const difference = newStock - oldStock;
 
-        await db.transaction('rw', [db.products, db.movements, db.action_queue], async () => {
-            // Actualizar Producto
+        // ✅ CORRECCIÓN CRÍTICA: Agregamos db.audit_logs a la transacción
+        await db.transaction('rw', [db.products, db.movements, db.action_queue, db.audit_logs], async () => {
+            // 1. Actualizar Producto
             const updatedProduct = {
               ...original,
               ...productData,
@@ -108,11 +106,11 @@ export function InventoryPage() {
             await db.products.update(editingId, updatedProduct);
             await addToQueue('PRODUCT_SYNC', updatedProduct);
 
-            // Registrar Movimiento
+            // 2. Registrar Movimiento (si cambió el stock)
             if (difference !== 0) {
                 const movement: InventoryMovement = {
                     id: crypto.randomUUID(),
-                    business_id: finalBusinessId, // ✅ Usamos variable corregida
+                    business_id: finalBusinessId,
                     product_id: editingId,
                     staff_id: currentStaff?.id || 'system',
                     qty_change: difference,
@@ -124,6 +122,7 @@ export function InventoryPage() {
                 await db.movements.add(movement);
                 await addToQueue('MOVEMENT', movement);
 
+                // 3. Auditoría (Ahora sí funciona porque db.audit_logs está en la transacción)
                 await logAuditAction('UPDATE_STOCK', {
                     product: productData.name,
                     diff: difference
@@ -138,10 +137,11 @@ export function InventoryPage() {
         const newProductId = crypto.randomUUID();
         const initialStock = productData.stock || 0;
 
-        await db.transaction('rw', [db.products, db.movements, db.action_queue], async () => {
+        // También agregamos db.audit_logs aquí por si acaso decidas auditar la creación en el futuro
+        await db.transaction('rw', [db.products, db.movements, db.action_queue, db.audit_logs], async () => {
             const newProduct = {
                 id: newProductId,
-                business_id: businessId, // ✅ Usamos businessId del scope superior
+                business_id: businessId,
                 name: productData.name!,
                 price: productData.price!,
                 stock: initialStock,
@@ -159,7 +159,7 @@ export function InventoryPage() {
             if (initialStock !== 0) {
                 const movement: InventoryMovement = {
                     id: crypto.randomUUID(),
-                    business_id: businessId, // ✅ Usamos variable corregida
+                    business_id: businessId,
                     product_id: newProductId,
                     staff_id: currentStaff?.id || 'system',
                     qty_change: initialStock,
@@ -178,7 +178,7 @@ export function InventoryPage() {
 
       setIsFormOpen(false);
       resetForm();
-      syncPush(); 
+      syncPush(); // ✅ Ahora sí existe esta función gracias a la corrección en sync.ts
 
     } catch (error: unknown) {
       console.error(error);
