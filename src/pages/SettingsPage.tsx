@@ -1,17 +1,15 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom'; // ✅ Para redirigir al Login
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type BusinessConfig } from '../lib/db';
-import { supabase } from '../lib/supabase'; // ✅ Para desvincular en la nube
+import { supabase } from '../lib/supabase';
 import { 
   Save, Building2, MapPin, Phone, Receipt, Loader2, 
-  MonitorX, LogOut // ✅ Iconos nuevos
+  MonitorX, LogOut 
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { addToQueue } from '../lib/sync';
 
 export function SettingsPage() {
-  const navigate = useNavigate();
 
   // 1. Obtener ID del Negocio (Contexto de Seguridad)
   const businessId = localStorage.getItem('nexus_business_id');
@@ -80,35 +78,47 @@ export function SettingsPage() {
     }
   };
 
-  // --- FUNCIÓN DESVINCULAR DISPOSITIVO ---
+  // --- FUNCIÓN DESVINCULAR / SALIR (BLINDADA) ---
   const handleUnlinkDevice = async () => {
-    if (!confirm("¿Estás a punto de cambiar de computadora?\n\nAl desvincular, se cerrará tu sesión aquí y tu licencia quedará libre para usarse en otro equipo.")) return;
+    const isConfirmed = confirm("¿Cerrar sesión y liberar licencia?\n\nEsto te permitirá iniciar sesión en otro dispositivo.");
+    if (!isConfirmed) return;
 
     setIsLoading(true);
+    
+    // 1. Intentamos avisar a la nube (Best Effort)
     try {
-      // 1. Obtener usuario actual para seguridad
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("No hay sesión activa en la nube.");
+      if (user) {
+        await supabase
+          .from('profiles')
+          .update({ hardware_id: null })
+          .eq('id', user.id);
+      }
+    } catch (error) {
+      console.warn("No se pudo actualizar la nube, pero cerraremos localmente.", error);
+    }
 
-      // 2. Borrar la huella de hardware en la base de datos (Nube)
-      const { error } = await supabase
-        .from('profiles')
-        .update({ hardware_id: null })
-        .eq('id', user.id);
-
-      if (error) throw error;
-
-      // 3. Limpiar rastro local
-      localStorage.removeItem('nexus_hardware_id');
-
-      // 4. Cerrar sesión y mandar al Login
+    // 2. LIMPIEZA NUCLEAR LOCAL (Esto ocurre SIEMPRE)
+    try {
+      // Borrar credenciales de Supabase
       await supabase.auth.signOut();
-      toast.success("Dispositivo desvinculado. Ya puedes entrar en otra PC.");
-      navigate('/login');
+      
+      // Borrar rastros del negocio en este navegador
+      localStorage.clear(); 
+      
+      // Opcional: Si quieres borrar también la DB local para que el próximo usuario empiece de cero
+      // await db.delete(); 
+
+      toast.success("Sesión cerrada correctamente.");
+      
+      // 3. Redirección forzada recargando la página para limpiar memoria
+      window.location.href = '/'; 
 
     } catch (error) {
-      console.error(error);
-      toast.error("Error al desvincular. Verifica tu conexión a internet.");
+      console.error("Error crítico al salir:", error);
+      // Failsafe final: si todo falla, forzamos recarga
+      localStorage.clear();
+      window.location.href = '/';
     } finally {
       setIsLoading(false);
     }
@@ -198,19 +208,20 @@ export function SettingsPage() {
           {/* ZONA DE DISPOSITIVO (NUEVA SECCIÓN) */}
           <div className="bg-orange-50/50 rounded-xl p-5 border border-orange-100">
             <h3 className="font-bold text-slate-700 flex items-center gap-2 mb-2">
-              <MonitorX size={18} className="text-orange-500"/> Gestión de Dispositivo
+              <MonitorX size={18} className="text-orange-500"/> Gestión de Cuenta
             </h3>
             <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-              Este equipo está vinculado a tu licencia. Si deseas usar el sistema en otra computadora (por ejemplo, en casa o en otra sucursal), debes liberar la licencia primero.
+              Cerrar sesión liberará la licencia de este dispositivo para que puedas usarla en otro lugar.
             </p>
             
             <button 
-              type="button" // Importante: type="button" para no enviar el form
+              type="button" 
               onClick={handleUnlinkDevice}
               disabled={isLoading}
-              className="w-full py-3 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl hover:bg-white hover:text-orange-600 hover:border-orange-300 transition-all flex items-center justify-center gap-2 shadow-sm"
+              className="w-full py-3 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl hover:bg-white hover:text-red-600 hover:border-red-300 transition-all flex items-center justify-center gap-2 shadow-sm"
             >
-              <LogOut size={18} /> Liberar Licencia y Cerrar Sesión
+              <LogOut size={18} /> 
+              {isLoading ? 'Cerrando sesión...' : 'Cerrar Sesión / Liberar Licencia'}
             </button>
           </div>
 
