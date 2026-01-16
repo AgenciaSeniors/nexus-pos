@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useState, useRef } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
@@ -60,62 +61,44 @@ function LoginScreen() {
     setLoading(true);
 
     try {
-      // 1. Crear usuario auth
+      // 1. Crear usuario en Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
       });
 
       if (authError) throw authError;
-      if (!authData.user) throw new Error("No se pudo crear el usuario");
+      if (!authData.session) {
+         toast.warning("Desactiva 'Confirm Email' en Supabase para continuar.");
+         return;
+      }
 
-      // 2. Crear Negocio PRIMERO para obtener el ID
-      const { data: businessData, error: businessError } = await supabase
-        .from('businesses')
-        .insert({
-          name: businessName,
-          status: 'active',
-          phone: phone
-        })
-        .select()
-        .single();
+      // 2. ENVIAR SOLICITUD (Estado Pendiente)
+      const { error: rpcError } = await supabase.rpc('submit_registration_request', {
+        p_owner_name: fullName,
+        p_business_name: businessName,
+        p_phone: phone
+      });
 
-      if (businessError) throw businessError;
+      if (rpcError) throw rpcError;
 
-      // 3. Crear Perfil vinculado al negocio
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .insert({
-          id: authData.user.id,
-          business_id: businessData.id,
-          full_name: fullName,
-          role: 'admin',
-          status: 'active',
-          email: email,
-          initial_pin: '1234' // PIN por defecto
-        });
-
-      if (profileError) throw profileError;
-
-      // 4. Crear Staff en la nube (Espejo para sync)
-      const { error: staffError } = await supabase
-        .from('staff')
-        .insert({
-          business_id: businessData.id,
-          name: fullName,
-          role: 'admin',
-          pin: '1234',
-          active: true
-        });
+      // 3. ÉXITO: CERRAR SESIÓN Y AVISAR
+      // Es vital cerrar sesión para que no intente entrar con perfil pendiente
+      await supabase.auth.signOut();
       
-      if (staffError) throw staffError;
-
-      toast.success("Cuenta creada exitosamente. Iniciando...");
+      toast.success("Solicitud enviada correctamente.");
+      alert("✅ REGISTRO EXITOSO\n\nTu cuenta ha sido creada y está PENDIENTE de aprobación.\nContacta al administrador para que la active.");
       
-    } catch (error: unknown) {
+      // Volver al modo login para que espere
+      setMode('login');
+      setEmail('');
+      setPassword('');
+
+    } catch (error: any) {
       console.error(error);
-      const message = error instanceof Error ? error.message : "Error en el registro";
-      toast.error(message);
+      // Si falló, borramos el usuario auth para que pueda reintentar con el mismo correo
+      await supabase.auth.signOut();
+      toast.error(error.message || "Error al enviar solicitud.");
     } finally {
       setLoading(false);
     }
@@ -302,7 +285,6 @@ function BusinessApp() {
       if (error) {
         if (error.code === 'PGRST116') {
              console.error("Perfil no encontrado. Cerrando sesión...");
-             await supabase.auth.signOut();
              setSession(null);
              return;
         }
@@ -313,6 +295,7 @@ function BusinessApp() {
         if (data.status === 'pending') {
           toast.info("Cuenta pendiente de aprobación.");
           await supabase.auth.signOut();
+          setSession(null);
           return;
         }
         if (data.status === 'suspended' || data.status === 'rejected') {
@@ -507,27 +490,54 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   const [authorized, setAuthorized] = useState<boolean | null>(null);
 
   useEffect(() => {
+    let mounted = true;
+
     const checkAdmin = async () => {
       try {
+        // 1. Obtener usuario actual
         const { data: { user } } = await supabase.auth.getUser();
-        if (!user) { setAuthorized(false); return; }
+        
+        if (!user) {
+           if (mounted) setAuthorized(false); 
+           return; 
+        }
 
+        // 2. Verificar flag is_super_admin
         const { data, error } = await supabase
           .from('profiles')
           .select('is_super_admin')
           .eq('id', user.id)
           .single();
         
-        setAuthorized(!error && data?.is_super_admin);
-      } catch {
-        setAuthorized(false);
+        if (mounted) {
+            if (error || !data?.is_super_admin) {
+                setAuthorized(false);
+            } else {
+                setAuthorized(true);
+            }
+        }
+      } catch (e) {
+        console.error("Error check admin", e);
+        if (mounted) setAuthorized(false);
       }
     };
+
     checkAdmin();
+
+    return () => { mounted = false; };
   }, []);
 
-  if (authorized === null) return <div className="min-h-screen bg-slate-900 flex items-center justify-center"><Loader2 className="animate-spin text-white w-8 h-8"/></div>;
+  // Estado de carga (Pantalla negra para no deslumbrar)
+  if (authorized === null) {
+      return (
+        <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center gap-4">
+            <Loader2 className="animate-spin text-indigo-500 w-10 h-10"/>
+            <p className="text-slate-400 text-sm">Verificando credenciales...</p>
+        </div>
+      );
+  }
   
+  // Si no está autorizado, lo mandamos al login de admin
   return authorized ? <>{children}</> : <Navigate to="/admin-login" replace />;
 }
 

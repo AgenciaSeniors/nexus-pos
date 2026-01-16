@@ -1,32 +1,44 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { Store, Mail, Lock, Loader2, ArrowRight, User, Phone } from 'lucide-react';
+import { Store, Mail, Lock, Loader2, ArrowRight, User, Phone, Shield, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function SuperAdminLogin() {
   const navigate = useNavigate();
   
-  // Estados
+  // --- ESTADOS (Toda tu lógica original) ---
   const [isRegistering, setIsRegistering] = useState(false);
-  const [loading, setLoading] = useState(false); // Inicializado en false para no bloquear inputs
+  const [loading, setLoading] = useState(false);
   
-  // Formulario
+  // Campos del formulario
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [businessName, setBusinessName] = useState('');
 
-  // Verificación de sesión NO bloqueante
+  // --- EFECTO DE SESIÓN (CORREGIDO) ---
+  // Antes te mandaba a '/' y eso causaba conflictos. 
+  // Ahora verifica si ya eres SuperAdmin para mandarte al panel, o no hace nada.
   useEffect(() => {
     let mounted = true;
 
     const checkSession = async () => {
-      const { data } = await supabase.auth.getSession();
+      const { data: { session } } = await supabase.auth.getSession();
       
-      if (data.session && mounted) {
-        navigate('/'); 
+      if (session && mounted) {
+        // Verificar si es super admin antes de redirigir
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('is_super_admin')
+            .eq('id', session.user.id)
+            .single();
+
+        if (profile?.is_super_admin) {
+            navigate('/super-panel', { replace: true });
+        }
+        // Si no es super admin, nos quedamos aquí para que pueda cerrar sesión o cambiar de cuenta
       }
     };
 
@@ -35,226 +47,240 @@ export function SuperAdminLogin() {
     return () => { mounted = false; };
   }, [navigate]);
 
-  // Manejo de Login
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true); // Bloqueamos solo al intentar entrar
-
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        if (error.message.includes('Invalid login credentials')) {
-          toast.error('Credenciales incorrectas');
-        } else {
-          toast.error(error.message);
-        }
-      } else {
-        // El onAuthStateChange en App.tsx manejará la redirección
-        toast.success('Bienvenido de nuevo');
-      }
-    } catch (error) {
-      console.error(error);
-      toast.error('Error de conexión');
-    } finally {
-      // ✅ CORRECCIÓN (no-unsafe-finally): Eliminamos el return dentro del finally.
-      // Simplemente desbloqueamos. Si la navegación ocurre por el éxito del login,
-      // el componente se desmontará de todas formas.
-      setLoading(false);
-    }
-  };
-
-  // Manejo de Registro
-  const handleRegister = async (e: React.FormEvent) => {
+  // --- MANEJADOR PRINCIPAL (Login + Registro) ---
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
-    if (!fullName || !phone || !businessName) {
-        toast.warning("Por favor completa todos los campos");
-        setLoading(false);
-        return;
-    }
-
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            full_name: fullName,
-            phone: phone,
-            business_name_request: businessName, // Dato para el SuperAdmin aprobar
-            role: 'admin', // Solicitud de rol inicial
-            status: 'pending' // Estado pendiente de aprobación
-          },
-        },
-      });
+        if (isRegistering) {
+            // ============================================================
+            // LOGICA VIEJA: REGISTRO DE NUEVO NEGOCIO
+            // ============================================================
+            
+            // 1. Crear usuario en Auth
+            const { data: authData, error: authError } = await supabase.auth.signUp({
+                email,
+                password,
+            });
+            if (authError) throw authError;
+            if (!authData.user) throw new Error("No se pudo crear el usuario");
 
-      if (error) throw error;
+            // 2. Crear Negocio
+            const { data: businessData, error: businessError } = await supabase
+                .from('businesses')
+                .insert({
+                    name: businessName,
+                    status: 'active', // O 'pending' si prefieres aprobación manual
+                    phone: phone
+                })
+                .select()
+                .single();
 
-      if (data.user) {
-        toast.success('Cuenta creada exitosamente', {
-            description: 'Espera la aprobación del administrador para acceder.'
-        });
-        setIsRegistering(false); // Volver al login
-      }
-    } catch (error: unknown) { // ✅ CORRECCIÓN (no-explicit-any): Usamos unknown
-      const errorMessage = error instanceof Error ? error.message : "Error desconocido";
-      toast.error('Error al registrarse', {
-          description: errorMessage
-      });
+            if (businessError) throw businessError;
+
+            // 3. Crear Perfil (Nota: NO lo hacemos super_admin por defecto por seguridad)
+            const { error: profileError } = await supabase
+                .from('profiles')
+                .insert({
+                    id: authData.user.id,
+                    business_id: businessData.id,
+                    full_name: fullName,
+                    role: 'admin', // Admin de su negocio, no SuperAdmin del sistema
+                    status: 'active',
+                    email: email,
+                    is_super_admin: false // Explícito
+                });
+
+            if (profileError) throw profileError;
+
+            toast.success("Solicitud enviada. Espera aprobación o inicia sesión.");
+            setIsRegistering(false); // Volver al login
+
+        } else {
+            // ============================================================
+            // LOGICA NUEVA: LOGIN DE SUPER ADMIN (BLINDADO)
+            // ============================================================
+
+            // 1. Iniciar sesión (Verificar credenciales)
+            const { data: { user }, error: authError } = await supabase.auth.signInWithPassword({
+                email,
+                password
+            });
+
+            if (authError) throw authError;
+            if (!user) throw new Error("Credenciales inválidas");
+
+            // 2. VERIFICACIÓN DE SEGURIDAD (La parte "Opción 2")
+            // Consultamos si realmente tiene el flag de super admin
+            const { data: profile, error: profileError } = await supabase
+                .from('profiles')
+                .select('is_super_admin')
+                .eq('id', user.id)
+                .single();
+
+            if (profileError) {
+                await supabase.auth.signOut();
+                throw new Error("Error verificando permisos. Contacte a soporte.");
+            }
+
+            if (!profile?.is_super_admin) {
+                // Si entra pero NO es super admin, lo sacamos inmediatamente
+                await supabase.auth.signOut();
+                throw new Error("⛔ ACCESO DENEGADO: Esta cuenta no es Super Admin.");
+            }
+
+            // 3. Éxito: Redirigir al panel
+            toast.success("Bienvenido, Super Admin.");
+            navigate('/super-panel', { replace: true });
+        }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (error: any) {
+        console.error(error);
+        toast.error(error.message || "Ocurrió un error inesperado.");
+        // Si falló el login, asegurarnos de limpiar cualquier sesión parcial
+        if (!isRegistering) {
+             await supabase.auth.signOut();
+        }
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col md:flex-row h-auto md:h-[600px] max-h-[90vh]">
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+      <div className="bg-slate-800 p-8 rounded-2xl shadow-2xl w-full max-w-md border border-slate-700">
         
-        {/* Panel Izquierdo (Imagen/Logo) - Visible solo en desktop */}
-        <div className="hidden md:flex w-2/5 bg-indigo-600 p-8 flex-col justify-between text-white relative overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-b from-indigo-600 to-purple-700 opacity-90"></div>
-          <div className="relative z-10">
-            <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center mb-6 backdrop-blur-sm">
-              <Store size={28} className="text-white" />
-            </div>
-            <h1 className="text-3xl font-bold mb-2">Nexus POS</h1>
-            <p className="text-indigo-100 text-sm">Gestiona tu negocio con inteligencia y velocidad.</p>
+        {/* Encabezado */}
+        <div className="flex flex-col items-center mb-8">
+          <div className="bg-indigo-600 p-4 rounded-full mb-4 shadow-lg shadow-indigo-500/20">
+            {isRegistering ? <Store className="w-8 h-8 text-white" /> : <Shield className="w-8 h-8 text-white" />}
           </div>
-          <div className="relative z-10 text-xs text-indigo-200">
-            © 2024 Agencia Seniors
-          </div>
+          <h1 className="text-2xl font-bold text-white">
+            {isRegistering ? 'Registrar Negocio' : 'Acceso Super Admin'}
+          </h1>
+          <p className="text-slate-400 text-sm mt-2 text-center">
+            {isRegistering 
+              ? 'Crea una cuenta para gestionar tu punto de venta' 
+              : 'Panel de control maestro y gestión de licencias'}
+          </p>
         </div>
 
-        {/* Panel Derecho (Formulario) */}
-        <div className="w-full md:w-3/5 p-8 flex flex-col justify-center bg-slate-50 overflow-y-auto">
-          <div className="text-center mb-8 md:hidden">
-             <h2 className="text-2xl font-bold text-slate-800">Nexus POS</h2>
+        {/* Formulario */}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          
+          {/* Campos Extra de Registro */}
+          {isRegistering && (
+            <>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Nombre Completo</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-3 text-slate-500 w-5 h-5" />
+                  <input 
+                    type="text" 
+                    required={isRegistering}
+                    className="w-full pl-10 pr-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all placeholder:text-slate-600"
+                    placeholder="Tu Nombre"
+                    value={fullName}
+                    onChange={e => setFullName(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Nombre del Negocio</label>
+                <div className="relative">
+                  <Store className="absolute left-3 top-3 text-slate-500 w-5 h-5" />
+                  <input 
+                    type="text" 
+                    required={isRegistering}
+                    className="w-full pl-10 pr-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all placeholder:text-slate-600"
+                    placeholder="Mi Tienda"
+                    value={businessName}
+                    onChange={e => setBusinessName(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Teléfono</label>
+                <div className="relative">
+                  <Phone className="absolute left-3 top-3 text-slate-500 w-5 h-5" />
+                  <input 
+                    type="tel" 
+                    required={isRegistering}
+                    className="w-full pl-10 pr-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all placeholder:text-slate-600"
+                    placeholder="+53 5555 5555"
+                    value={phone}
+                    onChange={e => setPhone(e.target.value)}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Campos Comunes (Email/Pass) */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Correo Electrónico</label>
+            <div className="relative">
+              <Mail className="absolute left-3 top-3 text-slate-500 w-5 h-5" />
+              <input 
+                type="email" 
+                required
+                className="w-full pl-10 pr-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all placeholder:text-slate-600"
+                placeholder="correo@ejemplo.com"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+              />
+            </div>
           </div>
 
-          <h2 className="text-2xl font-bold text-slate-800 mb-2">
-            {isRegistering ? 'Crear Cuenta' : 'Iniciar Sesión'}
-          </h2>
-          <p className="text-slate-500 mb-6 text-sm">
-            {isRegistering ? 'Completa tus datos para solicitar acceso.' : 'Ingresa tus credenciales para continuar.'}
-          </p>
-
-          <form onSubmit={isRegistering ? handleRegister : handleLogin} className="space-y-4">
-            
-            {/* Campos extra para Registro */}
-            {isRegistering && (
-              <>
-                <div className="space-y-1 animate-in slide-in-from-top duration-300">
-                    <div className="relative">
-                        <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                        type="text"
-                        placeholder="Nombre Completo"
-                        value={fullName}
-                        onChange={(e) => setFullName(e.target.value)}
-                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-sm transition-all"
-                        required={isRegistering}
-                        disabled={loading}
-                        />
-                    </div>
-                </div>
-                <div className="space-y-1 animate-in slide-in-from-top duration-300 delay-75">
-                    <div className="relative">
-                        <Store className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                        type="text"
-                        placeholder="Nombre del Negocio"
-                        value={businessName}
-                        onChange={(e) => setBusinessName(e.target.value)}
-                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-sm transition-all"
-                        required={isRegistering}
-                        disabled={loading}
-                        />
-                    </div>
-                </div>
-                <div className="space-y-1 animate-in slide-in-from-top duration-300 delay-100">
-                    <div className="relative">
-                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                        type="tel"
-                        placeholder="Teléfono"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-sm transition-all"
-                        required={isRegistering}
-                        disabled={loading}
-                        />
-                    </div>
-                </div>
-              </>
-            )}
-
-            {/* Campos Comunes */}
-            <div className="space-y-1">
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                <input
-                  type="email"
-                  placeholder="Correo electrónico"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-sm transition-all"
-                  required
-                  disabled={loading} 
-                />
-              </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Contraseña</label>
+            <div className="relative">
+              <Lock className="absolute left-3 top-3 text-slate-500 w-5 h-5" />
+              <input 
+                type="password" 
+                required
+                className="w-full pl-10 pr-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all placeholder:text-slate-600"
+                placeholder="••••••••"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+              />
             </div>
+          </div>
 
-            <div className="space-y-1">
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                <input
-                  type="password"
-                  placeholder="Contraseña"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-sm transition-all"
-                  required
-                  disabled={loading}
-                />
-              </div>
-            </div>
+          <button 
+            type="submit" 
+            disabled={loading}
+            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-900/20 disabled:opacity-50 disabled:cursor-not-allowed mt-6"
+          >
+            {loading ? <Loader2 className="animate-spin" /> : (isRegistering ? "Solicitar Acceso" : "Entrar al Panel")}
+            {!loading && <ArrowRight size={20} />}
+          </button>
+        </form>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-indigo-200 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed mt-4"
-            >
-              {loading ? (
-                <Loader2 className="animate-spin" size={20} />
-              ) : (
-                <>
-                  <span>{isRegistering ? 'Solicitar Acceso' : 'Entrar'}</span>
-                  <ArrowRight size={18} />
-                </>
-              )}
-            </button>
-          </form>
-
-          <div className="mt-6 text-center">
+        {/* Footer / Toggle */}
+        <div className="mt-8 pt-6 border-t border-slate-700 text-center space-y-4">
             <button
               onClick={() => {
                   setIsRegistering(!isRegistering);
-                  setEmail('');
-                  setPassword('');
+                  // Limpiar errores o estados si es necesario
               }}
-              className="text-indigo-600 hover:text-indigo-800 text-sm font-semibold transition-colors"
+              className="text-indigo-400 hover:text-indigo-300 text-sm font-semibold transition-colors"
               disabled={loading}
             >
               {isRegistering
-                ? '¿Ya tienes cuenta? Inicia sesión'
-                : '¿No tienes cuenta? Regístrate aquí'}
+                ? '¿Ya tienes cuenta? Inicia sesión como Admin'
+                : '¿No tienes cuenta? Registra tu negocio aquí'}
             </button>
-          </div>
+
+            {!isRegistering && (
+                <p className="text-xs text-slate-500 flex items-center justify-center gap-2">
+                    <AlertTriangle size={12} /> Acceso restringido a personal autorizado.
+                </p>
+            )}
         </div>
       </div>
     </div>
