@@ -45,19 +45,23 @@ async function processItem(item: QueueItem) {
     case 'SALE': {
       const { sale, items } = payload as SalePayload;
       
-      // Limpieza de campos locales antes de subir a la nube
+      // Limpieza de datos
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...saleClean } = sale;
-      
-      // 1. Subir Cabecera de Venta
-      const { error: saleError } = await supabase.from('sales').upsert(saleClean);
-      if (saleError) throw new Error(`Error subiendo venta ${sale.id}: ${saleError.message}`);
 
-      // 2. Subir Items de la venta
-      if (items && items.length > 0) {
-        const { error: itemsError } = await supabase.from('sale_items').upsert(items);
-        if (itemsError) throw new Error(`Error subiendo items de venta ${sale.id}: ${itemsError.message}`);
+      // LLAMADA RPC ATÓMICA (Backend Logic)
+      // En lugar de insertar tablas por separado, le decimos a la BD: "Procesa esta venta completa"
+      const { error } = await supabase.rpc('process_sale_transaction', {
+        p_sale: saleClean,
+        p_items: items || []
+      });
+
+      if (error) {
+        console.error("Error RPC Venta:", error);
+        throw new Error(`Fallo transacción venta ${sale.id}: ${error.message}`);
       }
+      
+      console.log(`✅ Venta ${sale.id} procesada exitosamente en la nube.`);
       break;
     }
 
@@ -149,20 +153,23 @@ export async function processQueue() {
 
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error(`❌ Fallo al sincronizar item ${item.type} (${item.id}):`, errorMessage);
+      console.error(`❌ Fallo item ${item.type}:`, errorMessage);
       
       const newRetries = (item.retries || 0) + 1;
       
+      // Si falla 5 veces, lo marcamos como FATAL para que no trabe la cola
       if (newRetries >= 5) {
-        await db.action_queue.update(item.id, { 
-            status: 'failed', 
-            error: errorMessage 
-        });
+          await db.action_queue.update(item.id, { 
+            status: 'failed', // Nuevo estado (requiere soporte manual)
+            error: `ABANDONADO tras 5 intentos: ${errorMessage}` 
+          });
       } else {
-        await db.action_queue.update(item.id, { 
+          // Reintento normal (backoff)
+          await db.action_queue.update(item.id, { 
             status: 'pending', 
-            retries: newRetries 
-        });
+            retries: newRetries, 
+            error: errorMessage 
+          });
       }
     }
   }

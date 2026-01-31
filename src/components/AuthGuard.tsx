@@ -45,10 +45,29 @@ export function AuthGuard({ children }: AuthGuardProps) {
             const expiryDate = new Date(config.subscription_expires_at);
             const now = new Date();
             
+            // Calculamos diferencia en días
+            const diffTime = now.getTime() - expiryDate.getTime();
+            const daysExpired = diffTime / (1000 * 3600 * 24);
+
             if (now > expiryDate) {
-              alert('⚠️ Su licencia ha VENCIDO. Por favor renueve para continuar.');
-              if (isMounted) navigate('/login');
-              return;
+              if (isOnline()) {
+                 // Si hay internet y está vencido -> BLOQUEO DURO
+                 alert('⚠️ Su licencia ha VENCIDO. Por favor pague para continuar.');
+                 if (isMounted) navigate('/login');
+                 return;
+              } else {
+                 // MODO OFFLINE: Lógica de Gracia
+                 if (daysExpired <= 3) {
+                    // Está vencido hace menos de 3 días y sin internet -> PERMITIR CON ADVERTENCIA
+                    console.warn("⚠️ Licencia vencida (Modo Gracia Offline)");
+                    // Aquí podrías guardar un estado global para mostrar un banner rojo en el Layout
+                 } else {
+                    // Vencido hace más de 3 días -> BLOQUEO DURO INCLUSO OFFLINE
+                    alert('🚫 Periodo de gracia expirado. Conéctese a internet para renovar.');
+                    if (isMounted) navigate('/login');
+                    return;
+                 }
+              }
             }
           }
 
