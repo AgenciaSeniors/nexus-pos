@@ -34,6 +34,10 @@ export interface Sale {
   items: SaleItem[];
   staff_id?: string;
   staff_name?: string;
+  // ✅ NUEVO: Datos del Cliente
+  customer_id?: string;
+  customer_name?: string;
+  
   payment_method: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto';
   amount_tendered?: number;
   change?: number;
@@ -74,6 +78,8 @@ export interface Customer {
   loyalty_points?: number;
   sync_status: 'synced' | 'pending_create' | 'pending_update';
   deleted_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface ParkedOrder {
@@ -83,6 +89,9 @@ export interface ParkedOrder {
   items: SaleItem[];
   total: number;
   note?: string;
+  // ✅ NUEVO: Cliente en espera
+  customer_id?: string; 
+  customer_name?: string;
 }
 
 export interface Staff {
@@ -101,7 +110,6 @@ export interface CashRegister {
   sync_status?: 'synced' | 'pending_create';
 }
 
-// ✅ NUEVAS INTERFACES DE CAJA
 export interface CashShift {
   id: string;
   business_id: string;
@@ -128,13 +136,11 @@ export interface CashMovement {
   sync_status: 'synced' | 'pending_create';
 }
 
-// ✅ TIPOS DE AUDITORÍA ACTUALIZADOS
 export interface AuditLog {
   id: string;
   business_id: string;
   staff_id: string;
   staff_name: string;
-  // Agregamos: OPEN_SHIFT, CLOSE_SHIFT, CASH_IN, CASH_OUT
   action: 'LOGIN' | 'LOGOUT' | 'SALE' | 'CREATE_PRODUCT' | 'DELETE_PRODUCT' | 
           'UPDATE_STOCK' | 'OPEN_DRAWER' | 'VOID_SALE' | 'CREATE_CUSTOMER' | 
           'UPDATE_CUSTOMER' | 'DELETE_CUSTOMER' | 'OPEN_SHIFT' | 'CLOSE_SHIFT' | 
@@ -144,7 +150,6 @@ export interface AuditLog {
   sync_status: 'pending_create' | 'synced';
 }
 
-// ✅ PAYLOADS DE COLA ACTUALIZADOS
 export type SalePayload = { sale: Sale; items: SaleItem[] };
 
 export type QueuePayload = 
@@ -192,7 +197,7 @@ export class NexusDB extends Dexie {
       sales: 'id, business_id, shift_id, date, sync_status',
       movements: 'id, business_id, product_id, created_at, sync_status',
       inventory_movements: 'id, business_id, product_id, sync_status',
-      customers: 'id, business_id, name, phone, sync_status',
+      customers: 'id, business_id, name, phone, sync_status', 
       parked_orders: 'id, business_id, date',
       settings: 'id',
       staff: 'id, business_id, pin, active',
