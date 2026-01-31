@@ -6,7 +6,8 @@ import {
 import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff } from '../lib/db';
-import { syncPush, syncPull } from '../lib/sync'; // Importamos syncPull también
+// 🔥 IMPORTANTE: Usamos syncManualFull
+import { syncManualFull } from '../lib/sync'; 
 import { supabase } from '../lib/supabase';
 import logo from '../logo.png'; 
 import { toast } from 'sonner';
@@ -35,6 +36,7 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
     };
   }, []);
 
+  // Monitorizamos datos pendientes en tiempo real
   const pendingCount = useLiveQuery(async () => {
     const sales = await db.sales.where('sync_status').equals('pending_create').count();
     const movements = await db.movements.where('sync_status').equals('pending_create').count();
@@ -42,6 +44,7 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
     return sales + movements + audits; 
   }, []) || 0;
 
+  // LÓGICA DEL BOTÓN DE SINCRONIZAR
   const handleManualSync = async () => {
     if (!isOnline) {
         toast.error("No hay conexión para sincronizar");
@@ -49,15 +52,19 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
     }
     setIsSyncing(true);
     
-    // Ejecutamos Push (subir) y Pull (bajar) para estar 100% al día
-    toast.promise(Promise.all([syncPush(), syncPull()]), {
-        loading: 'Sincronizando todo...',
-        success: '¡Sistema actualizado y al día!',
-        error: 'Error al sincronizar'
-    });
-
-    // Pequeño delay para que se vea la animación
-    setTimeout(() => setIsSyncing(false), 2000);
+    try {
+        // 🔥 CAMBIO CRÍTICO: Usamos la sincronización secuencial (Subir -> Bajar)
+        // Esto evita conflictos de inventario y asegura que veas el stock real.
+        await syncManualFull();
+        
+        toast.success('¡Sistema actualizado y al día!');
+    } catch (error) {
+        console.error(error);
+        toast.error('Error al sincronizar');
+    } finally {
+        // Un pequeño delay para que la UI se sienta natural
+        setTimeout(() => setIsSyncing(false), 500);
+    }
   };
 
   const handleLogout = async () => {
@@ -67,7 +74,7 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
     navigate('/login');
   };
 
-  // --- LÓGICA DE ESTADO VISUAL DEL BOTÓN ---
+  // ESTADO VISUAL DEL BOTÓN
   let buttonColorClass = "";
   let buttonIcon = <Cloud size={20} />;
   let buttonTitle = "";
@@ -77,17 +84,17 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
       buttonIcon = <RefreshCw size={20} className="animate-spin"/>;
       buttonTitle = "Sincronizando...";
   } else if (!isOnline && pendingCount > 0) {
-      // ⚠️ CASO CRÍTICO: Cambios sin subir y sin internet (ROJO)
+      // 🔴 ROJO: Offline + Datos pendientes (¡Peligro!)
       buttonColorClass = "bg-red-50 text-red-600 ring-1 ring-red-200 animate-pulse";
       buttonIcon = <AlertCircle size={20} />;
       buttonTitle = "¡ADVERTENCIA! Cambios sin guardar en la nube";
   } else if (pendingCount > 0) {
-      // ⚠️ Cambios pendientes por subir (AMARILLO)
+      // 🟠 ÁMBAR: Online + Datos pendientes (Se subirán pronto)
       buttonColorClass = "bg-amber-50 text-amber-600 ring-1 ring-amber-200";
       buttonIcon = <RefreshCw size={20} />;
       buttonTitle = "Hay cambios pendientes de subir";
   } else {
-      // ✅ Todo al día (VERDE - Feedback positivo)
+      // 🟢 VERDE: Todo perfecto
       buttonColorClass = "bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200 hover:bg-emerald-100";
       buttonIcon = <CheckCircle2 size={20} />;
       buttonTitle = "Sistema actualizado y seguro";

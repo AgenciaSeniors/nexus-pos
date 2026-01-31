@@ -29,6 +29,7 @@ export async function addToQueue(type: QueueItem['type'], payload: QueuePayload)
       status: 'pending'
     });
     
+    // Intentar procesar inmediatamente si hay red (sin bloquear)
     if (isOnline()) {
       processQueue();
     }
@@ -51,6 +52,7 @@ async function processItem(item: QueueItem) {
       const { sync_status, ...saleClean } = sale;
 
       // 2. Subir a Supabase usando RPC Seguro (Atomicidad: Venta + Stock)
+      // Esto evita que se venda stock que no existe
       const { error } = await supabase.rpc('process_sale_transaction', {
         p_sale: saleClean,
         p_items: items || []
@@ -62,14 +64,8 @@ async function processItem(item: QueueItem) {
       }
       
       // 3. ✅ ACTUALIZACIÓN LOCAL INMEDIATA
-      // Marcamos la venta como 'synced' en Dexie para que la UI (botón) se actualice al instante
+      // Importante: Marcamos como 'synced' en Dexie para que el botón verde reaccione YA.
       await db.sales.update(sale.id, { sync_status: 'synced' });
-      
-      // También marcamos los items si es necesario (opcional, pero buena práctica)
-      if (items && items.length > 0) {
-          // Nota: Dexie sale_items puede no tener sync_status, pero si lo tuviera:
-          // await db.sale_items.bulkUpdate(...) 
-      }
       
       console.log(`✅ Venta ${sale.id} sincronizada y stock descontado.`);
       break;
@@ -106,8 +102,6 @@ async function processItem(item: QueueItem) {
     }
 
     // --- Casos de Bajada (Sync Down) o Configuración ---
-    // Estos generalmente no tienen un registro local con status 'pending' que actualizar,
-    // pero mantenemos la lógica de subida por si acaso se usan bidireccionalmente.
 
     case 'PRODUCT_SYNC': {
       const product = payload as Product;
@@ -158,7 +152,7 @@ async function processItem(item: QueueItem) {
 export async function processQueue() {
   if (!isOnline()) return;
 
-  // Procesamos en lotes pequeños para no bloquear el navegador
+  // Procesamos en lotes pequeños (5) para no congelar la interfaz
   const pendingItems = await db.action_queue
     .where('status').equals('pending')
     .limit(5) 
@@ -191,7 +185,7 @@ export async function processQueue() {
               error: `ABANDONADO: ${errorMessage}` 
           });
       } else {
-          // Reintentar luego
+          // Reintentar luego (Backoff simple)
           await db.action_queue.update(item.id, { 
               status: 'pending', 
               retries: newRetries, 
@@ -207,54 +201,9 @@ export async function processQueue() {
   }
 }
 
-// --- FUNCIONES PÚBLICAS DE SINCRONIZACIÓN (Push & Pull) ---
-
-export async function syncPush() {
-    console.log("⬆️ Iniciando subida de cambios pendientes...");
-    await processQueue();
-}
-
-// Esta función se llama al pulsar "Actualizar"
-export async function syncPull() {
-    if (!isOnline()) return;
-    
-    console.log("⬇️ Iniciando descarga de actualizaciones...");
-    const settings = await db.settings.toArray();
-    
-    if (settings.length > 0) {
-        const businessId = settings[0].id;
-        
-        // Ejecutamos la descarga completa para garantizar que el stock local sea real
-        try {
-            await Promise.all([
-                syncCriticalData(businessId), // Licencia, Staff, Cajas
-                syncHeavyData(businessId)     // Productos, Clientes
-            ]);
-            console.log("✨ Sincronización de bajada completada exitosamente.");
-        } catch (error) {
-            console.error("Error en syncPull:", error);
-        }
-    }
-}
-
-// Listeners automáticos
-if (typeof window !== 'undefined') {
-    window.addEventListener('online', () => {
-        console.log("🌐 Conexión restaurada. Procesando cola...");
-        processQueue();
-    });
-
-    // Intentar sincronizar cada 30 segundos si hay red
-    setInterval(() => {
-        if (isOnline()) {
-            processQueue();
-        }
-    }, 30000);
-}
-
 // --- ESTRATEGIA DE CARGA DE DATOS (Data Fetching) ---
 
-// 1. Datos Críticos (Rápidos)
+// 1. Datos Críticos (Rápidos: Licencia, Staff, Cajas)
 export async function syncCriticalData(businessId: string) {
   if (!isOnline()) return; 
 
@@ -274,13 +223,13 @@ export async function syncCriticalData(businessId: string) {
         phone: businessResult.data.phone,
         receipt_message: businessResult.data.receipt_message,
         subscription_expires_at: businessResult.data.subscription_expires_at,
-        status: businessResult.data.status, // Cast seguro para tipos de Dexie
+        status: businessResult.data.status, // Cast seguro
         last_check: new Date().toISOString(), 
         sync_status: 'synced'
       });
     }
 
-    // Actualizar Staff (Sobreescribimos para asegurar PINs actualizados)
+    // Actualizar Staff (Limpiar y recargar para asegurar PINs correctos)
     if (staffResult.data) {
       await db.staff.clear(); 
       await db.staff.bulkPut(staffResult.data);
@@ -303,6 +252,7 @@ export async function syncHeavyData(businessId: string) {
   if (!isOnline()) return; 
 
   try {
+    console.log('⬇️ Descargando inventario actualizado...');
     const [productsResult, customersResult] = await Promise.all([
       supabase.from('products').select('*').eq('business_id', businessId),
       supabase.from('customers').select('*').eq('business_id', businessId)
@@ -334,13 +284,67 @@ export async function syncHeavyData(businessId: string) {
   }
 }
 
-// 3. Función Maestra (Compatibility Wrapper)
-// Esta es la que llama AuthGuard al inicio
+// --- FUNCIONES MAESTRAS DE SINCRONIZACIÓN ---
+
+export async function syncPush() {
+    console.log("⬆️ Iniciando subida de cambios pendientes...");
+    await processQueue();
+}
+
+export async function syncPull() {
+    if (!isOnline()) return;
+    
+    console.log("⬇️ Iniciando descarga de actualizaciones...");
+    const settings = await db.settings.toArray();
+    
+    if (settings.length > 0) {
+        const businessId = settings[0].id;
+        // Descargar TODO para asegurar consistencia
+        await Promise.all([
+            syncCriticalData(businessId),
+            syncHeavyData(businessId)
+        ]);
+        console.log("✨ Sincronización de bajada completada.");
+    }
+}
+
+/**
+ * ⚡ SYNC MANUAL FULL (La función del Botón)
+ * Ejecuta una sincronización estricta SECUENCIAL:
+ * 1. Sube todo lo pendiente (Push)
+ * 2. Solo entonces, baja las novedades (Pull)
+ * Esto evita sobrescribir datos locales con datos viejos del servidor.
+ */
+export async function syncManualFull() {
+    if (!isOnline()) throw new Error("Sin conexión a internet");
+    
+    console.log("🔄 Iniciando Ciclo de Sincronización Completa...");
+    
+    // Paso 1: PUSH (Vital: Vaciar cola antes de bajar nada)
+    await syncPush();
+    
+    // Paso 2: PULL (Refrescar la verdad desde el servidor)
+    await syncPull();
+    
+    console.log("✅ Ciclo completado.");
+}
+
+// Wrapper para AuthGuard (Compatibilidad)
 export async function syncBusinessProfile(businessId: string) {
-  // Primero lo vital
   await syncCriticalData(businessId);
-  // Luego el inventario (sin await si queremos que sea background, con await si es primera carga)
-  // En este contexto, AuthGuard decide si espera o no usando las funciones individuales,
-  // pero mantenemos esta para compatibilidad.
   await syncHeavyData(businessId);
+}
+
+// Auto-Sync en background (Solo Push para no interrumpir al usuario con descargas pesadas)
+if (typeof window !== 'undefined') {
+    window.addEventListener('online', () => {
+        console.log("🌐 Conexión restaurada. Procesando cola...");
+        processQueue();
+    });
+
+    setInterval(() => {
+        if (isOnline()) {
+            processQueue();
+        }
+    }, 30000);
 }
