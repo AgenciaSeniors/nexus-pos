@@ -186,7 +186,7 @@ export class NexusDB extends Dexie {
   constructor() {
     super('NexusPOS_DB');
 
-    this.version(4).stores({
+    this.version(5).stores({
       businesses: 'id',
       products: 'id, business_id, sku, name, sync_status',
       sales: 'id, business_id, shift_id, date, sync_status',

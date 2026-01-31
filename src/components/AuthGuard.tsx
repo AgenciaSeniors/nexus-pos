@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { db } from '../lib/db';
-// Importamos las funciones detalladas y el helper isOnline
 import { syncCriticalData, syncHeavyData, isOnline } from '../lib/sync';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -13,126 +13,143 @@ interface AuthGuardProps {
 export function AuthGuard({ children }: AuthGuardProps) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-  const [loadingMessage, setLoadingMessage] = useState('Iniciando Nexus Pro...');
+  const [loadingMessage, setLoadingMessage] = useState('Verificando credenciales...');
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
 
-    async function checkSession() {
+    async function checkSessionAndData() {
       try {
-        // 1. Verificamos sesión de Supabase
-        const { data: { session } } = await supabase.auth.getSession();
+        // 1. Verificar Sesión en Supabase
+        const { data: { session }, error: authError } = await supabase.auth.getSession();
         
-        if (!session) {
+        if (authError || !session) {
+          console.warn("Sesión no válida o expirada:", authError);
           if (isMounted) navigate('/login');
           return;
         }
 
-        // 2. Lógica de Acceso Inteligente
-        const localSettings = await db.settings.toArray();
-        const config = localSettings[0];
+        // 2. Intentar leer configuración local (Verificar si ya somos usuarios activos)
+        let localSettings = null;
+        try {
+            const settings = await db.settings.toArray();
+            localSettings = settings[0];
+        } catch (dbError) {
+            console.error("Error crítico leyendo DB local:", dbError);
+            setError("Error de base de datos local. Intenta recargar la página.");
+            return;
+        }
 
-        // --- ESCENARIO A: USUARIO RECURRENTE (DATOS EXISTEN) ---
-        if (config) {
-          // A1. Validar Licencia Local (Prioridad de Seguridad)
-          if (config.status === 'suspended') {
-            alert('🚫 Su cuenta ha sido SUSPENDIDA. Contacte a soporte.');
-            if (isMounted) navigate('/login');
+        // === CASO A: USUARIO YA TIENE DATOS (Entrada Rápida) ===
+        if (localSettings) {
+          // Validar estado de la cuenta
+          if (localSettings.status === 'suspended') {
+            if (isMounted) {
+                alert('🚫 Tu cuenta está suspendida. Contacta a soporte.');
+                navigate('/login');
+            }
             return;
           }
 
-          if (config.subscription_expires_at) {
-            const expiryDate = new Date(config.subscription_expires_at);
-            const now = new Date();
-            
-            // Calculamos diferencia en días
-            const diffTime = now.getTime() - expiryDate.getTime();
-            const daysExpired = diffTime / (1000 * 3600 * 24);
-
-            if (now > expiryDate) {
-              if (isOnline()) {
-                 // Si hay internet y está vencido -> BLOQUEO DURO
-                 alert('⚠️ Su licencia ha VENCIDO. Por favor pague para continuar.');
-                 if (isMounted) navigate('/login');
-                 return;
-              } else {
-                 // MODO OFFLINE: Lógica de Gracia
-                 if (daysExpired <= 3) {
-                    // Está vencido hace menos de 3 días y sin internet -> PERMITIR CON ADVERTENCIA
-                    console.warn("⚠️ Licencia vencida (Modo Gracia Offline)");
-                    // Aquí podrías guardar un estado global para mostrar un banner rojo en el Layout
-                 } else {
-                    // Vencido hace más de 3 días -> BLOQUEO DURO INCLUSO OFFLINE
-                    alert('🚫 Periodo de gracia expirado. Conéctese a internet para renovar.');
-                    if (isMounted) navigate('/login');
-                    return;
-                 }
-              }
-            }
-          }
-
-          // A2. ¡Luz Verde! Entrar inmediatamente (Sin esperas)
+          // Permitir entrada inmediata a la interfaz
           if (isMounted) setLoading(false);
 
-          // A3. Actualización Silenciosa (Background Sync)
+          // Sincronización en segundo plano (Background Sync)
           if (isOnline()) {
-            console.log('🔄 Actualizando datos en segundo plano...');
-            // Primero lo rápido (Licencia/Staff)
-            syncCriticalData(config.id).then(() => {
-                // Luego lo pesado (Inventario)
-                syncHeavyData(config.id); 
-            });
+            console.log("🌐 Conexión detectada. Iniciando sincronización silenciosa...");
+            syncCriticalData(localSettings.id)
+                .then(() => syncHeavyData(localSettings.id))
+                .catch(err => console.error("Error en sync silencioso:", err));
           }
-          return; // Fin del flujo para usuario recurrente
+          return;
         }
 
-        // --- ESCENARIO B: INSTALACIÓN LIMPIA (PRIMERA VEZ) ---
-        // Aquí NO tenemos datos locales, así que estamos obligados a esperar la descarga.
+        // === CASO B: PRIMERA VEZ / DATOS BORRADOS (Carga Inicial) ===
         if (isOnline()) {
-            if (isMounted) setLoadingMessage('Configurando su negocio por primera vez...');
+            if (isMounted) setLoadingMessage('Configurando tu negocio por primera vez...');
             
-            // 1. Obtener ID del negocio
-            const { data: profile } = await supabase
+            // Obtener el ID del negocio desde el perfil del usuario
+            const { data: profile, error: profileError } = await supabase
               .from('profiles')
-              .select('business_id')
+              .select('business_id, status')
               .eq('id', session.user.id)
               .single();
 
-            if (profile?.business_id) {
-                // 2. Descarga Bloqueante (Necesaria para no mostrar pantalla blanca)
-                await syncCriticalData(profile.business_id);
-                
-                if (isMounted) setLoadingMessage('Descargando catálogo de productos...');
-                await syncHeavyData(profile.business_id);
-                
-                // 3. Todo listo, entrar
-                if (isMounted) setLoading(false);
-            } else {
-                console.error("No se encontró perfil de negocio para este usuario");
-                if (isMounted) navigate('/login');
+            if (profileError || !profile?.business_id) {
+                console.error("Usuario sin negocio asignado:", profileError);
+                if (isMounted) navigate('/login'); // O redirigir a una página de "Crear Negocio"
+                return;
             }
+
+            if (profile.status === 'suspended') {
+                alert('🚫 Cuenta suspendida.');
+                if (isMounted) navigate('/login');
+                return;
+            }
+
+            // Paso 1: Descarga CRÍTICA (Bloqueante)
+            // Necesitamos saber quiénes son los empleados y la config de caja antes de entrar
+            if (isMounted) setLoadingMessage('Descargando configuración y personal...');
+            await syncCriticalData(profile.business_id);
+            
+            // Paso 2: Descarga PESADA (Semi-bloqueante o Segundo plano)
+            // Lanzamos la descarga de productos pero dejamos entrar al usuario
+            toast.info("Descargando inventario...", { description: "Puedes empezar a trabajar, los productos aparecerán pronto." });
+            
+            // No usamos 'await' aquí para no tener al usuario esperando 1 minuto si tiene 5000 productos
+            syncHeavyData(profile.business_id).then(() => {
+                toast.success("Inventario completado.");
+            });
+            
+            // ¡Entrada Exitosa!
+            if (isMounted) setLoading(false);
+
         } else {
-            // Caso Borde: Borró caché y no tiene internet
-            alert("⚠️ Se requiere conexión a internet para la configuración inicial.");
-            if (isMounted) navigate('/login');
+            // Caso Borde: Primera vez Y sin internet
+            setError("Es tu primera vez entrando en este dispositivo. Necesitas internet para descargar los datos iniciales.");
         }
 
-      } catch (error) {
-        console.error('Error crítico en AuthGuard:', error);
-        if (isMounted) navigate('/login');
+      } catch (err) {
+        console.error('Error fatal en AuthGuard:', err);
+        setError("Ocurrió un error inesperado al iniciar el sistema.");
       }
     }
 
-    checkSession();
+    checkSessionAndData();
 
     return () => { isMounted = false; };
   }, [navigate]);
 
+  // Pantalla de Carga
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-600 mb-4" />
-        <p className="text-gray-600 font-medium">{loadingMessage}</p>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-4">
+        {error ? (
+            <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md text-center border border-red-100">
+                <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <AlertTriangle className="text-red-600 w-8 h-8" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-800 mb-2">No se pudo iniciar</h3>
+                <p className="text-slate-500 mb-6 text-sm">{error}</p>
+                <button 
+                    onClick={() => window.location.reload()} 
+                    className="flex items-center justify-center gap-2 w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-colors"
+                >
+                    <RefreshCw size={18} /> Reintentar
+                </button>
+            </div>
+        ) : (
+            <div className="text-center">
+                <div className="relative w-24 h-24 mx-auto mb-6">
+                    <div className="absolute inset-0 border-4 border-slate-200 rounded-full"></div>
+                    <div className="absolute inset-0 border-4 border-indigo-600 rounded-full border-t-transparent animate-spin"></div>
+                    <Loader2 className="absolute inset-0 m-auto text-indigo-600 w-8 h-8 animate-pulse" />
+                </div>
+                <h2 className="text-xl font-bold text-slate-800 mb-2">Nexus POS</h2>
+                <p className="text-slate-500 font-medium animate-pulse">{loadingMessage}</p>
+            </div>
+        )}
       </div>
     );
   }
