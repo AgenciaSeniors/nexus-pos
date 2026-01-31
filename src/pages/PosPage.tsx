@@ -3,7 +3,6 @@ import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Product, type Sale, type ParkedOrder, type SaleItem, type Staff, type InventoryMovement } from '../lib/db';
 import { supabase } from '../lib/supabase';
-// ✅ CORRECCIÓN: Importamos syncPush para subir ventas al instante
 import { addToQueue, syncPush } from '../lib/sync';
 import { currency } from '../lib/currency';
 import { logAuditAction } from '../lib/audit';
@@ -32,9 +31,13 @@ export function PosPage() {
   const parkedCount = useLiveQuery(() => db.parked_orders.count()) || 0;
   const businessId = localStorage.getItem('nexus_business_id');
   
+  // 🔥 CORRECCIÓN: Filtramos productos eliminados (!p.deleted_at)
   const allProducts = useLiveQuery(async () => {
     if (!businessId) return [];
-    return await db.products.where('business_id').equals(businessId).toArray();
+    return await db.products
+      .where('business_id').equals(businessId)
+      .filter(p => !p.deleted_at) 
+      .toArray();
   }, [businessId]) || [];
 
   useEffect(() => {
@@ -171,7 +174,9 @@ export function PosPage() {
             stock: 999, // Stock temporal, se actualizará al re-sincronizar
             sku: '',
             business_id: order.business_id,
-            sync_status: 'synced'
+            sync_status: 'synced',
+            created_at: new Date().toISOString(), // Campos dummy para satisfacer tipo
+            updated_at: new Date().toISOString()
         }));
         setCart(restoredCart);
         db.parked_orders.delete(order.id);
@@ -238,7 +243,7 @@ export function PosPage() {
         await db.transaction('rw', [db.products, db.sales, db.movements, db.audit_logs, db.action_queue], async () => {
           // 1. Guardar venta local
           await db.sales.add(newSale);
-          // 2. Encolar venta completa (con items)
+          // 2. Encolar venta completa
           await addToQueue('SALE', { sale: newSale, items: saleItemsForQueue });
 
           // 3. Actualizar stock local y registrar movimientos
@@ -246,6 +251,7 @@ export function PosPage() {
             const product = await db.products.get(item.id);
             if (product) {
               await db.products.update(item.id, { stock: product.stock - item.quantity, sync_status: 'pending_update' });
+              
               const movement: InventoryMovement = {
                   id: crypto.randomUUID(),
                   business_id: businessId,
@@ -264,7 +270,7 @@ export function PosPage() {
           // 4. Auditoría
           await logAuditAction('SALE', { sale_id: saleId, total: totalAmount }, {
               id: currentStaff.id, name: currentStaff.name, business_id: businessId
-          });
+          } as Staff);
         });
 
         return newSale;
@@ -280,9 +286,7 @@ export function PosPage() {
                 searchInputRef.current?.focus();
             }, 200);
             
-            // ✅ UX MEJORADA: Intentamos subir la venta inmediatamente
             syncPush().catch(console.error);
-            
             return `Venta registrada: ${currency.format(totalAmount)}`;
         },
         error: (err) => {
@@ -384,7 +388,6 @@ export function PosPage() {
               return (
                 <div key={item.id} className={`flex flex-col gap-2 bg-white p-3 rounded-xl border shadow-sm animate-in slide-in-from-right duration-200 ${isStockProblem ? 'border-amber-200 bg-amber-50' : 'border-slate-100'}`}>
                   
-                  {/* Fila Superior: Nombre y Precio */}
                   <div className="flex justify-between items-start">
                     <div className="flex-1 min-w-0">
                       <div className="font-bold text-slate-800 truncate">{item.name}</div>
@@ -444,9 +447,7 @@ export function PosPage() {
             })}
         </div>
 
-        {/* Footer del Carrito */}
         <div className="p-4 bg-white border-t border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] shrink-0 z-30 pb- safe-area-inset-bottom">
-          
           <div className="grid grid-cols-2 gap-3 mb-4">
              <button
                onClick={handleParkOrder}

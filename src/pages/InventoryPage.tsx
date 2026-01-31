@@ -15,12 +15,12 @@ export function InventoryPage() {
 
   const [activeTab, setActiveTab] = useState<'stock' | 'history'>('stock');
 
-  // Filtramos productos que no estén marcados como eliminados
+  // Filtramos productos que NO estén marcados como eliminados
   const products = useLiveQuery(async () => {
     if (!businessId) return [];
     return await db.products
       .where('business_id').equals(businessId)
-      .filter(p => !p.deleted_at) 
+      .filter(p => !p.deleted_at) // <--- OJO: Esto oculta los "muertos"
       .toArray();
   }, [businessId]) || [];
 
@@ -52,13 +52,13 @@ export function InventoryPage() {
     try {
       if (!businessId) throw new Error("No se identificó el negocio.");
 
-      // Validación de SKU duplicado
+      // Validación de SKU
       if (formData.sku && formData.sku.trim() !== '') {
         const duplicate = await db.products
           .where({ business_id: businessId, sku: formData.sku })
           .first();
         
-        // Si existe un duplicado y no es el mismo producto que estamos editando
+        // Si existe duplicado y no es el mismo producto y NO está borrado
         if (duplicate && duplicate.id !== editingId && !duplicate.deleted_at) {
           toast.error(`El SKU "${formData.sku}" ya existe en "${duplicate.name}"`);
           setIsLoading(false);
@@ -81,7 +81,7 @@ export function InventoryPage() {
       }
 
       if (editingId) {
-        // === MODO EDICIÓN (Transaction) ===
+        // === MODO EDICIÓN ===
         await db.transaction('rw', [db.products, db.movements, db.action_queue, db.audit_logs], async () => {
             const original = await db.products.get(editingId);
             if (!original) throw new Error("Producto no encontrado");
@@ -100,7 +100,6 @@ export function InventoryPage() {
             await db.products.update(editingId, updatedProduct);
             await addToQueue('PRODUCT_SYNC', updatedProduct);
 
-            // Registrar movimiento si cambió el stock manualmente
             if (difference !== 0) {
                 const movement: InventoryMovement = {
                     id: crypto.randomUUID(),
@@ -125,7 +124,7 @@ export function InventoryPage() {
         toast.success('Producto actualizado');
 
       } else {
-        // === MODO CREACIÓN (Transaction) ===
+        // === MODO CREACIÓN ===
         const newProductId = crypto.randomUUID();
         const initialStock = productData.stock || 0;
 
@@ -173,8 +172,6 @@ export function InventoryPage() {
 
       setIsFormOpen(false);
       resetForm();
-      
-      // Sincronizar inmediatamente en segundo plano
       syncPush().catch(console.error);
 
     } catch (error: unknown) {
@@ -201,26 +198,20 @@ export function InventoryPage() {
     setIsFormOpen(true);
   };
 
-  // 🔥 LÓGICA DE ELIMINACIÓN CORREGIDA Y OPTIMIZADA
+  // 🔥 LÓGICA DE ELIMINACIÓN INTELIGENTE
   const handleDelete = async (id: string) => {
-    if (!confirm('¿Estás seguro de eliminar este producto? Esta acción no se puede deshacer.')) return;
+    if (!confirm('¿Estás seguro de eliminar este producto?')) return;
 
     try {
       await db.transaction('rw', [db.products, db.action_queue, db.audit_logs], async () => {
           const product = await db.products.get(id);
           if (!product) return;
 
-          // CASO 1: Producto local nuevo (nunca subido a la nube)
-          // Si está en 'pending_create', significa que la nube NO lo conoce.
-          // Lo borramos físicamente para no ensuciar la cola de sincronización.
+          // CASO 1: Nunca se subió (es local puro) -> Borrar físico
           if (product.sync_status === 'pending_create') {
               await db.products.delete(id);
-              // Opcional: Limpiar de la cola cualquier acción pendiente sobre este ID
-              // await db.action_queue.where('payload.id').equals(id).delete(); (Requiere lógica compleja, mejor dejar que falle silenciosamente o simplemente borrar el producto)
-              console.log("Producto local eliminado físicamente (no synced)");
           } 
-          // CASO 2: Producto sincronizado o editado
-          // Debemos marcarlo como eliminado (Soft Delete) y sincronizar esa eliminación.
+          // CASO 2: Ya existe en la nube -> Soft Delete (Marcar como borrado)
           else {
               const changes = {
                 deleted_at: new Date().toISOString(),
@@ -228,22 +219,19 @@ export function InventoryPage() {
               };
 
               await db.products.update(id, changes);
-              
-              // Enviamos el producto completo con la marca de eliminado
+              // Enviamos la actualización con deleted_at a la nube
               await addToQueue('PRODUCT_SYNC', { ...product, ...changes });
           }
 
-          // Auditoría siempre
           await logAuditAction('DELETE_PRODUCT', { productName: product.name, id: product.id }, currentStaff);
       });
       
       toast.success('Producto eliminado');
-      // Forzar subida para reflejar eliminación en la nube
       syncPush().catch(console.error);
 
     } catch (error) {
-      console.error('Error eliminando producto:', error);
-      toast.error('No se pudo eliminar el producto');
+      console.error(error);
+      toast.error('No se pudo eliminar');
     }
   };
 
