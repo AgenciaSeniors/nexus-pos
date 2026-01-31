@@ -11,12 +11,12 @@ import {
 } from './db';
 import { supabase } from './supabase';
 
-// Helper para verificar conexión (Versión segura)
+// Helper para verificar conexión
 export function isOnline() {
   return typeof navigator !== 'undefined' && navigator.onLine;
 }
 
-// --- GESTIÓN DE COLA (Tu lógica original intacta) ---
+// --- GESTIÓN DE COLA (Lógica Original Intacta) ---
 
 export async function addToQueue(type: QueueItem['type'], payload: QueuePayload) {
   try {
@@ -37,6 +37,7 @@ export async function addToQueue(type: QueueItem['type'], payload: QueuePayload)
   }
 }
 
+// Procesamiento detallado ítem por ítem (Sin simplificar)
 async function processItem(item: QueueItem) {
   const { type, payload } = item;
 
@@ -44,11 +45,11 @@ async function processItem(item: QueueItem) {
     case 'SALE': {
       const { sale, items } = payload as SalePayload;
       
-      // Mantenemos la limpieza de datos para evitar conflictos
+      // Limpieza de campos locales antes de subir a la nube
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...saleClean } = sale;
       
-      // 1. Subir Venta
+      // 1. Subir Cabecera de Venta
       const { error: saleError } = await supabase.from('sales').upsert(saleClean);
       if (saleError) throw new Error(`Error subiendo venta ${sale.id}: ${saleError.message}`);
 
@@ -120,10 +121,11 @@ async function processItem(item: QueueItem) {
     }
 
     default:
-      throw new Error(`Tipo desconocido: ${type}`);
+      throw new Error(`Tipo de acción desconocido: ${type}`);
   }
 }
 
+// Procesador recursivo de la cola
 export async function processQueue() {
   if (!isOnline()) return;
 
@@ -197,25 +199,23 @@ if (typeof window !== 'undefined') {
 }
 
 // =========================================================
-// ESTRATEGIA DE CARGA HÍBRIDA (SIN PERDER DATOS)
+// ESTRATEGIA DE CARGA INTELIGENTE
 // =========================================================
 
-// 1. DATOS CRÍTICOS: Se necesitan SIEMPRE para entrar (Licencia, PINs, Cajas)
-// Esta función es rápida y ligera.
+// 1. DATOS CRÍTICOS (Rápidos y Ligeros)
+// Necesarios para validar acceso y abrir caja.
 export async function syncCriticalData(businessId: string) {
   if (!isOnline()) return; 
 
   try {
     console.log('⚡ Sincronizando datos críticos (Perfil, Staff, Cajas)...');
     
-    // Usamos Promise.all para máxima velocidad en la carga crítica
     const [businessResult, staffResult, registersResult] = await Promise.all([
       supabase.from('businesses').select('id, name, address, phone, receipt_message, subscription_expires_at, status').eq('id', businessId).single(),
       supabase.from('staff').select('*').eq('business_id', businessId).eq('active', true),
       supabase.from('cash_registers').select('*').eq('business_id', businessId)
     ]);
 
-    // A) Procesar Negocio y Licencia
     if (businessResult.data) {
       await db.settings.put({
         id: businessResult.data.id, 
@@ -230,14 +230,12 @@ export async function syncCriticalData(businessId: string) {
       });
     }
 
-    // B) Procesar Staff (Limpiamos tabla antes para evitar duplicados viejos)
     if (staffResult.data && staffResult.data.length > 0) {
-      await db.staff.clear(); 
+      await db.staff.clear(); // Limpiamos para evitar empleados viejos
       await db.staff.bulkPut(staffResult.data);
       console.log(`✅ ${staffResult.data.length} Empleados actualizados.`);
     }
 
-    // C) Procesar Cajas (Aseguramos status synced)
     if (registersResult.data && registersResult.data.length > 0) {
         const cleanRegisters = registersResult.data.map(r => ({
             ...r,
@@ -247,13 +245,12 @@ export async function syncCriticalData(businessId: string) {
     }
 
   } catch (error) {
-    console.error('⚠️ Error en carga crítica:', error);
-    // No lanzamos error para permitir trabajar offline si falla la red
+    console.error('⚠️ Error en carga crítica (Continuando con datos locales):', error);
   }
 }
 
-// 2. DATOS PESADOS: Productos y Clientes
-// Esta función se puede llamar en "background" o bloqueante según sea necesario.
+// 2. DATOS PESADOS (Lentos)
+// Inventario y Clientes. Se ejecutan en segundo plano si ya hay datos.
 export async function syncHeavyData(businessId: string) {
   if (!isOnline()) return; 
 
@@ -265,19 +262,16 @@ export async function syncHeavyData(businessId: string) {
       supabase.from('customers').select('*').eq('business_id', businessId)
     ]);
 
-    // D) Procesar Productos (Mapeo completo)
     if (productsResult.data && productsResult.data.length > 0) {
         const cleanProducts = productsResult.data.map(p => ({
             ...p,
-            sync_status: 'synced' // Importante: Marcar como sincronizados
+            sync_status: 'synced' // Marcamos como sincronizados
         }));
-        // Usamos bulkPut para insertar miles de registros eficientemente
         
         await db.products.bulkPut(cleanProducts);
         console.log(`✅ ${productsResult.data.length} Productos sincronizados.`);
     }
 
-    // E) Procesar Clientes
     if (customersResult.data && customersResult.data.length > 0) {
         const cleanCustomers = customersResult.data.map(c => ({
             ...c,
@@ -291,4 +285,15 @@ export async function syncHeavyData(businessId: string) {
   } catch (error) {
     console.error('⚠️ Error en descarga de inventario:', error);
   }
+}
+
+// 3. ✅ FUNCIÓN UNIFICADA (Para compatibilidad con App.tsx)
+// Esta función es vital para que tu Login no dé error de "export missing".
+export async function syncBusinessProfile(businessId: string) {
+  // Primero aseguramos lo crítico (Licencia y PINs)
+  await syncCriticalData(businessId);
+  
+  // Luego disparamos la carga de productos
+  // NOTA: No usamos 'await' aquí para que el Login manual también sea rápido
+  syncHeavyData(businessId);
 }

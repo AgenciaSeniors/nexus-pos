@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { db } from '../lib/db';
-// 👇 Asegúrate de importar isOnline aquí
-import { syncBusinessProfile, isOnline } from '../lib/sync'; 
+// Importamos las funciones detalladas y el helper isOnline
+import { syncCriticalData, syncHeavyData, isOnline } from '../lib/sync';
 import { Loader2 } from 'lucide-react';
 
 interface AuthGuardProps {
@@ -13,7 +13,7 @@ interface AuthGuardProps {
 export function AuthGuard({ children }: AuthGuardProps) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-  const [checkingLicense, setCheckingLicense] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('Iniciando Nexus Pro...');
 
   useEffect(() => {
     let isMounted = true;
@@ -28,46 +28,19 @@ export function AuthGuard({ children }: AuthGuardProps) {
           return;
         }
 
-        // 2. Sincronización Inteligente (Online)
-        if (isOnline()) { // <--- Aquí usamos la función
-          const localSettings = await db.settings.toArray();
-          
-          if (localSettings.length > 0) {
-            // CASO A: Ya conocemos el negocio (Usuario recurrente)
-            // ⚡ TRUCO DE VELOCIDAD: No ponemos 'await' aquí.
-            // Dejamos que se actualice en el fondo mientras el usuario entra YA.
-            syncBusinessProfile(localSettings[0].id); 
-          } else {
-            // CASO B: Primera vez en este PC
-            // Aquí SÍ ponemos 'await' porque necesitamos bajar los datos obligatoriamente
-            if (isMounted) setCheckingLicense(true);
-            
-            const { data: profile } = await supabase
-              .from('profiles')
-              .select('business_id')
-              .eq('id', session.user.id)
-              .single();
+        // 2. Lógica de Acceso Inteligente
+        const localSettings = await db.settings.toArray();
+        const config = localSettings[0];
 
-            if (profile?.business_id) {
-              console.log('📥 Descargando configuración inicial...');
-              await syncBusinessProfile(profile.business_id);
-            }
-          }
-        }
-
-        // 3. Validación de Licencia (Con datos locales)
-        const settings = await db.settings.toArray();
-        const config = settings[0];
-
+        // --- ESCENARIO A: USUARIO RECURRENTE (DATOS EXISTEN) ---
         if (config) {
-          // A) ¿Suspendido?
+          // A1. Validar Licencia Local (Prioridad de Seguridad)
           if (config.status === 'suspended') {
             alert('🚫 Su cuenta ha sido SUSPENDIDA. Contacte a soporte.');
             if (isMounted) navigate('/login');
             return;
           }
 
-          // B) ¿Vencido?
           if (config.subscription_expires_at) {
             const expiryDate = new Date(config.subscription_expires_at);
             const now = new Date();
@@ -78,17 +51,51 @@ export function AuthGuard({ children }: AuthGuardProps) {
               return;
             }
           }
-        } else {
-          // Si llegamos aquí y no hay config ni internet, es un modo muy restringido
-          if (!isOnline()) {
-             console.warn("⚠️ Iniciando sin configuración (Offline mode)");
+
+          // A2. ¡Luz Verde! Entrar inmediatamente (Sin esperas)
+          if (isMounted) setLoading(false);
+
+          // A3. Actualización Silenciosa (Background Sync)
+          if (isOnline()) {
+            console.log('🔄 Actualizando datos en segundo plano...');
+            // Primero lo rápido (Licencia/Staff)
+            syncCriticalData(config.id).then(() => {
+                // Luego lo pesado (Inventario)
+                syncHeavyData(config.id); 
+            });
           }
+          return; // Fin del flujo para usuario recurrente
         }
 
-        // 4. Todo correcto, pase adelante
-        if (isMounted) {
-          setLoading(false);
-          setCheckingLicense(false);
+        // --- ESCENARIO B: INSTALACIÓN LIMPIA (PRIMERA VEZ) ---
+        // Aquí NO tenemos datos locales, así que estamos obligados a esperar la descarga.
+        if (isOnline()) {
+            if (isMounted) setLoadingMessage('Configurando su negocio por primera vez...');
+            
+            // 1. Obtener ID del negocio
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('business_id')
+              .eq('id', session.user.id)
+              .single();
+
+            if (profile?.business_id) {
+                // 2. Descarga Bloqueante (Necesaria para no mostrar pantalla blanca)
+                await syncCriticalData(profile.business_id);
+                
+                if (isMounted) setLoadingMessage('Descargando catálogo de productos...');
+                await syncHeavyData(profile.business_id);
+                
+                // 3. Todo listo, entrar
+                if (isMounted) setLoading(false);
+            } else {
+                console.error("No se encontró perfil de negocio para este usuario");
+                if (isMounted) navigate('/login');
+            }
+        } else {
+            // Caso Borde: Borró caché y no tiene internet
+            alert("⚠️ Se requiere conexión a internet para la configuración inicial.");
+            if (isMounted) navigate('/login');
         }
 
       } catch (error) {
@@ -102,13 +109,11 @@ export function AuthGuard({ children }: AuthGuardProps) {
     return () => { isMounted = false; };
   }, [navigate]);
 
-  if (loading || checkingLicense) {
+  if (loading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
         <Loader2 className="w-8 h-8 animate-spin text-blue-600 mb-4" />
-        <p className="text-gray-600">
-            {checkingLicense ? 'Configurando sistema...' : 'Verificando credenciales...'}
-        </p>
+        <p className="text-gray-600 font-medium">{loadingMessage}</p>
       </div>
     );
   }
