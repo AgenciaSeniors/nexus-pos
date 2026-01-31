@@ -16,7 +16,7 @@ export function isOnline() {
   return typeof navigator !== 'undefined' && navigator.onLine;
 }
 
-// --- GESTIÓN DE COLA (Lógica Original Intacta) ---
+// --- GESTIÓN DE COLA (Añadir ítems) ---
 
 export async function addToQueue(type: QueueItem['type'], payload: QueuePayload) {
   try {
@@ -37,7 +37,8 @@ export async function addToQueue(type: QueueItem['type'], payload: QueuePayload)
   }
 }
 
-// Procesamiento detallado ítem por ítem (Sin simplificar)
+// --- PROCESAMIENTO INDIVIDUAL (Lógica completa por tipo) ---
+
 async function processItem(item: QueueItem) {
   const { type, payload } = item;
 
@@ -45,12 +46,11 @@ async function processItem(item: QueueItem) {
     case 'SALE': {
       const { sale, items } = payload as SalePayload;
       
-      // Limpieza de datos
+      // 1. Limpieza de datos locales antes de subir
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...saleClean } = sale;
 
-      // LLAMADA RPC ATÓMICA (Backend Logic)
-      // En lugar de insertar tablas por separado, le decimos a la BD: "Procesa esta venta completa"
+      // 2. Subir a Supabase usando RPC Seguro (Atomicidad: Venta + Stock)
       const { error } = await supabase.rpc('process_sale_transaction', {
         p_sale: saleClean,
         p_items: items || []
@@ -61,27 +61,17 @@ async function processItem(item: QueueItem) {
         throw new Error(`Fallo transacción venta ${sale.id}: ${error.message}`);
       }
       
-      console.log(`✅ Venta ${sale.id} procesada exitosamente en la nube.`);
-      break;
-    }
-
-    case 'PRODUCT_SYNC': {
-      const product = payload as Product;
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { sync_status, ...cleanProduct } = product;
+      // 3. ✅ ACTUALIZACIÓN LOCAL INMEDIATA
+      // Marcamos la venta como 'synced' en Dexie para que la UI (botón) se actualice al instante
+      await db.sales.update(sale.id, { sync_status: 'synced' });
       
-      const { error } = await supabase.from('products').upsert(cleanProduct);
-      if (error) throw new Error(`Error sincronizando producto ${product.name}: ${error.message}`);
-      break;
-    }
-
-    case 'CUSTOMER_SYNC': {
-      const customer = payload as Customer;
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { sync_status, ...cleanCustomer } = customer;
-
-      const { error } = await supabase.from('customers').upsert(cleanCustomer);
-      if (error) throw new Error(`Error sincronizando cliente ${customer.name}: ${error.message}`);
+      // También marcamos los items si es necesario (opcional, pero buena práctica)
+      if (items && items.length > 0) {
+          // Nota: Dexie sale_items puede no tener sync_status, pero si lo tuviera:
+          // await db.sale_items.bulkUpdate(...) 
+      }
+      
+      console.log(`✅ Venta ${sale.id} sincronizada y stock descontado.`);
       break;
     }
 
@@ -89,9 +79,14 @@ async function processItem(item: QueueItem) {
       const movement = payload as InventoryMovement;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanMov } = movement;
-
+      
+      // 1. Subir
       const { error } = await supabase.from('inventory_movements').insert(cleanMov);
-      if (error) throw new Error(`Error subiendo movimiento de inventario: ${error.message}`);
+      if (error) throw new Error(`Error movimiento: ${error.message}`);
+
+      // 2. ✅ ACTUALIZAR ESTADO LOCAL
+      await db.movements.update(movement.id, { sync_status: 'synced' });
+      console.log('✅ Movimiento de inventario sincronizado.');
       break;
     }
 
@@ -99,9 +94,38 @@ async function processItem(item: QueueItem) {
       const log = payload as AuditLog;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanLog } = log;
-
+      
+      // 1. Subir
       const { error } = await supabase.from('audit_logs').insert(cleanLog);
-      if (error) throw new Error(`Error subiendo log de auditoría: ${error.message}`);
+      if (error) throw new Error(`Error audit: ${error.message}`);
+
+      // 2. ✅ ACTUALIZAR ESTADO LOCAL
+      await db.audit_logs.update(log.id, { sync_status: 'synced' });
+      console.log('✅ Log de auditoría sincronizado.');
+      break;
+    }
+
+    // --- Casos de Bajada (Sync Down) o Configuración ---
+    // Estos generalmente no tienen un registro local con status 'pending' que actualizar,
+    // pero mantenemos la lógica de subida por si acaso se usan bidireccionalmente.
+
+    case 'PRODUCT_SYNC': {
+      const product = payload as Product;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...cleanProduct } = product;
+      
+      const { error } = await supabase.from('products').upsert(cleanProduct);
+      if (error) throw new Error(`Error sincronizando producto: ${error.message}`);
+      break;
+    }
+
+    case 'CUSTOMER_SYNC': {
+      const customer = payload as Customer;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...cleanCustomer } = customer;
+      
+      const { error } = await supabase.from('customers').upsert(cleanCustomer);
+      if (error) throw new Error(`Error sincronizando cliente: ${error.message}`);
       break;
     }
 
@@ -120,19 +144,21 @@ async function processItem(item: QueueItem) {
         .update(updateData)
         .eq('id', config.id);
 
-      if (error) throw new Error(`Error actualizando configuración del negocio: ${error.message}`);
+      if (error) throw new Error(`Error actualizando config negocio: ${error.message}`);
       break;
     }
 
     default:
-      throw new Error(`Tipo de acción desconocido: ${type}`);
+      throw new Error(`Tipo de acción desconocido en cola: ${type}`);
   }
 }
 
-// Procesador recursivo de la cola
+// --- PROCESADOR DE COLA (Recursivo y Robusto) ---
+
 export async function processQueue() {
   if (!isOnline()) return;
 
+  // Procesamos en lotes pequeños para no bloquear el navegador
   const pendingItems = await db.action_queue
     .where('status').equals('pending')
     .limit(5) 
@@ -140,64 +166,85 @@ export async function processQueue() {
 
   if (pendingItems.length === 0) return;
 
-  let processedCount = 0;
-
   for (const item of pendingItems) {
     try {
+      // 1. Marcar como procesando
       await db.action_queue.update(item.id, { status: 'processing' });
 
+      // 2. Ejecutar lógica específica
       await processItem(item);
 
-      await db.action_queue.delete(item.id);
-      processedCount++;
+      // 3. Si éxito, eliminar de la cola
+      await db.action_queue.delete(item.id); 
 
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error(`❌ Fallo item ${item.type}:`, errorMessage);
-      
       const newRetries = (item.retries || 0) + 1;
       
-      // Si falla 5 veces, lo marcamos como FATAL para que no trabe la cola
+      console.error(`❌ Fallo ítem ${item.type} (${item.id}):`, errorMessage);
+
+      // Lógica de "Dead Letter": Si falla 5 veces, lo apartamos como FATAL
       if (newRetries >= 5) {
+          console.error(`💀 Ítem ${item.id} marcado como FATAL tras 5 intentos.`);
           await db.action_queue.update(item.id, { 
-            status: 'failed', // Nuevo estado (requiere soporte manual)
-            error: `ABANDONADO tras 5 intentos: ${errorMessage}` 
+              status: 'failed', 
+              error: `ABANDONADO: ${errorMessage}` 
           });
       } else {
-          // Reintento normal (backoff)
+          // Reintentar luego
           await db.action_queue.update(item.id, { 
-            status: 'pending', 
-            retries: newRetries, 
-            error: errorMessage 
+              status: 'pending', 
+              retries: newRetries, 
+              error: errorMessage 
           });
       }
     }
   }
 
-  if (processedCount > 0) {
-    const remaining = await db.action_queue.where('status').equals('pending').count();
-    if (remaining > 0) {
-      processQueue();
-    }
+  // Si quedan pendientes, seguimos procesando (recursividad)
+  if ((await db.action_queue.where('status').equals('pending').count()) > 0) {
+    processQueue();
   }
 }
 
+// --- FUNCIONES PÚBLICAS DE SINCRONIZACIÓN (Push & Pull) ---
+
 export async function syncPush() {
-    console.log("⬆️ Iniciando subida manual...");
+    console.log("⬆️ Iniciando subida de cambios pendientes...");
     await processQueue();
 }
 
+// Esta función se llama al pulsar "Actualizar"
 export async function syncPull() {
-    console.log("🔄 Iniciando sincronización manual...");
-    await processQueue();
+    if (!isOnline()) return;
+    
+    console.log("⬇️ Iniciando descarga de actualizaciones...");
+    const settings = await db.settings.toArray();
+    
+    if (settings.length > 0) {
+        const businessId = settings[0].id;
+        
+        // Ejecutamos la descarga completa para garantizar que el stock local sea real
+        try {
+            await Promise.all([
+                syncCriticalData(businessId), // Licencia, Staff, Cajas
+                syncHeavyData(businessId)     // Productos, Clientes
+            ]);
+            console.log("✨ Sincronización de bajada completada exitosamente.");
+        } catch (error) {
+            console.error("Error en syncPull:", error);
+        }
+    }
 }
 
+// Listeners automáticos
 if (typeof window !== 'undefined') {
     window.addEventListener('online', () => {
         console.log("🌐 Conexión restaurada. Procesando cola...");
         processQueue();
     });
 
+    // Intentar sincronizar cada 30 segundos si hay red
     setInterval(() => {
         if (isOnline()) {
             processQueue();
@@ -205,24 +252,20 @@ if (typeof window !== 'undefined') {
     }, 30000);
 }
 
-// =========================================================
-// ESTRATEGIA DE CARGA INTELIGENTE
-// =========================================================
+// --- ESTRATEGIA DE CARGA DE DATOS (Data Fetching) ---
 
-// 1. DATOS CRÍTICOS (Rápidos y Ligeros)
-// Necesarios para validar acceso y abrir caja.
+// 1. Datos Críticos (Rápidos)
 export async function syncCriticalData(businessId: string) {
   if (!isOnline()) return; 
 
   try {
-    console.log('⚡ Sincronizando datos críticos (Perfil, Staff, Cajas)...');
-    
     const [businessResult, staffResult, registersResult] = await Promise.all([
-      supabase.from('businesses').select('id, name, address, phone, receipt_message, subscription_expires_at, status').eq('id', businessId).single(),
+      supabase.from('businesses').select('*').eq('id', businessId).single(),
       supabase.from('staff').select('*').eq('business_id', businessId).eq('active', true),
       supabase.from('cash_registers').select('*').eq('business_id', businessId)
     ]);
 
+    // Actualizar Negocio
     if (businessResult.data) {
       await db.settings.put({
         id: businessResult.data.id, 
@@ -231,76 +274,73 @@ export async function syncCriticalData(businessId: string) {
         phone: businessResult.data.phone,
         receipt_message: businessResult.data.receipt_message,
         subscription_expires_at: businessResult.data.subscription_expires_at,
-        status: businessResult.data.status as 'active' | 'suspended' | 'pending', 
+        status: businessResult.data.status, // Cast seguro para tipos de Dexie
         last_check: new Date().toISOString(), 
         sync_status: 'synced'
       });
     }
 
-    if (staffResult.data && staffResult.data.length > 0) {
-      await db.staff.clear(); // Limpiamos para evitar empleados viejos
+    // Actualizar Staff (Sobreescribimos para asegurar PINs actualizados)
+    if (staffResult.data) {
+      await db.staff.clear(); 
       await db.staff.bulkPut(staffResult.data);
-      console.log(`✅ ${staffResult.data.length} Empleados actualizados.`);
     }
 
-    if (registersResult.data && registersResult.data.length > 0) {
-        const cleanRegisters = registersResult.data.map(r => ({
-            ...r,
-            sync_status: 'synced'
-        }));
-        await db.cash_registers.bulkPut(cleanRegisters);
+    // Actualizar Cajas
+    if (registersResult.data) {
+      const cleanRegisters = registersResult.data.map(r => ({ ...r, sync_status: 'synced' }));
+      
+      await db.cash_registers.bulkPut(cleanRegisters);
     }
 
   } catch (error) {
-    console.error('⚠️ Error en carga crítica (Continuando con datos locales):', error);
+    console.error('⚠️ Error en syncCriticalData:', error);
   }
 }
 
-// 2. DATOS PESADOS (Lentos)
-// Inventario y Clientes. Se ejecutan en segundo plano si ya hay datos.
+// 2. Datos Pesados (Inventario y Clientes)
 export async function syncHeavyData(businessId: string) {
   if (!isOnline()) return; 
 
   try {
-    console.log('📦 Iniciando descarga masiva de inventario y clientes...');
-    
     const [productsResult, customersResult] = await Promise.all([
       supabase.from('products').select('*').eq('business_id', businessId),
       supabase.from('customers').select('*').eq('business_id', businessId)
     ]);
 
-    if (productsResult.data && productsResult.data.length > 0) {
+    // Actualizar Productos
+    if (productsResult.data) {
         const cleanProducts = productsResult.data.map(p => ({
             ...p,
-            sync_status: 'synced' // Marcamos como sincronizados
+            sync_status: 'synced' // Importante: vienen de la nube, están sincronizados
         }));
         
         await db.products.bulkPut(cleanProducts);
-        console.log(`✅ ${productsResult.data.length} Productos sincronizados.`);
+        console.log(`📦 ${productsResult.data.length} Productos actualizados.`);
     }
 
-    if (customersResult.data && customersResult.data.length > 0) {
+    // Actualizar Clientes
+    if (customersResult.data) {
         const cleanCustomers = customersResult.data.map(c => ({
             ...c,
             sync_status: 'synced'
         }));
         
         await db.customers.bulkPut(cleanCustomers);
-        console.log(`✅ ${customersResult.data.length} Clientes sincronizados.`);
     }
 
   } catch (error) {
-    console.error('⚠️ Error en descarga de inventario:', error);
+    console.error('⚠️ Error en syncHeavyData:', error);
   }
 }
 
-// 3. ✅ FUNCIÓN UNIFICADA (Para compatibilidad con App.tsx)
-// Esta función es vital para que tu Login no dé error de "export missing".
+// 3. Función Maestra (Compatibility Wrapper)
+// Esta es la que llama AuthGuard al inicio
 export async function syncBusinessProfile(businessId: string) {
-  // Primero aseguramos lo crítico (Licencia y PINs)
+  // Primero lo vital
   await syncCriticalData(businessId);
-  
-  // Luego disparamos la carga de productos
-  // NOTA: No usamos 'await' aquí para que el Login manual también sea rápido
-  syncHeavyData(businessId);
+  // Luego el inventario (sin await si queremos que sea background, con await si es primera carga)
+  // En este contexto, AuthGuard decide si espera o no usando las funciones individuales,
+  // pero mantenemos esta para compatibilidad.
+  await syncHeavyData(businessId);
 }
