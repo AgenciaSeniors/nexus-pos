@@ -59,6 +59,9 @@ export interface BusinessConfig {
   address?: string;
   phone?: string;
   receipt_message?: string;
+  subscription_expires_at?: string;
+  last_check?: string;
+  status?: 'active' | 'suspended' | 'pending';
   // ✅ AGREGADO: Para que los cambios viajen a la nube
   sync_status?: 'synced' | 'pending_create' | 'pending_update'; 
 }

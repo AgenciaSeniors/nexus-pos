@@ -304,6 +304,22 @@ function BusinessApp() {
           return;
         }
 
+        // === 🛡️ ACTUALIZACIÓN DE LICENCIA (NUEVO) ===
+        // Obtenemos la fecha de vencimiento del negocio
+        const { data: bizData } = await supabase
+            .from('businesses')
+            .select('subscription_expires_at')
+            .eq('id', data.business_id)
+            .single();
+
+        if (bizData?.subscription_expires_at) {
+            // 1. Guardamos la fecha de vencimiento real
+            localStorage.setItem('nexus_license_expiry', bizData.subscription_expires_at);
+            // 2. Guardamos la fecha actual como "evidencia" de conexión (Anti-Trampa de reloj)
+            localStorage.setItem('nexus_last_sync', new Date().toISOString());
+        }
+        // ============================================
+
         const adminStaff: Staff = {
           id: data.id,
           name: data.full_name || data.email,
@@ -315,21 +331,17 @@ function BusinessApp() {
 
         localStorage.setItem('nexus_business_id', data.business_id);
         
-        // ✅ PURGA DE SEGURIDAD (Critical Fix)
-        // Eliminar empleados de otros negocios de la base de datos local
+        // Purga de seguridad
         await db.staff.filter(s => s.business_id !== data.business_id).delete();
-
-        // Guardar al admin actual
         await db.staff.put(adminStaff);
 
         lastLoadedUserId.current = userId; 
-
-        // Forzar PinPad
         setCurrentStaff(null);
         setIsLocked(true);
       }
     } catch (error: unknown) {
       console.error("Error perfil:", error);
+      // Nota: Si falla por conexión, NO borramos la sesión para permitir el modo offline
     }
   };
 
