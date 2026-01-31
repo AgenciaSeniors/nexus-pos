@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { db } from '../lib/db';
-import { syncBusinessProfile, isOnline } from '../lib/sync';
+// 👇 Asegúrate de importar isOnline aquí
+import { syncBusinessProfile, isOnline } from '../lib/sync'; 
 import { Loader2 } from 'lucide-react';
 
 interface AuthGuardProps {
@@ -27,34 +28,34 @@ export function AuthGuard({ children }: AuthGuardProps) {
           return;
         }
 
-        // 2. Lógica de Licencia Inteligente
-        if (isOnline()) {
+        // 2. Sincronización Inteligente (Online)
+        if (isOnline()) { // <--- Aquí usamos la función
           const localSettings = await db.settings.toArray();
           
           if (localSettings.length > 0) {
-            // CASO A: Ya conocemos el negocio, actualizamos licencia
-            if (isMounted) setCheckingLicense(true);
-            await syncBusinessProfile(localSettings[0].id);
+            // CASO A: Ya conocemos el negocio (Usuario recurrente)
+            // ⚡ TRUCO DE VELOCIDAD: No ponemos 'await' aquí.
+            // Dejamos que se actualice en el fondo mientras el usuario entra YA.
+            syncBusinessProfile(localSettings[0].id); 
           } else {
-            // CASO B (CRÍTICO): Primera vez o caché borrado.
-            // Buscamos el ID del negocio asociado a este usuario en la nube
+            // CASO B: Primera vez en este PC
+            // Aquí SÍ ponemos 'await' porque necesitamos bajar los datos obligatoriamente
             if (isMounted) setCheckingLicense(true);
             
-            // Consultamos la tabla 'profiles' para saber el business_id
             const { data: profile } = await supabase
               .from('profiles')
               .select('business_id')
-              .eq('id', session.user.id) // El ID de auth es el mismo que en profiles
+              .eq('id', session.user.id)
               .single();
 
             if (profile?.business_id) {
-              console.log('📥 Descargando configuración inicial del negocio...');
+              console.log('📥 Descargando configuración inicial...');
               await syncBusinessProfile(profile.business_id);
             }
           }
         }
 
-        // 3. Validación Final (funciona Offline porque ya descargamos en el paso 2)
+        // 3. Validación de Licencia (Con datos locales)
         const settings = await db.settings.toArray();
         const config = settings[0];
 
@@ -78,12 +79,13 @@ export function AuthGuard({ children }: AuthGuardProps) {
             }
           }
         } else {
-          // Si llegamos aquí y sigue sin haber config, es un login fallido sin datos
+          // Si llegamos aquí y no hay config ni internet, es un modo muy restringido
           if (!isOnline()) {
-             console.warn("⚠️ Iniciando sin configuración (Offline mode restringido)");
+             console.warn("⚠️ Iniciando sin configuración (Offline mode)");
           }
         }
 
+        // 4. Todo correcto, pase adelante
         if (isMounted) {
           setLoading(false);
           setCheckingLicense(false);
@@ -105,7 +107,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
         <Loader2 className="w-8 h-8 animate-spin text-blue-600 mb-4" />
         <p className="text-gray-600">
-            {checkingLicense ? 'Validando licencia...' : 'Verificando credenciales...'}
+            {checkingLicense ? 'Configurando sistema...' : 'Verificando credenciales...'}
         </p>
       </div>
     );
