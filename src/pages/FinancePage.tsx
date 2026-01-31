@@ -11,11 +11,10 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   PieChart, Pie, Cell, Legend 
 } from 'recharts';
-// ✅ CORRECCIÓN: Eliminamos los iconos no usados (User, Eye, ShoppingBag, CalendarOff)
 import { 
   Calendar, TrendingUp, ArrowLeft, ArrowRight, RefreshCw,
   BarChart3, DollarSign, Wallet, PieChart as PieChartIcon, ClipboardCheck,
-  Printer, Trophy, Lock, Unlock, PlusCircle, MinusCircle
+  Printer, Trophy, Lock, Unlock, PlusCircle, MinusCircle, ShoppingBag // Agregamos icono
 } from 'lucide-react';
 
 const EMPTY_ARRAY: never[] = [];
@@ -26,40 +25,40 @@ export function FinancePage() {
 
   // --- ESTADOS ---
   const [viewMode, setViewMode] = useState<'control' | 'daily' | 'trends' | 'closing'>('control');
-  
-  // Estados para Operaciones de Caja
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
   const [movementType, setMovementType] = useState<'in' | 'out' | null>(null);
   const [isClosing, setIsClosing] = useState(false);
 
-  // Estados para Reportes
   const today = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState(today);
   const [selectedTicket, setSelectedTicket] = useState<Sale | null>(null);
   const [trendFilter, setTrendFilter] = useState<'week' | 'month'>('week');
 
-  // --- DATOS GLOBALES ---
-  
-  // 1. BUSCAR TURNO ACTIVO
+  // --- DATOS ---
   const activeShift = useLiveQuery(async () => {
     if (!businessId) return null;
-    return await db.cash_shifts
-      .where({ business_id: businessId, status: 'open' })
-      .first();
+    return await db.cash_shifts.where({ business_id: businessId, status: 'open' }).first();
   }, [businessId]);
 
-  // 2. DATOS DEL TURNO ACTUAL
   const shiftData = useLiveQuery(async () => {
     if (!activeShift || !businessId) return null;
     const [sales, movements] = await Promise.all([
-      db.sales.where({ business_id: businessId, shift_id: activeShift.id }).toArray(),
-      db.cash_movements.where({ business_id: businessId, shift_id: activeShift.id }).toArray()
+      db.sales
+        .where('shift_id')
+        .equals(activeShift.id)
+        .filter(s => s.business_id === businessId)
+        .toArray(),
+      db.cash_movements
+        .where('shift_id')
+        .equals(activeShift.id)
+        .filter(m => m.business_id === businessId)
+        .toArray()
     ]);
+
     return { sales, movements };
   }, [activeShift]);
 
-  // 3. DATOS HISTÓRICOS
   const products = useLiveQuery<Product[]>(async () => {
     if (!businessId) return [];
     return await db.products.where('business_id').equals(businessId).toArray();
@@ -70,13 +69,15 @@ export function FinancePage() {
     return await db.sales.where('business_id').equals(businessId).toArray();
   }, [businessId]) || EMPTY_ARRAY;
 
-  // --- LÓGICA DE CÁLCULO ---
-
-  // A. ESTADÍSTICAS DE CAJA ACTUAL
+  // --- CÁLCULOS ---
   const shiftStats = useMemo(() => {
     if (!activeShift || !shiftData) return null;
     const startAmount = activeShift.start_amount;
     
+    // 1. Total Global (Lo que vendiste en total, no importa el método)
+    const totalSales = shiftData.sales.reduce((sum, s) => sum + s.total, 0);
+
+    // 2. Solo Efectivo (Para el arqueo)
     const cashSales = shiftData.sales
       .filter(s => s.payment_method === 'efectivo' || s.payment_method === 'mixto')
       .reduce((sum, s) => sum + s.total, 0);
@@ -86,10 +87,9 @@ export function FinancePage() {
 
     const expectedCash = startAmount + cashSales + cashIn - cashOut;
 
-    return { startAmount, cashSales, cashIn, cashOut, expectedCash };
+    return { startAmount, cashSales, totalSales, cashIn, cashOut, expectedCash };
   }, [activeShift, shiftData]);
 
-  // B. METADATOS DE PRODUCTOS
   const productMeta = useMemo(() => {
     const costs = new Map<string, number>();
     const cats = new Map<string, string>();
@@ -100,7 +100,6 @@ export function FinancePage() {
     return { costs, cats };
   }, [products]);
 
-  // C. ESTADÍSTICAS DIARIAS
   const dailyStats = useMemo(() => {
     const salesForDay = allSales.filter((sale) => sale.date.startsWith(selectedDate));
     let revenue = 0, cost = 0;
@@ -135,7 +134,6 @@ export function FinancePage() {
     return { sales: salesForDay.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()), revenue, profit, cost, margin, chartData, pieData, bestSeller };
   }, [allSales, selectedDate, productMeta]);
 
-  // D. ESTADÍSTICAS CIERRE Z
   const closingStats = useMemo(() => {
     const sales = dailyStats.sales;
     let cashTotal = 0, transferTotal = 0, cardTotal = 0;
@@ -157,7 +155,6 @@ export function FinancePage() {
     return { cashTotal, transferTotal, cardTotal, productsList, ticketCount: sales.length };
   }, [dailyStats.sales]);
 
-  // E. TENDENCIAS
   const trendStats = useMemo(() => {
     const now = new Date();
     const daysToShow = trendFilter === 'week' ? 7 : 30;
@@ -187,8 +184,7 @@ export function FinancePage() {
     return { totalRevenue, totalCost, totalProfit, totalMargin, chartData, count: filteredSales.length };
   }, [allSales, trendFilter, productMeta]);
 
-  // --- OPERACIONES DE CAJA (HANDLERS) ---
-
+  // --- HANDLERS ---
   const handleOpenShift = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!businessId) return;
@@ -252,8 +248,6 @@ export function FinancePage() {
   const handlePrint = () => window.print();
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
-  // --- RENDERIZADO ---
-
   if (!activeShift) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50">
@@ -309,21 +303,24 @@ export function FinancePage() {
       {viewMode === 'control' && shiftStats && (
         <div className="animate-in slide-in-from-bottom-4 duration-300 space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            
+            {/* ✅ TARJETA NUEVA: TOTAL VENTAS GLOBALES */}
+            <div className="bg-indigo-50 p-5 rounded-2xl shadow-sm border border-indigo-100">
+               <p className="text-indigo-400 text-xs font-bold uppercase mb-1 flex items-center gap-1"><ShoppingBag size={14}/> Total Ventas</p>
+               <h3 className="text-2xl font-bold text-indigo-700">{currency.format(shiftStats.totalSales)}</h3>
+               <p className="text-[10px] text-indigo-400 mt-1">Efectivo + Tarjeta + Transferencia</p>
+            </div>
+
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
                <p className="text-slate-400 text-xs font-bold uppercase">Monto Inicial</p>
                <h3 className="text-2xl font-bold text-slate-600">{currency.format(shiftStats.startAmount)}</h3>
             </div>
+            
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
-               <p className="text-slate-400 text-xs font-bold uppercase">Ventas (Efectivo)</p>
+               <p className="text-slate-400 text-xs font-bold uppercase">Solo Efectivo (Caja)</p>
                <h3 className="text-2xl font-bold text-green-600">+{currency.format(shiftStats.cashSales)}</h3>
             </div>
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
-               <p className="text-slate-400 text-xs font-bold uppercase">Entradas / Salidas</p>
-               <div className="flex gap-3 mt-1">
-                 <span className="text-green-600 font-bold text-lg">+{currency.format(shiftStats.cashIn)}</span>
-                 <span className="text-red-500 font-bold text-lg">-{currency.format(shiftStats.cashOut)}</span>
-               </div>
-            </div>
+            
             <div className="bg-slate-900 p-5 rounded-2xl shadow-lg shadow-slate-300 text-white">
                <p className="text-slate-400 text-xs font-bold uppercase mb-1">Efectivo Esperado</p>
                <h3 className="text-3xl font-black">{currency.format(shiftStats.expectedCash)}</h3>
@@ -342,26 +339,54 @@ export function FinancePage() {
              </button>
           </div>
 
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-             <div className="p-4 border-b border-slate-100 bg-slate-50"><h3 className="font-bold text-slate-700">Movimientos Manuales</h3></div>
-             <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
-                    <thead className="text-slate-400 font-bold uppercase text-xs bg-slate-50">
-                    <tr><th className="p-3">Hora</th><th className="p-3">Tipo</th><th className="p-3">Motivo</th><th className="p-3 text-right">Monto</th></tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                    {shiftData?.movements.map(m => (
-                        <tr key={m.id}>
-                            <td className="p-3 text-slate-500">{new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
-                            <td className="p-3"><span className={`px-2 py-1 rounded text-xs font-bold uppercase ${m.type==='in'?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>{m.type === 'in' ? 'Entrada' : 'Salida'}</span></td>
-                            <td className="p-3 font-medium text-slate-700">{m.reason}</td>
-                            <td className={`p-3 text-right font-bold ${m.type==='in'?'text-green-600':'text-red-600'}`}>{currency.format(m.amount)}</td>
-                        </tr>
-                    ))}
-                    {shiftData?.movements.length === 0 && <tr><td colSpan={4} className="p-8 text-center text-slate-400 italic">No hay movimientos manuales</td></tr>}
-                    </tbody>
-                </table>
-             </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* TABLA DE MOVIMIENTOS MANUALES */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div className="p-4 border-b border-slate-100 bg-slate-50"><h3 className="font-bold text-slate-700">Movimientos Manuales</h3></div>
+                <div className="overflow-x-auto max-h-60">
+                    <table className="w-full text-sm text-left">
+                        <thead className="text-slate-400 font-bold uppercase text-xs bg-slate-50 sticky top-0">
+                        <tr><th className="p-3">Hora</th><th className="p-3">Tipo</th><th className="p-3">Motivo</th><th className="p-3 text-right">Monto</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                        {shiftData?.movements.map(m => (
+                            <tr key={m.id}>
+                                <td className="p-3 text-slate-500">{new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
+                                <td className="p-3"><span className={`px-2 py-1 rounded text-xs font-bold uppercase ${m.type==='in'?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>{m.type === 'in' ? 'Entrada' : 'Salida'}</span></td>
+                                <td className="p-3 font-medium text-slate-700">{m.reason}</td>
+                                <td className={`p-3 text-right font-bold ${m.type==='in'?'text-green-600':'text-red-600'}`}>{currency.format(m.amount)}</td>
+                            </tr>
+                        ))}
+                        {shiftData?.movements.length === 0 && <tr><td colSpan={4} className="p-8 text-center text-slate-400 italic">No hay movimientos manuales</td></tr>}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {/* ✅ TABLA NUEVA: ÚLTIMAS VENTAS DEL TURNO */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                    <h3 className="font-bold text-slate-700">Ventas Recientes</h3>
+                    <span className="text-xs bg-slate-200 text-slate-600 px-2 py-1 rounded-full font-bold">{shiftData?.sales.length || 0}</span>
+                </div>
+                <div className="overflow-x-auto max-h-60">
+                    <table className="w-full text-sm text-left">
+                        <thead className="text-slate-400 font-bold uppercase text-xs bg-slate-50 sticky top-0">
+                        <tr><th className="p-3">Hora</th><th className="p-3">Método</th><th className="p-3 text-right">Total</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                        {shiftData?.sales.slice().reverse().map(s => ( // Invertimos para ver la última primero
+                            <tr key={s.id} onClick={() => setSelectedTicket(s)} className="cursor-pointer hover:bg-slate-50 transition-colors">
+                                <td className="p-3 text-slate-500">{new Date(s.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
+                                <td className="p-3"><span className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs font-bold uppercase">{s.payment_method}</span></td>
+                                <td className="p-3 text-right font-bold text-slate-700">{currency.format(s.total)}</td>
+                            </tr>
+                        ))}
+                        {shiftData?.sales.length === 0 && <tr><td colSpan={3} className="p-8 text-center text-slate-400 italic">Sin ventas en este turno</td></tr>}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
           </div>
         </div>
       )}
