@@ -19,7 +19,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
     async function checkSession() {
       try {
-        // 1. Verificamos sesión de Supabase (Online Check)
+        // 1. Verificamos sesión de Supabase
         const { data: { session } } = await supabase.auth.getSession();
         
         if (!session) {
@@ -27,24 +27,24 @@ export function AuthGuard({ children }: AuthGuardProps) {
           return;
         }
 
-        // 2. Sincronización Inteligente (Online)
+        // 2. Lógica de Licencia Inteligente
         if (isOnline()) {
           const localSettings = await db.settings.toArray();
           
           if (localSettings.length > 0) {
-            // CASO A: Ya tenemos datos, solo actualizamos la fecha de vencimiento
+            // CASO A: Ya conocemos el negocio, actualizamos licencia
             if (isMounted) setCheckingLicense(true);
             await syncBusinessProfile(localSettings[0].id);
           } else {
-            // CASO B (NUEVO): Primera vez o caché borrado. 
-            // Buscamos el ID del negocio usando el usuario actual.
+            // CASO B (CRÍTICO): Primera vez o caché borrado.
+            // Buscamos el ID del negocio asociado a este usuario en la nube
             if (isMounted) setCheckingLicense(true);
             
-            // Buscamos en la tabla 'profiles' cuál es el negocio de este usuario
+            // Consultamos la tabla 'profiles' para saber el business_id
             const { data: profile } = await supabase
               .from('profiles')
               .select('business_id')
-              .eq('id', session.user.id)
+              .eq('id', session.user.id) // El ID de auth es el mismo que en profiles
               .single();
 
             if (profile?.business_id) {
@@ -54,26 +54,23 @@ export function AuthGuard({ children }: AuthGuardProps) {
           }
         }
 
-        // 3. Validación de Licencia (Offline/Local)
-        // Ahora leemos la configuración (que acabamos de bajar si estaba vacía)
+        // 3. Validación Final (funciona Offline porque ya descargamos en el paso 2)
         const settings = await db.settings.toArray();
         const config = settings[0];
 
         if (config) {
-          // A) Validación de Estado
+          // A) ¿Suspendido?
           if (config.status === 'suspended') {
             alert('🚫 Su cuenta ha sido SUSPENDIDA. Contacte a soporte.');
             if (isMounted) navigate('/login');
             return;
           }
 
-          // B) Validación de Fecha
+          // B) ¿Vencido?
           if (config.subscription_expires_at) {
             const expiryDate = new Date(config.subscription_expires_at);
             const now = new Date();
             
-            // Pequeña validación para evitar bloqueos por zonas horarias incorrectas (opcional)
-            // Se puede ser estricto: now > expiryDate
             if (now > expiryDate) {
               alert('⚠️ Su licencia ha VENCIDO. Por favor renueve para continuar.');
               if (isMounted) navigate('/login');
@@ -81,15 +78,12 @@ export function AuthGuard({ children }: AuthGuardProps) {
             }
           }
         } else {
-          // Si llegamos aquí y sigue sin haber config, es un error crítico (login sin internet por primera vez)
+          // Si llegamos aquí y sigue sin haber config, es un login fallido sin datos
           if (!isOnline()) {
-             console.warn("⚠️ Iniciando sin configuración local (Offline mode restringido)");
-             // Opcional: Podrías redirigir al login si quieres ser estricto
-             // if (isMounted) navigate('/login'); 
+             console.warn("⚠️ Iniciando sin configuración (Offline mode restringido)");
           }
         }
 
-        // 4. Todo correcto, pase adelante
         if (isMounted) {
           setLoading(false);
           setCheckingLicense(false);
