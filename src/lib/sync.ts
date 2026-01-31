@@ -195,3 +195,49 @@ setInterval(() => {
         processQueue();
     }
 }, 30000);
+// --- AGREGAR ESTO AL FINAL DE src/lib/sync.ts ---
+
+// Función para descargar la licencia y configuración desde la nube
+export async function syncBusinessProfile(businessId: string) {
+  // Solo intentamos si hay conexión, si no, confiamos en lo local
+  if (!isOnline()) return; 
+
+  try {
+    console.log('🔄 Verificando licencia y configuración...');
+    
+    // 1. Pedimos a Supabase los datos vitales, incluyendo la fecha de expiración
+    const { data, error } = await supabase
+      .from('businesses')
+      .select('id, name, address, phone, receipt_message, subscription_expires_at, status')
+      .eq('id', businessId)
+      .single();
+
+    if (error) throw error;
+
+    if (data) {
+      // 2. Guardamos/Actualizamos en la BD local (Dexie)
+      // Esto es lo que permite que el sistema funcione offline después
+      await db.settings.put({
+        id: data.id, 
+        name: data.name,
+        address: data.address,
+        phone: data.phone,
+        receipt_message: data.receipt_message,
+        
+        // La "llave" de la licencia:
+        subscription_expires_at: data.subscription_expires_at,
+        status: data.status as 'active' | 'suspended' | 'pending', 
+        
+        // Metadatos de control
+        last_check: new Date().toISOString(), 
+        sync_status: 'synced'
+      });
+      
+      console.log('✅ Licencia actualizada. Vence:', data.subscription_expires_at);
+    }
+  } catch (error) {
+    console.error('⚠️ No se pudo verificar la licencia (usando caché local):', error);
+    // Importante: No lanzamos error para no bloquear la app. 
+    // Si falla, el usuario seguirá operando con la última fecha guardada en Dexie.
+  }
+}
