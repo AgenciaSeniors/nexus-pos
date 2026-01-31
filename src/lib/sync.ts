@@ -198,46 +198,74 @@ setInterval(() => {
 // --- AGREGAR ESTO AL FINAL DE src/lib/sync.ts ---
 
 // Función para descargar la licencia y configuración desde la nube
+// Reemplaza la función syncBusinessProfile en src/lib/sync.ts
+
 export async function syncBusinessProfile(businessId: string) {
-  // Solo intentamos si hay conexión, si no, confiamos en lo local
+  // Solo intentamos si hay conexión
   if (!isOnline()) return; 
 
   try {
-    console.log('🔄 Verificando licencia y configuración...');
+    console.log('🔄 Sincronizando perfil, empleados y configuración...');
     
-    // 1. Pedimos a Supabase los datos vitales, incluyendo la fecha de expiración
-    const { data, error } = await supabase
+    // 1. NEGOCIO & LICENCIA
+    const { data: business, error: busError } = await supabase
       .from('businesses')
       .select('id, name, address, phone, receipt_message, subscription_expires_at, status')
       .eq('id', businessId)
       .single();
 
-    if (error) throw error;
+    if (busError) throw busError;
 
-    if (data) {
-      // 2. Guardamos/Actualizamos en la BD local (Dexie)
-      // Esto es lo que permite que el sistema funcione offline después
+    if (business) {
       await db.settings.put({
-        id: data.id, 
-        name: data.name,
-        address: data.address,
-        phone: data.phone,
-        receipt_message: data.receipt_message,
-        
-        // La "llave" de la licencia:
-        subscription_expires_at: data.subscription_expires_at,
-        status: data.status as 'active' | 'suspended' | 'pending', 
-        
-        // Metadatos de control
+        id: business.id, 
+        name: business.name,
+        address: business.address,
+        phone: business.phone,
+        receipt_message: business.receipt_message,
+        subscription_expires_at: business.subscription_expires_at,
+        status: business.status as 'active' | 'suspended' | 'pending', 
         last_check: new Date().toISOString(), 
         sync_status: 'synced'
       });
-      
-      console.log('✅ Licencia actualizada. Vence:', data.subscription_expires_at);
+      console.log('✅ Licencia sincronizada.');
     }
+
+    // 2. EMPLEADOS (STAFF) - ¡Esto soluciona el problema del PIN!
+    const { data: staff, error: staffError } = await supabase
+      .from('staff')
+      .select('*')
+      .eq('business_id', businessId)
+      .eq('active', true);
+
+    if (staffError) throw staffError;
+
+    if (staff && staff.length > 0) {
+      await db.staff.bulkPut(staff);
+      console.log(`✅ ${staff.length} Empleados descargados.`);
+    }
+
+    // 3. CAJAS REGISTRADORAS (Necesarias para abrir turno)
+    const { data: registers, error: regError } = await supabase
+      .from('cash_registers')
+      .select('*')
+      .eq('business_id', businessId);
+
+    if (regError) throw regError;
+
+    if (registers && registers.length > 0) {
+        // Aseguramos que tengan el status correcto localmente
+        const cleanRegisters = registers.map(r => ({
+            ...r,
+            sync_status: 'synced'
+        }));
+        
+        await db.cash_registers.bulkPut(cleanRegisters);
+        console.log(`✅ ${registers.length} Cajas descargadas.`);
+    }
+
   } catch (error) {
-    console.error('⚠️ No se pudo verificar la licencia (usando caché local):', error);
-    // Importante: No lanzamos error para no bloquear la app. 
-    // Si falla, el usuario seguirá operando con la última fecha guardada en Dexie.
+    console.error('⚠️ Error en sincronización inicial:', error);
+    // No lanzamos error para no bloquear, pero logueamos el fallo
   }
 }
