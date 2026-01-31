@@ -140,7 +140,9 @@ export type QueuePayload =
     | AuditLog 
     | Product 
     | Customer
-    | BusinessConfig; // <--- NUEVO
+    | BusinessConfig
+    | CashShift      
+    | CashMovement; 
 
 export interface AuditLog {
   id: string;
@@ -157,7 +159,7 @@ export interface AuditLog {
 export interface QueueItem {
   id: string;
   // ✅ 2. Agregamos SETTINGS_SYNC a los tipos permitidos
-  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC';
+  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT';
   payload: QueuePayload; 
   timestamp: number;
   retries: number;
