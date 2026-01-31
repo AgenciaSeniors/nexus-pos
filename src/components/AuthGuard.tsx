@@ -15,11 +15,11 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const [checkingLicense, setCheckingLicense] = useState(false);
 
   useEffect(() => {
-    let isMounted = true; // Bandera para evitar actualizar estado si el componente se desmonta
+    let isMounted = true;
 
     async function checkSession() {
       try {
-        // 1. Verificamos sesión de Supabase (básico)
+        // 1. Verificamos sesión de Supabase (Online Check)
         const { data: { session } } = await supabase.auth.getSession();
         
         if (!session) {
@@ -27,52 +27,76 @@ export function AuthGuard({ children }: AuthGuardProps) {
           return;
         }
 
-        // 2. Intentamos actualizar licencia si hay internet
-        // Esto refresca la fecha de vencimiento en Dexie
+        // 2. Sincronización Inteligente (Online)
         if (isOnline()) {
           const localSettings = await db.settings.toArray();
-          // Solo intentamos sincronizar si ya sabemos qué negocio es (tenemos datos locales)
+          
           if (localSettings.length > 0) {
-             if (isMounted) setCheckingLicense(true);
-             await syncBusinessProfile(localSettings[0].id);
+            // CASO A: Ya tenemos datos, solo actualizamos la fecha de vencimiento
+            if (isMounted) setCheckingLicense(true);
+            await syncBusinessProfile(localSettings[0].id);
+          } else {
+            // CASO B (NUEVO): Primera vez o caché borrado. 
+            // Buscamos el ID del negocio usando el usuario actual.
+            if (isMounted) setCheckingLicense(true);
+            
+            // Buscamos en la tabla 'profiles' cuál es el negocio de este usuario
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('business_id')
+              .eq('id', session.user.id)
+              .single();
+
+            if (profile?.business_id) {
+              console.log('📥 Descargando configuración inicial del negocio...');
+              await syncBusinessProfile(profile.business_id);
+            }
           }
         }
 
-        // 3. Validamos fecha de vencimiento local
-        // Leemos la configuración (ya sea la vieja o la que acabamos de bajar)
+        // 3. Validación de Licencia (Offline/Local)
+        // Ahora leemos la configuración (que acabamos de bajar si estaba vacía)
         const settings = await db.settings.toArray();
-        const config = settings[0]; // Asumimos un solo negocio por dispositivo
+        const config = settings[0];
 
         if (config) {
-          // A) ¿Está suspendido manualmente?
+          // A) Validación de Estado
           if (config.status === 'suspended') {
             alert('🚫 Su cuenta ha sido SUSPENDIDA. Contacte a soporte.');
             if (isMounted) navigate('/login');
             return;
           }
 
-          // B) ¿Caducó la fecha?
+          // B) Validación de Fecha
           if (config.subscription_expires_at) {
             const expiryDate = new Date(config.subscription_expires_at);
             const now = new Date();
             
-            // Damos un pequeño margen de gracia o comparamos estrictamente
+            // Pequeña validación para evitar bloqueos por zonas horarias incorrectas (opcional)
+            // Se puede ser estricto: now > expiryDate
             if (now > expiryDate) {
               alert('⚠️ Su licencia ha VENCIDO. Por favor renueve para continuar.');
               if (isMounted) navigate('/login');
               return;
             }
           }
+        } else {
+          // Si llegamos aquí y sigue sin haber config, es un error crítico (login sin internet por primera vez)
+          if (!isOnline()) {
+             console.warn("⚠️ Iniciando sin configuración local (Offline mode restringido)");
+             // Opcional: Podrías redirigir al login si quieres ser estricto
+             // if (isMounted) navigate('/login'); 
+          }
         }
 
-        // Si pasamos todas las pruebas, dejamos entrar
+        // 4. Todo correcto, pase adelante
         if (isMounted) {
           setLoading(false);
           setCheckingLicense(false);
         }
 
       } catch (error) {
-        console.error('Error verificando sesión:', error);
+        console.error('Error crítico en AuthGuard:', error);
         if (isMounted) navigate('/login');
       }
     }
@@ -86,7 +110,9 @@ export function AuthGuard({ children }: AuthGuardProps) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
         <Loader2 className="w-8 h-8 animate-spin text-blue-600 mb-4" />
-        <p className="text-gray-600">Verificando credenciales y licencia...</p>
+        <p className="text-gray-600">
+            {checkingLicense ? 'Validando licencia...' : 'Verificando credenciales...'}
+        </p>
       </div>
     );
   }
