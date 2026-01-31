@@ -5,7 +5,7 @@ import { supabase } from './lib/supabase';
 import { type Staff, db } from './lib/db'; 
 import { type Session } from '@supabase/supabase-js';
 import { Toaster, toast } from 'sonner';
-
+import { syncBusinessProfile } from './lib/sync';
 // --- IMPORTACIONES DE PÁGINAS Y COMPONENTES ---
 import { Layout } from './components/Layout';
 import { PinPad } from './components/PinPad';
@@ -330,6 +330,7 @@ function BusinessApp() {
         };
 
         localStorage.setItem('nexus_business_id', data.business_id);
+        await syncBusinessProfile(data.business_id);
         
         // Purga de seguridad
         await db.staff.filter(s => s.business_id !== data.business_id).delete();

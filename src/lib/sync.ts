@@ -228,10 +228,10 @@ export async function syncBusinessProfile(businessId: string) {
         last_check: new Date().toISOString(), 
         sync_status: 'synced'
       });
-      console.log('✅ Licencia sincronizada.');
     }
 
-    // 2. EMPLEADOS (STAFF) - ¡Esto soluciona el problema del PIN!
+    // 2. EMPLEADOS (STAFF) - ¡ESTO ES LO QUE FALTABA!
+    // Esto recupera tu PIN real de la base de datos
     const { data: staff, error: staffError } = await supabase
       .from('staff')
       .select('*')
@@ -245,7 +245,7 @@ export async function syncBusinessProfile(businessId: string) {
       console.log(`✅ ${staff.length} Empleados descargados.`);
     }
 
-    // 3. CAJAS REGISTRADORAS (Necesarias para abrir turno)
+    // 3. CAJAS REGISTRADORAS (Para que puedas abrir turno)
     const { data: registers, error: regError } = await supabase
       .from('cash_registers')
       .select('*')
@@ -254,18 +254,17 @@ export async function syncBusinessProfile(businessId: string) {
     if (regError) throw regError;
 
     if (registers && registers.length > 0) {
-        // Aseguramos que tengan el status correcto localmente
         const cleanRegisters = registers.map(r => ({
             ...r,
             sync_status: 'synced'
         }));
         
         await db.cash_registers.bulkPut(cleanRegisters);
-        console.log(`✅ ${registers.length} Cajas descargadas.`);
     }
+    
+    console.log('✅ Sincronización inicial completada.');
 
   } catch (error) {
     console.error('⚠️ Error en sincronización inicial:', error);
-    // No lanzamos error para no bloquear, pero logueamos el fallo
   }
 }
