@@ -1,15 +1,15 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { 
   Store, Package, PieChart, Settings, Lock, Shield, 
-  Cloud, AlertCircle, RefreshCw, LogOut, Menu, X, Users as UsersIcon 
+  Cloud, AlertCircle, RefreshCw, LogOut, Menu, X, Users as UsersIcon, CheckCircle2 
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff } from '../lib/db';
-import { syncPush } from '../lib/sync';
+import { syncPush, syncPull } from '../lib/sync'; // Importamos syncPull también
 import { supabase } from '../lib/supabase';
 import logo from '../logo.png'; 
-import { toast } from 'sonner'; // ✅ IMPORTANTE: Importamos Sonner
+import { toast } from 'sonner';
 
 interface LayoutProps {
   currentStaff: Staff | null;
@@ -40,7 +40,7 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
     const movements = await db.movements.where('sync_status').equals('pending_create').count();
     const audits = await db.audit_logs.where('sync_status').equals('pending_create').count();
     return sales + movements + audits; 
-  }) || 0;
+  }, []) || 0;
 
   const handleManualSync = async () => {
     if (!isOnline) {
@@ -48,13 +48,16 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
         return;
     }
     setIsSyncing(true);
-    // Usamos toast.promise para feedback visual elegante
-    toast.promise(syncPush(), {
-        loading: 'Sincronizando datos...',
-        success: '¡Sincronización completada!',
+    
+    // Ejecutamos Push (subir) y Pull (bajar) para estar 100% al día
+    toast.promise(Promise.all([syncPush(), syncPull()]), {
+        loading: 'Sincronizando todo...',
+        success: '¡Sistema actualizado y al día!',
         error: 'Error al sincronizar'
     });
-    setTimeout(() => setIsSyncing(false), 1500);
+
+    // Pequeño delay para que se vea la animación
+    setTimeout(() => setIsSyncing(false), 2000);
   };
 
   const handleLogout = async () => {
@@ -64,13 +67,38 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
     navigate('/login');
   };
 
+  // --- LÓGICA DE ESTADO VISUAL DEL BOTÓN ---
+  let buttonColorClass = "";
+  let buttonIcon = <Cloud size={20} />;
+  let buttonTitle = "";
+
+  if (isSyncing) {
+      buttonColorClass = "bg-indigo-50 text-indigo-600 ring-1 ring-indigo-200";
+      buttonIcon = <RefreshCw size={20} className="animate-spin"/>;
+      buttonTitle = "Sincronizando...";
+  } else if (!isOnline && pendingCount > 0) {
+      // ⚠️ CASO CRÍTICO: Cambios sin subir y sin internet (ROJO)
+      buttonColorClass = "bg-red-50 text-red-600 ring-1 ring-red-200 animate-pulse";
+      buttonIcon = <AlertCircle size={20} />;
+      buttonTitle = "¡ADVERTENCIA! Cambios sin guardar en la nube";
+  } else if (pendingCount > 0) {
+      // ⚠️ Cambios pendientes por subir (AMARILLO)
+      buttonColorClass = "bg-amber-50 text-amber-600 ring-1 ring-amber-200";
+      buttonIcon = <RefreshCw size={20} />;
+      buttonTitle = "Hay cambios pendientes de subir";
+  } else {
+      // ✅ Todo al día (VERDE - Feedback positivo)
+      buttonColorClass = "bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200 hover:bg-emerald-100";
+      buttonIcon = <CheckCircle2 size={20} />;
+      buttonTitle = "Sistema actualizado y seguro";
+  }
+
   const isAdmin = currentStaff?.role === 'admin';
   const isCashier = currentStaff?.role === 'vendedor';
 
   const menuItems = [
     { path: '/', icon: <Store size={22} />, label: 'Punto de Venta', show: true }, 
     { path: '/clientes', icon: <UsersIcon size={22} />, label: 'Clientes', show: true }, 
-    
     { path: '/inventario', icon: <Package size={22} />, label: 'Inventario', show: isAdmin },
     { path: '/finanzas', icon: <PieChart size={22} />, label: 'Finanzas', show: isAdmin },
     { path: '/equipo', icon: <Shield size={22} />, label: 'Equipo', show: isAdmin },
@@ -79,7 +107,6 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
 
   return (
     <div className="flex h-screen w-full bg-slate-50 overflow-hidden font-sans">
-      
       
       {/* SIDEBAR DESKTOP */}
       <aside className={`hidden md:flex flex-col items-center py-6 z-20 shadow-sm transition-all bg-white border-r border-slate-200 duration-300 ${isCashier ? 'w-20' : 'w-24'}`}>
@@ -121,25 +148,18 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
         </nav>
 
         <div className="flex flex-col gap-2 w-full px-2 mt-4 border-t border-slate-100 pt-4">
+            {/* BOTÓN DE SINCRONIZACIÓN MEJORADO */}
             <button 
                 onClick={handleManualSync}
                 disabled={!isOnline || isSyncing}
-                className={`p-3 rounded-xl flex flex-col items-center justify-center transition-all relative group ${
-                    pendingCount > 0 ? 'bg-amber-50 text-amber-600' : 'text-slate-300 hover:text-indigo-500 hover:bg-slate-50'
-                }`}
-                title={isOnline ? "Sincronizar ahora" : "Sin conexión"}
+                className={`p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group ${buttonColorClass}`}
+                title={buttonTitle}
             >
-                {isSyncing ? (
-                    <RefreshCw size={20} className="animate-spin text-indigo-500"/> 
-                ) : pendingCount > 0 ? (
-                    <AlertCircle size={20}/> 
-                ) : (
-                    <Cloud size={20}/>
-                )}
+                {buttonIcon}
                 {pendingCount > 0 && (
                     <span className="absolute top-1 right-1 flex h-3 w-3">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500 text-[8px] text-white justify-center items-center font-bold"></span>
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-current opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500 text-[8px] text-white justify-center items-center font-bold"></span>
                     </span>
                 )}
             </button>
@@ -165,13 +185,12 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
                 <span className="text-sm">Nexus POS</span>
             </div>
             <div className="flex items-center gap-3">
+                {/* BOTÓN MÓVIL TAMBIÉN ACTUALIZADO */}
                 <button 
                     onClick={handleManualSync}
-                    className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${
-                        pendingCount > 0 ? 'bg-amber-100 text-amber-700 border border-amber-200' : isOnline ? 'bg-slate-100 text-slate-600' : 'bg-red-100 text-red-600'
-                    }`}
+                    className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${buttonColorClass}`}
                 >
-                    {isSyncing ? <RefreshCw size={14} className="animate-spin"/> : pendingCount > 0 ? <AlertCircle size={14}/> : <Cloud size={14}/>}
+                    {isSyncing ? <RefreshCw size={14} className="animate-spin"/> : pendingCount > 0 ? <AlertCircle size={14}/> : <CheckCircle2 size={14}/>}
                     {pendingCount > 0 && <span className="ml-1">{pendingCount}</span>}
                 </button>
             </div>

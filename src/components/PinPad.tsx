@@ -15,7 +15,7 @@ export function PinPad({ onSuccess, onCancel }: Props) {
   // Buscamos todos los empleados para verificar el PIN
   const staffMembers = useLiveQuery(() => db.staff.toArray()) || [];
 
-  // 1. Definimos checkPin PRIMERO (porque handleNum lo usa)
+  // Lógica de verificación
   const checkPin = (inputPin: string) => {
     const found = staffMembers.find(s => s.pin === inputPin);
     if (found) {
@@ -26,44 +26,48 @@ export function PinPad({ onSuccess, onCancel }: Props) {
     }
   };
 
-  // 2. Definimos handleNum SEGUNDO (porque useEffect lo usa)
+  // Manejador de números
   const handleNum = (num: string) => {
     if (pin.length < 4) {
       const newPin = pin + num;
       setPin(newPin);
       setError(false);
       
-      // Si ya escribieron 4 números, verificamos
+      // Si ya completó los 4 dígitos
       if (newPin.length === 4) {
         checkPin(newPin);
       }
     }
   };
 
-  // 3. Finalmente el useEffect (que ahora sí conoce a handleNum)
+  // Listener de Teclado Físico (CORREGIDO)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Si es un número (0-9)
+      // CASO 1: Números (0-9)
       if (/^[0-9]$/.test(e.key)) {
+        e.preventDefault();  // <--- ¡ESTO ES LA CLAVE! (Evita escribir en otros lados)
+        e.stopPropagation(); // <--- Detiene la propagación del evento
         handleNum(e.key);
       }
-      // Si es Backspace (Borrar)
+      // CASO 2: Backspace (Borrar)
       else if (e.key === 'Backspace') {
+        e.preventDefault();  // Evita navegar atrás en el navegador
         setPin(prev => prev.slice(0, -1));
         setError(false);
       }
-      // Si es Escape (Cancelar)
+      // CASO 3: Escape (Cancelar)
       else if (e.key === 'Escape') {
-        if (pin.length > 0) setPin(''); // Si hay números, limpia
-        else if (onCancel) onCancel(); // Si está vacío, ejecuta cancelar
+        e.preventDefault();
+        if (pin.length > 0) setPin(''); 
+        else if (onCancel) onCancel(); 
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     
-    // Limpieza del evento al desmontar o actualizar
+    // Limpieza al desmontar
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [pin, onCancel, staffMembers]); // Dependencias para mantener actualizado el estado
+  }, [pin, onCancel, staffMembers]); // Dependencias del efecto
 
   return (
     <div className="fixed inset-0 bg-slate-900/95 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
