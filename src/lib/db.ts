@@ -51,10 +51,8 @@ export interface InventoryMovement {
   sync_status: 'synced' | 'pending_create';
 }
 
-// En src/lib/db.ts
-
 export interface BusinessConfig {
-  id: string; // Usaremos el business_id aquí para asegurar relación 1:1
+  id: string;
   name: string;
   address?: string;
   phone?: string;
@@ -62,9 +60,9 @@ export interface BusinessConfig {
   subscription_expires_at?: string;
   last_check?: string;
   status?: 'active' | 'suspended' | 'pending';
-  // ✅ AGREGADO: Para que los cambios viajen a la nube
   sync_status?: 'synced' | 'pending_create' | 'pending_update'; 
 }
+
 export interface Customer {
   id: string;
   business_id: string;
@@ -95,6 +93,7 @@ export interface Staff {
   active: boolean;
   business_id: string;
 }
+
 export interface CashRegister {
   id: string;
   business_id: string;
@@ -102,6 +101,7 @@ export interface CashRegister {
   sync_status?: 'synced' | 'pending_create';
 }
 
+// ✅ NUEVAS INTERFACES DE CAJA
 export interface CashShift {
   id: string;
   business_id: string;
@@ -113,27 +113,40 @@ export interface CashShift {
   opened_at: string;
   closed_at?: string;
   status: 'open' | 'closed';
-  sync_status?: 'synced' | 'pending_create' | 'pending_update';
+  sync_status: 'synced' | 'pending_create' | 'pending_update';
 }
 
 export interface CashMovement {
   id: string;
   shift_id: string;
-  business_id: string; // Útil para filtrar rápido
+  business_id: string;
   type: 'in' | 'out';
   amount: number;
   reason: string;
   staff_id: string;
   created_at: string;
-  sync_status?: 'synced' | 'pending_create';
+  sync_status: 'synced' | 'pending_create';
 }
-// --- 🆕 NUEVAS DEFINICIONES STRICT-TYPE ---
 
-// 1. Definimos la estructura exacta del payload de venta
+// ✅ TIPOS DE AUDITORÍA ACTUALIZADOS
+export interface AuditLog {
+  id: string;
+  business_id: string;
+  staff_id: string;
+  staff_name: string;
+  // Agregamos: OPEN_SHIFT, CLOSE_SHIFT, CASH_IN, CASH_OUT
+  action: 'LOGIN' | 'LOGOUT' | 'SALE' | 'CREATE_PRODUCT' | 'DELETE_PRODUCT' | 
+          'UPDATE_STOCK' | 'OPEN_DRAWER' | 'VOID_SALE' | 'CREATE_CUSTOMER' | 
+          'UPDATE_CUSTOMER' | 'DELETE_CUSTOMER' | 'OPEN_SHIFT' | 'CLOSE_SHIFT' | 
+          'CASH_IN' | 'CASH_OUT';
+  details: Record<string, unknown> | null;
+  created_at: string;
+  sync_status: 'pending_create' | 'synced';
+}
+
+// ✅ PAYLOADS DE COLA ACTUALIZADOS
 export type SalePayload = { sale: Sale; items: SaleItem[] };
 
-// 2. Definimos todos los posibles payloads (Union Type)
-// Esto reemplaza al 'any' en QueueItem
 export type QueuePayload = 
     | SalePayload 
     | InventoryMovement 
@@ -142,23 +155,10 @@ export type QueuePayload =
     | Customer
     | BusinessConfig
     | CashShift      
-    | CashMovement; 
-
-export interface AuditLog {
-  id: string;
-  business_id: string;
-  staff_id: string;
-  staff_name: string;
-  // ✅ CORREGIDO: Agregamos 'CREATE_PRODUCT' a la lista de acciones permitidas
-  action: 'LOGIN' | 'LOGOUT' | 'SALE' | 'CREATE_PRODUCT' | 'DELETE_PRODUCT' | 'UPDATE_STOCK' | 'OPEN_DRAWER' | 'VOID_SALE' | 'CREATE_CUSTOMER' | 'UPDATE_CUSTOMER' | 'DELETE_CUSTOMER';
-  details: Record<string, unknown> | null;
-  created_at: string;
-  sync_status: 'pending_create' | 'synced';
-}
+    | CashMovement;  
 
 export interface QueueItem {
   id: string;
-  // ✅ 2. Agregamos SETTINGS_SYNC a los tipos permitidos
   type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT';
   payload: QueuePayload; 
   timestamp: number;
@@ -199,7 +199,6 @@ export class NexusDB extends Dexie {
       audit_logs: 'id, business_id, action, created_at, sync_status',
       action_queue: 'id, type, timestamp, status',
       cash_registers: 'id, business_id',
-      // Índice compuesto [business_id+status] para detectar turnos abiertos al instante
       cash_shifts: 'id, business_id, staff_id, status, [business_id+status]', 
       cash_movements: 'id, shift_id, business_id'
     });

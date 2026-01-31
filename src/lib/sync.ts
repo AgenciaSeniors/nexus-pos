@@ -82,7 +82,6 @@ async function processItem(item: QueueItem) {
       const { error } = await supabase.from('inventory_movements').insert(cleanMov);
       if (error) throw new Error(`Error subiendo movimiento: ${error.message}`);
 
-      
       if (db.movements) await db.movements.update(movement.id, { sync_status: 'synced' });
       console.log('✅ Movimiento sincronizado.');
       break;
@@ -139,8 +138,7 @@ async function processItem(item: QueueItem) {
       break;
     }
 
-    // ✅ NUEVO: GESTIÓN DE TURNOS (Apertura/Cierre)
-    // Usamos upsert porque un turno se crea (abierto) y luego se actualiza (cerrado)
+    // GESTIÓN DE TURNOS (Apertura/Cierre)
     case 'SHIFT': {
         const shift = payload as CashShift;
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -150,18 +148,18 @@ async function processItem(item: QueueItem) {
         if (error) throw new Error(`Error sincronizando turno: ${error.message}`);
 
         await db.cash_shifts.update(shift.id, { sync_status: 'synced' });
-        console.log('✅ Turno de caja sincronizado.');
+        console.log('✅ Turno sincronizado.');
         break;
     }
 
-    // ✅ NUEVO: MOVIMIENTOS DE EFECTIVO (Entradas/Salidas)
+    // MOVIMIENTOS DE CAJA
     case 'CASH_MOVEMENT': {
         const mov = payload as CashMovement;
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { sync_status, ...cleanMov } = mov;
 
         const { error } = await supabase.from('cash_movements').insert(cleanMov);
-        if (error) throw new Error(`Error sincronizando movimiento caja: ${error.message}`);
+        if (error) throw new Error(`Error sincronizando movimiento: ${error.message}`);
 
         await db.cash_movements.update(mov.id, { sync_status: 'synced' });
         console.log('✅ Movimiento de caja sincronizado.');
@@ -188,11 +186,8 @@ export async function processQueue() {
   for (const item of pendingItems) {
     try {
       await db.action_queue.update(item.id, { status: 'processing' });
-      
       await processItem(item);
-      
       await db.action_queue.delete(item.id); 
-
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const newRetries = (item.retries || 0) + 1;
@@ -220,10 +215,10 @@ export async function processQueue() {
   }
 }
 
-// --- FUNCIONES DE SINCRONIZACIÓN PÚBLICAS ---
+// --- FUNCIONES PÚBLICAS ---
 
 export async function syncPush() {
-    console.log("⬆️ Iniciando Push (Subida de datos)...");
+    console.log("⬆️ Iniciando Push...");
     await resetProcessingItems(); 
     await processQueue();
 }
@@ -231,12 +226,11 @@ export async function syncPush() {
 export async function syncPull() {
     if (!isOnline()) return;
     
-    console.log("⬇️ Iniciando Pull (Descarga de datos)...");
+    console.log("⬇️ Iniciando Pull...");
     const settings = await db.settings.toArray();
     
     if (settings.length > 0) {
         const businessId = settings[0].id;
-        
         await Promise.all([
             syncCriticalData(businessId), 
             syncHeavyData(businessId)     
@@ -247,28 +241,21 @@ export async function syncPull() {
 
 export async function syncManualFull() {
     if (!isOnline()) throw new Error("Sin conexión a internet");
-    
-    console.log("🔄 Iniciando Ciclo de Sincronización Completa...");
-    
+    console.log("🔄 Iniciando Sync Manual...");
     await syncPush();
     await syncPull();
-    
-    console.log("✅ Ciclo de Sincronización Finalizado.");
+    console.log("✅ Sync Manual Finalizado.");
 }
 
-// --- LISTENERS AUTOMÁTICOS ---
 if (typeof window !== 'undefined') {
     window.addEventListener('online', () => {
-        console.log("🌐 Conexión detectada. Reanudando cola...");
         resetProcessingItems().then(() => processQueue());
     });
-    
     resetProcessingItems();
-
     setInterval(() => { if (isOnline()) processQueue(); }, 30000);
 }
 
-// --- ESTRATEGIA DE CARGA DE DATOS ---
+// --- DATA FETCHING ---
 
 export async function syncCriticalData(businessId: string) {
   if (!isOnline()) return; 
@@ -277,8 +264,7 @@ export async function syncCriticalData(businessId: string) {
       supabase.from('businesses').select('*').eq('id', businessId).single(),
       supabase.from('staff').select('*').eq('business_id', businessId).eq('active', true),
       supabase.from('cash_registers').select('*').eq('business_id', businessId),
-      // ✅ BAJAMOS TURNOS RECIENTES PARA NO PERDER EL ESTADO AL BORRAR CACHÉ
-      supabase.from('cash_shifts').select('*').eq('business_id', businessId).eq('status', 'open') 
+      supabase.from('cash_shifts').select('*').eq('business_id', businessId).eq('status', 'open')
     ]);
 
     if (businessResult.data) {
@@ -294,19 +280,16 @@ export async function syncCriticalData(businessId: string) {
         sync_status: 'synced'
       });
     }
-
     if (staffResult.data) {
       await db.staff.clear(); 
       await db.staff.bulkPut(staffResult.data);
     }
-
     if (registersResult.data) {
       const cleanRegisters = registersResult.data.map(r => ({ ...r, sync_status: 'synced' }));
       
       await db.cash_registers.bulkPut(cleanRegisters);
     }
-
-    // ✅ RECUPERAR TURNO ABIERTO (Si lo había en la nube pero no en local)
+    // Recuperar turno abierto
     if (shiftsResult.data && shiftsResult.data.length > 0) {
         const shifts = shiftsResult.data.map(s => ({ ...s, sync_status: 'synced' }));
         
@@ -321,7 +304,6 @@ export async function syncCriticalData(businessId: string) {
 export async function syncHeavyData(businessId: string) {
   if (!isOnline()) return; 
   try {
-    console.log('⬇️ Descargando inventario y clientes...');
     const [productsResult, customersResult] = await Promise.all([
       supabase.from('products').select('*').eq('business_id', businessId),
       supabase.from('customers').select('*').eq('business_id', businessId)
@@ -332,16 +314,12 @@ export async function syncHeavyData(businessId: string) {
         
         await db.products.bulkPut(cleanProducts);
     }
-
     if (customersResult.data) {
         const cleanCustomers = customersResult.data.map(c => ({ ...c, sync_status: 'synced' }));
-
+        
         await db.customers.bulkPut(cleanCustomers);
     }
-
-  } catch (error) {
-    console.error('⚠️ Error carga inventario:', error);
-  }
+  } catch (error) { console.error('⚠️ Error carga inventario:', error); }
 }
 
 export async function syncBusinessProfile(businessId: string) {

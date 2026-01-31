@@ -200,7 +200,7 @@ export function PosPage() {
     if (cart.length === 0) return;
     setIsCheckout(true);
     setShowPaymentModal(false);
-
+    
     const checkoutPromise = async () => {
         const businessId = localStorage.getItem('nexus_business_id');
         if (!businessId) throw new Error("No se detecta el ID del negocio");
