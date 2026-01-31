@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useOutletContext, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Product, type Sale, type ParkedOrder, type SaleItem, type Staff, type InventoryMovement } from '../lib/db';
 import { supabase } from '../lib/supabase';
@@ -9,7 +9,7 @@ import { logAuditAction } from '../lib/audit';
 import { TicketModal } from '../components/TicketModal';
 import { PaymentModal } from '../components/PaymentModal';
 import { ParkedOrdersModal } from '../components/ParkedOrdersModal';
-import { PauseCircle, ClipboardList, Users, Search, Barcode, Keyboard, AlertTriangle, Plus, Minus, X } from 'lucide-react';
+import { PauseCircle, ClipboardList, Users, Search, Barcode, Keyboard, AlertTriangle, Plus, Minus, X, Lock } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface CartItem extends Product {
@@ -18,6 +18,7 @@ interface CartItem extends Product {
 
 export function PosPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
+  const navigate = useNavigate();
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [query, setQuery] = useState('');
@@ -31,7 +32,14 @@ export function PosPage() {
   const parkedCount = useLiveQuery(() => db.parked_orders.count()) || 0;
   const businessId = localStorage.getItem('nexus_business_id');
   
-  // 🔥 CORRECCIÓN: Filtramos productos eliminados (!p.deleted_at)
+  // 🔥 1. VITAL: Detectar el Turno Activo para vincular la venta
+  const activeShift = useLiveQuery(async () => {
+    if (!businessId) return null;
+    return await db.cash_shifts
+      .where({ business_id: businessId, status: 'open' })
+      .first();
+  }, [businessId]);
+
   const allProducts = useLiveQuery(async () => {
     if (!businessId) return [];
     return await db.products
@@ -48,9 +56,10 @@ export function PosPage() {
 
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Bloquear atajos si no hay turno
       if (e.key === 'F1') {
         e.preventDefault();
-        if (cart.length > 0 && !showPaymentModal && !lastSale && !isCheckout) {
+        if (cart.length > 0 && !showPaymentModal && !lastSale && !isCheckout && activeShift) {
           setShowPaymentModal(true);
         }
       }
@@ -71,9 +80,9 @@ export function PosPage() {
     };
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [cart, showPaymentModal, showParkedModal, lastSale, isCheckout, query]);
+  }, [cart, showPaymentModal, showParkedModal, lastSale, isCheckout, query, activeShift]);
 
-  // Caché de Business ID si hay red
+  // Caché de Business ID
   useEffect(() => {
     const cacheBusinessId = async () => {
       if (!navigator.onLine) return;
@@ -171,11 +180,11 @@ export function PosPage() {
             price: item.price,
             quantity: item.quantity,
             unit: item.unit,
-            stock: 999, // Stock temporal, se actualizará al re-sincronizar
+            stock: 999,
             sku: '',
             business_id: order.business_id,
             sync_status: 'synced',
-            created_at: new Date().toISOString(), // Campos dummy para satisfacer tipo
+            created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
         }));
         setCart(restoredCart);
@@ -197,6 +206,13 @@ export function PosPage() {
   };
 
   const handleCheckout = async (paymentMethod: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto', tendered: number, change: number) => {
+    // 🔥 2. BLOQUEO DE SEGURIDAD: No vender sin caja abierta
+    if (!activeShift) {
+        toast.error('⚠️ DEBES ABRIR CAJA PRIMERO');
+        navigate('/finanzas'); 
+        return;
+    }
+
     if (cart.length === 0) return;
     setIsCheckout(true);
     setShowPaymentModal(false);
@@ -211,6 +227,8 @@ export function PosPage() {
         const newSale: Sale = {
           id: saleId,
           business_id: businessId,
+          // 🔥 3. VINCULACIÓN CRÍTICA: Aquí guardamos el shift_id
+          shift_id: activeShift.id, 
           total: totalAmount,
           date: saleDate,
           items: cart.map(item => ({ 
@@ -322,11 +340,16 @@ export function PosPage() {
                 </div>
             </div>
             
-            <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2 shadow-sm flex-shrink-0 self-end sm:self-auto">
-               <Users size={18} className="text-indigo-600" />
+            {/* INDICADOR DE CAJA */}
+            <div className={`flex items-center gap-2 border rounded-lg px-3 py-2 shadow-sm flex-shrink-0 self-end sm:self-auto ${activeShift ? 'bg-indigo-50 border-indigo-100' : 'bg-red-50 border-red-100'}`}>
+               <Users size={18} className={activeShift ? 'text-indigo-600' : 'text-red-500'} />
                <div className="flex flex-col">
-                 <span className="text-[10px] text-indigo-400 leading-none font-bold uppercase">Cajero</span>
-                 <span className="text-sm font-bold text-indigo-700 leading-none">{currentStaff.name}</span>
+                 <span className={`text-[10px] leading-none font-bold uppercase ${activeShift ? 'text-indigo-400' : 'text-red-400'}`}>
+                    {activeShift ? 'Caja Abierta' : 'Caja Cerrada'}
+                 </span>
+                 <span className={`text-sm font-bold leading-none ${activeShift ? 'text-indigo-700' : 'text-red-700'}`}>
+                    {currentStaff.name}
+                 </span>
                </div>
             </div>
         </div>
@@ -479,12 +502,15 @@ export function PosPage() {
             <span className="text-3xl font-black text-slate-900 tracking-tight">{currency.format(totalAmount)}</span>
           </div>
           
+          {/* 🔥 BOTÓN COBRAR BLOQUEADO SI NO HAY TURNO */}
           <button 
             onClick={() => setShowPaymentModal(true)} 
-            disabled={cart.length === 0 || isCheckout} 
-            className="w-full bg-slate-900 hover:bg-black text-white font-bold py-4 rounded-xl shadow-lg shadow-slate-300 transition-transform active:scale-[0.98] disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none text-xl touch-manipulation"
+            disabled={cart.length === 0 || isCheckout || !activeShift} 
+            className={`w-full font-bold py-4 rounded-xl shadow-lg transition-transform active:scale-[0.98] text-xl 
+                ${!activeShift ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-slate-900 hover:bg-black text-white shadow-slate-300'}
+            `}
           >
-            {isCheckout ? 'Procesando...' : `COBRAR`}
+            {!activeShift ? <span className="flex items-center justify-center gap-2"><Lock size={20}/> CAJA CERRADA</span> : (isCheckout ? 'Procesando...' : 'COBRAR')}
           </button>
         </div>
       </div>
