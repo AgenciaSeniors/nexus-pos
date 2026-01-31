@@ -333,31 +333,70 @@ function BusinessApp() {
     }
   };
 
+  // ==========================================
+// REEMPLAZA LOS USEEFFECT DE BusinessApp POR ESTOS:
+// ==========================================
+
+  // 1. Temporizador visual: Aumentado a 25s para dar tiempo a VPNs lentas
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
     if (loading) {
-      timer = setTimeout(() => setShowTimeout(true), 7000);
+      // ANTES: 7000 (7s) -> AHORA: 25000 (25s)
+      timer = setTimeout(() => setShowTimeout(true), 25000);
     } else {
       setShowTimeout(false);
     }
     return () => clearTimeout(timer);
   }, [loading]);
 
+  // 2. Inicialización de Sesión Robusta (Con Timeout de Seguridad)
   useEffect(() => {
     const initSession = async () => {
-      const { data: { session: initialSession } } = await supabase.auth.getSession();
-      if (initialSession) {
-        setSession(initialSession);
-        await fetchProfile(initialSession.user.id);
-      } else {
+      try {
+        // Creamos una promesa que falla automáticamente a los 10 segundos
+        // Esto evita que la app se quede "colgada" si la VPN falla silenciosamente
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Tiempo de espera de red agotado')), 10000)
+        );
+
+        // Competimos: ¿Quién gana? ¿Supabase o el Reloj?
+        const { data, error } = await Promise.race([
+          supabase.auth.getSession(),
+          timeoutPromise
+        ]) as any;
+
+        if (error) throw error;
+
+        // Si tenemos sesión, intentamos cargar el perfil
+        if (data?.session) {
+          setSession(data.session);
+          // Usamos catch aquí para que si falla el perfil (ej. error de red), no nos saque de la app
+          await fetchProfile(data.session.user.id).catch(err => {
+             console.error("No se pudo cargar perfil (posible modo offline):", err);
+             // Opcional: Podrías permitir acceso limitado aquí si tienes datos en Dexie
+          });
+        } else {
+          // No hay sesión guardada
+          setSession(null);
+          setCurrentStaff(null);
+          localStorage.removeItem('nexus_business_id');
+        }
+
+      } catch (error) {
+        console.error("🔴 Error crítico o Timeout al iniciar:", error);
+        // Si falla todo, asumimos que no hay sesión segura y quitamos el loading
+        // para que el usuario pueda ver el Login o el botón de reintentar
         setSession(null);
-        setCurrentStaff(null);
-        localStorage.removeItem('nexus_business_id');
+        toast.error("Problema de conexión. Verifica tu VPN.");
+      } finally {
+        // CRUCIAL: Siempre apagar el loading, pase lo que pase
+        setLoading(false);
       }
-      setLoading(false);
     };
+
     initSession();
 
+    // El listener de cambios de auth se mantiene igual
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (event === 'SIGNED_IN' && newSession) {
         if (lastLoadedUserId.current === newSession.user.id) {
@@ -375,7 +414,7 @@ function BusinessApp() {
         setCurrentStaff(null);
         lastLoadedUserId.current = null;
         setIsLocked(false);
-        localStorage.clear(); // ✅ Limpieza total al salir
+        localStorage.clear(); 
       }
       else if (event === 'TOKEN_REFRESHED') {
         setSession(newSession);
