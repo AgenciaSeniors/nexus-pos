@@ -11,12 +11,23 @@ import {
 } from './db';
 import { supabase } from './supabase';
 
-// Helper para verificar conexión
+// Helper para verificar conexión real
 export function isOnline() {
   return typeof navigator !== 'undefined' && navigator.onLine;
 }
 
-// --- GESTIÓN DE COLA (Añadir ítems) ---
+// --- RECUPERACIÓN DE ZOMBIES ---
+// Si el PC se apaga mientras subía una venta, el item queda en 'processing'.
+// Esta función lo detecta al iniciar y lo devuelve a 'pending' para que no se pierda.
+export async function resetProcessingItems() {
+    const stuckItems = await db.action_queue.where('status').equals('processing').toArray();
+    if (stuckItems.length > 0) {
+        console.warn(`⚠️ Recuperando ${stuckItems.length} ítems interrumpidos...`);
+        await db.action_queue.where('status').equals('processing').modify({ status: 'pending' });
+    }
+}
+
+// --- GESTIÓN DE COLA (Entrada) ---
 
 export async function addToQueue(type: QueueItem['type'], payload: QueuePayload) {
   try {
@@ -29,30 +40,29 @@ export async function addToQueue(type: QueueItem['type'], payload: QueuePayload)
       status: 'pending'
     });
     
-    // Intentar procesar inmediatamente si hay red (sin bloquear)
+    // Disparo optimista: si hay red, intenta subir ya (sin bloquear UI)
     if (isOnline()) {
       processQueue();
     }
   } catch (error) {
-    console.error("Error al añadir a la cola de sincronización:", error);
+    console.error("Error crítico al añadir a la cola de sincronización:", error);
   }
 }
 
-// --- PROCESAMIENTO INDIVIDUAL (Lógica completa por tipo) ---
+// --- PROCESAMIENTO ATÓMICO POR TIPO (Lógica de Negocio Completa) ---
 
 async function processItem(item: QueueItem) {
   const { type, payload } = item;
 
   switch (type) {
+    // CASO 1: VENTAS (La más crítica)
+    // Usa RPC para garantizar que Venta y Stock ocurran juntos o no ocurran.
     case 'SALE': {
       const { sale, items } = payload as SalePayload;
-      
-      // 1. Limpieza de datos locales antes de subir
+      // Limpieza: quitamos campos locales que no existen en Supabase
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...saleClean } = sale;
 
-      // 2. Subir a Supabase usando RPC Seguro (Atomicidad: Venta + Stock)
-      // Esto evita que se venda stock que no existe
       const { error } = await supabase.rpc('process_sale_transaction', {
         p_sale: saleClean,
         p_items: items || []
@@ -63,82 +73,80 @@ async function processItem(item: QueueItem) {
         throw new Error(`Fallo transacción venta ${sale.id}: ${error.message}`);
       }
       
-      // 3. ✅ ACTUALIZACIÓN LOCAL INMEDIATA
-      // Importante: Marcamos como 'synced' en Dexie para que el botón verde reaccione YA.
+      // ✅ ÉXITO: Actualizamos Dexie inmediatamente para que el botón se ponga verde
       await db.sales.update(sale.id, { sync_status: 'synced' });
-      
-      console.log(`✅ Venta ${sale.id} sincronizada y stock descontado.`);
+      console.log(`✅ Venta ${sale.id} sincronizada.`);
       break;
     }
 
+    // CASO 2: MOVIMIENTOS DE INVENTARIO (Entradas/Salidas manuales)
     case 'MOVEMENT': {
       const movement = payload as InventoryMovement;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanMov } = movement;
       
-      // 1. Subir
       const { error } = await supabase.from('inventory_movements').insert(cleanMov);
-      if (error) throw new Error(`Error movimiento: ${error.message}`);
+      if (error) throw new Error(`Error subiendo movimiento: ${error.message}`);
 
-      // 2. ✅ ACTUALIZAR ESTADO LOCAL
-      await db.movements.update(movement.id, { sync_status: 'synced' });
-      console.log('✅ Movimiento de inventario sincronizado.');
+      // Actualizar estado local
+      if (db.movements) await db.movements.update(movement.id, { sync_status: 'synced' });
+      console.log('✅ Movimiento sincronizado.');
       break;
     }
 
+    // CASO 3: AUDITORÍA (Logs de seguridad)
     case 'AUDIT': {
       const log = payload as AuditLog;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanLog } = log;
       
-      // 1. Subir
       const { error } = await supabase.from('audit_logs').insert(cleanLog);
-      if (error) throw new Error(`Error audit: ${error.message}`);
+      if (error) throw new Error(`Error subiendo audit: ${error.message}`);
 
-      // 2. ✅ ACTUALIZAR ESTADO LOCAL
+      // Actualizar estado local
       await db.audit_logs.update(log.id, { sync_status: 'synced' });
-      console.log('✅ Log de auditoría sincronizado.');
+      console.log('✅ Auditoría sincronizada.');
       break;
     }
 
-    // --- Casos de Bajada (Sync Down) o Configuración ---
-
+    // CASO 4: PRODUCTOS (Subida desde el POS - Admin)
     case 'PRODUCT_SYNC': {
       const product = payload as Product;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanProduct } = product;
       
       const { error } = await supabase.from('products').upsert(cleanProduct);
-      if (error) throw new Error(`Error sincronizando producto: ${error.message}`);
+      if (error) throw new Error(`Error sync producto: ${error.message}`);
       break;
     }
 
+    // CASO 5: CLIENTES
     case 'CUSTOMER_SYNC': {
       const customer = payload as Customer;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanCustomer } = customer;
       
       const { error } = await supabase.from('customers').upsert(cleanCustomer);
-      if (error) throw new Error(`Error sincronizando cliente: ${error.message}`);
+      if (error) throw new Error(`Error sync cliente: ${error.message}`);
       break;
     }
 
+    // CASO 6: CONFIGURACIÓN (Settings)
     case 'SETTINGS_SYNC': {
       const config = payload as BusinessConfig;
-      
       const updateData = {
         name: config.name,
         address: config.address,
         phone: config.phone,
         receipt_message: config.receipt_message
       };
-
+      
       const { error } = await supabase
         .from('businesses')
         .update(updateData)
         .eq('id', config.id);
 
-      if (error) throw new Error(`Error actualizando config negocio: ${error.message}`);
+      if (error) throw new Error(`Error actualizando negocio: ${error.message}`);
       break;
     }
 
@@ -147,12 +155,12 @@ async function processItem(item: QueueItem) {
   }
 }
 
-// --- PROCESADOR DE COLA (Recursivo y Robusto) ---
+// --- MOTOR DE PROCESAMIENTO (Recursivo y Resiliente) ---
 
 export async function processQueue() {
   if (!isOnline()) return;
 
-  // Procesamos en lotes pequeños (5) para no congelar la interfaz
+  // Procesamos en lotes de 5 para no saturar la red, pero mantenemos el orden
   const pendingItems = await db.action_queue
     .where('status').equals('pending')
     .limit(5) 
@@ -162,13 +170,13 @@ export async function processQueue() {
 
   for (const item of pendingItems) {
     try {
-      // 1. Marcar como procesando
+      // 1. Marcar como procesando (Bloqueo para no procesar doble)
       await db.action_queue.update(item.id, { status: 'processing' });
-
-      // 2. Ejecutar lógica específica
+      
+      // 2. Ejecutar la lógica específica definida arriba
       await processItem(item);
-
-      // 3. Si éxito, eliminar de la cola
+      
+      // 3. Éxito: Eliminar de la cola de pendientes
       await db.action_queue.delete(item.id); 
 
     } catch (error: unknown) {
@@ -177,15 +185,17 @@ export async function processQueue() {
       
       console.error(`❌ Fallo ítem ${item.type} (${item.id}):`, errorMessage);
 
-      // Lógica de "Dead Letter": Si falla 5 veces, lo apartamos como FATAL
+      // ESTRATEGIA "DEAD LETTER":
+      // Si falla 5 veces consecutivas (ej. datos corruptos), lo apartamos
+      // a estado 'failed' (antes fatal_error) para que NO bloquee el resto de ventas.
       if (newRetries >= 5) {
-          console.error(`💀 Ítem ${item.id} marcado como FATAL tras 5 intentos.`);
+          console.error(`💀 Ítem ${item.id} marcado como FATAL.`);
           await db.action_queue.update(item.id, { 
               status: 'failed', 
-              error: `ABANDONADO: ${errorMessage}` 
+              error: `ABANDONADO tras 5 intentos: ${errorMessage}` 
           });
       } else {
-          // Reintentar luego (Backoff simple)
+          // Reintentar más tarde (Backoff implícito)
           await db.action_queue.update(item.id, { 
               status: 'pending', 
               retries: newRetries, 
@@ -195,10 +205,74 @@ export async function processQueue() {
     }
   }
 
-  // Si quedan pendientes, seguimos procesando (recursividad)
+  // RECURSIVIDAD CONTROLADA:
+  // Si quedan ítems pendientes, se llama a sí misma para seguir procesando.
+  // IMPORTANTE: Usamos 'await' para que la función padre (syncManualFull) sepa cuándo terminamos de verdad.
   if ((await db.action_queue.where('status').equals('pending').count()) > 0) {
-    processQueue();
+    await processQueue(); 
   }
+}
+
+// --- FUNCIONES DE SINCRONIZACIÓN PÚBLICAS ---
+
+export async function syncPush() {
+    console.log("⬆️ Iniciando Push (Subida de datos)...");
+    await resetProcessingItems(); // Limpieza defensiva de zombies
+    await processQueue();
+}
+
+export async function syncPull() {
+    if (!isOnline()) return;
+    
+    console.log("⬇️ Iniciando Pull (Descarga de datos)...");
+    const settings = await db.settings.toArray();
+    
+    if (settings.length > 0) {
+        const businessId = settings[0].id;
+        
+        // Descargamos TODO en paralelo para máxima velocidad
+        await Promise.all([
+            syncCriticalData(businessId), // Staff, Licencia
+            syncHeavyData(businessId)     // Productos, Clientes
+        ]);
+        console.log("✨ Pull completado.");
+    }
+}
+
+/**
+ * 🔥 SYNC MANUAL FULL (La función del Botón)
+ * Lógica: SECUENCIAL ESTRICTA
+ * 1. Primero SUBE todo lo pendiente (Push).
+ * 2. Solo si termina de subir, BAJA las novedades (Pull).
+ * Esto evita sobrescribir tu stock local con datos viejos del servidor.
+ */
+export async function syncManualFull() {
+    if (!isOnline()) throw new Error("Sin conexión a internet");
+    
+    console.log("🔄 Iniciando Ciclo de Sincronización Completa...");
+    
+    // 1. SUBIR
+    await syncPush();
+    
+    // 2. BAJAR
+    await syncPull();
+    
+    console.log("✅ Ciclo de Sincronización Finalizado.");
+}
+
+// --- LISTENERS AUTOMÁTICOS ---
+if (typeof window !== 'undefined') {
+    // Al volver la conexión, intentar subir cola
+    window.addEventListener('online', () => {
+        console.log("🌐 Conexión detectada. Reanudando cola...");
+        resetProcessingItems().then(() => processQueue());
+    });
+    
+    // Al cargar la app, limpiar zombies
+    resetProcessingItems();
+
+    // Cronjob de fondo (cada 30s intenta subir si hay red)
+    setInterval(() => { if (isOnline()) processQueue(); }, 30000);
 }
 
 // --- ESTRATEGIA DE CARGA DE DATOS (Data Fetching) ---
@@ -206,7 +280,6 @@ export async function processQueue() {
 // 1. Datos Críticos (Rápidos: Licencia, Staff, Cajas)
 export async function syncCriticalData(businessId: string) {
   if (!isOnline()) return; 
-
   try {
     const [businessResult, staffResult, registersResult] = await Promise.all([
       supabase.from('businesses').select('*').eq('id', businessId).single(),
@@ -214,7 +287,7 @@ export async function syncCriticalData(businessId: string) {
       supabase.from('cash_registers').select('*').eq('business_id', businessId)
     ]);
 
-    // Actualizar Negocio
+    // Negocio
     if (businessResult.data) {
       await db.settings.put({
         id: businessResult.data.id, 
@@ -223,128 +296,61 @@ export async function syncCriticalData(businessId: string) {
         phone: businessResult.data.phone,
         receipt_message: businessResult.data.receipt_message,
         subscription_expires_at: businessResult.data.subscription_expires_at,
-        status: businessResult.data.status, // Cast seguro
+        // CORRECCIÓN: Tipo explícito en lugar de any
+        status: businessResult.data.status as 'active' | 'suspended' | 'pending', 
         last_check: new Date().toISOString(), 
         sync_status: 'synced'
       });
     }
 
-    // Actualizar Staff (Limpiar y recargar para asegurar PINs correctos)
+    // Staff
     if (staffResult.data) {
       await db.staff.clear(); 
       await db.staff.bulkPut(staffResult.data);
     }
 
-    // Actualizar Cajas
+    // Cajas
     if (registersResult.data) {
       const cleanRegisters = registersResult.data.map(r => ({ ...r, sync_status: 'synced' }));
-      
       await db.cash_registers.bulkPut(cleanRegisters);
     }
 
   } catch (error) {
-    console.error('⚠️ Error en syncCriticalData:', error);
+    console.error('⚠️ Error carga crítica:', error);
   }
 }
 
 // 2. Datos Pesados (Inventario y Clientes)
 export async function syncHeavyData(businessId: string) {
   if (!isOnline()) return; 
-
   try {
-    console.log('⬇️ Descargando inventario actualizado...');
+    console.log('⬇️ Descargando inventario y clientes...');
     const [productsResult, customersResult] = await Promise.all([
       supabase.from('products').select('*').eq('business_id', businessId),
       supabase.from('customers').select('*').eq('business_id', businessId)
     ]);
 
-    // Actualizar Productos
+    // Productos
     if (productsResult.data) {
-        const cleanProducts = productsResult.data.map(p => ({
-            ...p,
-            sync_status: 'synced' // Importante: vienen de la nube, están sincronizados
-        }));
+        const cleanProducts = productsResult.data.map(p => ({ ...p, sync_status: 'synced' }));
         
         await db.products.bulkPut(cleanProducts);
-        console.log(`📦 ${productsResult.data.length} Productos actualizados.`);
     }
 
-    // Actualizar Clientes
+    // Clientes
     if (customersResult.data) {
-        const cleanCustomers = customersResult.data.map(c => ({
-            ...c,
-            sync_status: 'synced'
-        }));
+        const cleanCustomers = customersResult.data.map(c => ({ ...c, sync_status: 'synced' }));
         
         await db.customers.bulkPut(cleanCustomers);
     }
 
   } catch (error) {
-    console.error('⚠️ Error en syncHeavyData:', error);
+    console.error('⚠️ Error carga inventario:', error);
   }
 }
 
-// --- FUNCIONES MAESTRAS DE SINCRONIZACIÓN ---
-
-export async function syncPush() {
-    console.log("⬆️ Iniciando subida de cambios pendientes...");
-    await processQueue();
-}
-
-export async function syncPull() {
-    if (!isOnline()) return;
-    
-    console.log("⬇️ Iniciando descarga de actualizaciones...");
-    const settings = await db.settings.toArray();
-    
-    if (settings.length > 0) {
-        const businessId = settings[0].id;
-        // Descargar TODO para asegurar consistencia
-        await Promise.all([
-            syncCriticalData(businessId),
-            syncHeavyData(businessId)
-        ]);
-        console.log("✨ Sincronización de bajada completada.");
-    }
-}
-
-/**
- * ⚡ SYNC MANUAL FULL (La función del Botón)
- * Ejecuta una sincronización estricta SECUENCIAL:
- * 1. Sube todo lo pendiente (Push)
- * 2. Solo entonces, baja las novedades (Pull)
- * Esto evita sobrescribir datos locales con datos viejos del servidor.
- */
-export async function syncManualFull() {
-    if (!isOnline()) throw new Error("Sin conexión a internet");
-    
-    console.log("🔄 Iniciando Ciclo de Sincronización Completa...");
-    
-    // Paso 1: PUSH (Vital: Vaciar cola antes de bajar nada)
-    await syncPush();
-    
-    // Paso 2: PULL (Refrescar la verdad desde el servidor)
-    await syncPull();
-    
-    console.log("✅ Ciclo completado.");
-}
-
-// Wrapper para AuthGuard (Compatibilidad)
+// Wrapper para compatibilidad con AuthGuard
 export async function syncBusinessProfile(businessId: string) {
   await syncCriticalData(businessId);
   await syncHeavyData(businessId);
-}
-
-// Auto-Sync en background (Solo Push para no interrumpir al usuario con descargas pesadas)
-if (typeof window !== 'undefined') {
-    window.addEventListener('online', () => {
-        console.log("🌐 Conexión restaurada. Procesando cola...");
-        processQueue();
-    });
-
-    setInterval(() => {
-        if (isOnline()) {
-            processQueue();
-        }
-    }, 30000);
 }

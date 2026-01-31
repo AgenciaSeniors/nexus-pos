@@ -147,8 +147,8 @@ export interface AuditLog {
   business_id: string;
   staff_id: string;
   staff_name: string;
-  // ✅ NUEVAS ACCIONES AGREGADAS A LA LISTA PERMITIDA
-  action: 'LOGIN' | 'LOGOUT' | 'SALE' | 'DELETE_PRODUCT' | 'UPDATE_STOCK' | 'OPEN_DRAWER' | 'VOID_SALE' | 'CREATE_CUSTOMER' | 'UPDATE_CUSTOMER' | 'DELETE_CUSTOMER';
+  // ✅ CORREGIDO: Agregamos 'CREATE_PRODUCT' a la lista de acciones permitidas
+  action: 'LOGIN' | 'LOGOUT' | 'SALE' | 'CREATE_PRODUCT' | 'DELETE_PRODUCT' | 'UPDATE_STOCK' | 'OPEN_DRAWER' | 'VOID_SALE' | 'CREATE_CUSTOMER' | 'UPDATE_CUSTOMER' | 'DELETE_CUSTOMER';
   details: Record<string, unknown> | null;
   created_at: string;
   sync_status: 'pending_create' | 'synced';

@@ -3,7 +3,8 @@ import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Product, type Sale, type ParkedOrder, type SaleItem, type Staff, type InventoryMovement } from '../lib/db';
 import { supabase } from '../lib/supabase';
-import { addToQueue } from '../lib/sync';
+// ✅ CORRECCIÓN: Importamos syncPush para subir ventas al instante
+import { addToQueue, syncPush } from '../lib/sync';
 import { currency } from '../lib/currency';
 import { logAuditAction } from '../lib/audit';
 import { TicketModal } from '../components/TicketModal';
@@ -18,7 +19,6 @@ interface CartItem extends Product {
 
 export function PosPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
-  
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [query, setQuery] = useState('');
@@ -28,23 +28,21 @@ export function PosPage() {
   const [lastSale, setLastSale] = useState<Sale | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showParkedModal, setShowParkedModal] = useState(false);
+  
   const parkedCount = useLiveQuery(() => db.parked_orders.count()) || 0;
   const businessId = localStorage.getItem('nexus_business_id');
+  
   const allProducts = useLiveQuery(async () => {
-
     if (!businessId) return [];
-    return await db.products
-      .where('business_id')
-      .equals(businessId)
-      .toArray();
+    return await db.products.where('business_id').equals(businessId).toArray();
   }, [businessId]) || [];
+
   useEffect(() => {
-    if (searchInputRef.current) {
-      searchInputRef.current.focus();
-    }
+    if (searchInputRef.current) searchInputRef.current.focus();
   }, []);
   
   const categories = ['Todo', ...new Set(allProducts.map(p => p.category).filter((c): c is string => !!c))].sort();
+
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F1') {
@@ -68,11 +66,11 @@ export function PosPage() {
         }
       }
     };
-
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [cart, showPaymentModal, showParkedModal, lastSale, isCheckout, query]);
 
+  // Caché de Business ID si hay red
   useEffect(() => {
     const cacheBusinessId = async () => {
       if (!navigator.onLine) return;
@@ -170,7 +168,7 @@ export function PosPage() {
             price: item.price,
             quantity: item.quantity,
             unit: item.unit,
-            stock: 999,
+            stock: 999, // Stock temporal, se actualizará al re-sincronizar
             sku: '',
             business_id: order.business_id,
             sync_status: 'synced'
@@ -184,19 +182,12 @@ export function PosPage() {
     if (cart.length > 0) {
       toast("Hay una venta en curso", {
         description: "¿Deseas reemplazarla por la orden en espera?",
-        action: {
-          label: "Reemplazar",
-          onClick: doRestore
-        },
-        cancel: {
-          label: "Cancelar",
-          onClick:()=>{}
-        },
+        action: { label: "Reemplazar", onClick: doRestore },
+        cancel: { label: "Cancelar", onClick:()=>{} },
         duration: 5000,
       });
       return;
     }
-
     doRestore();
   };
 
@@ -245,9 +236,12 @@ export function PosPage() {
         }));
 
         await db.transaction('rw', [db.products, db.sales, db.movements, db.audit_logs, db.action_queue], async () => {
+          // 1. Guardar venta local
           await db.sales.add(newSale);
+          // 2. Encolar venta completa (con items)
           await addToQueue('SALE', { sale: newSale, items: saleItemsForQueue });
 
+          // 3. Actualizar stock local y registrar movimientos
           for (const item of cart) {
             const product = await db.products.get(item.id);
             if (product) {
@@ -266,6 +260,8 @@ export function PosPage() {
               await addToQueue('MOVEMENT', movement);
             }
           }
+          
+          // 4. Auditoría
           await logAuditAction('SALE', { sale_id: saleId, total: totalAmount }, {
               id: currentStaff.id, name: currentStaff.name, business_id: businessId
           });
@@ -283,6 +279,10 @@ export function PosPage() {
                 setQuery('');
                 searchInputRef.current?.focus();
             }, 200);
+            
+            // ✅ UX MEJORADA: Intentamos subir la venta inmediatamente
+            syncPush().catch(console.error);
+            
             return `Venta registrada: ${currency.format(totalAmount)}`;
         },
         error: (err) => {
@@ -294,7 +294,6 @@ export function PosPage() {
   };
 
   return (
-    // ✅ UX FIX 1: 'h-dvh' (Dynamic Viewport Height) evita que el teclado o la barra del móvil tapen la app
     <div className="flex flex-col md:flex-row h-[calc(100dvh-4rem)] md:h-[calc(100dvh-2rem)] overflow-hidden">
       
       {/* IZQUIERDA: Catálogo */}
@@ -403,8 +402,6 @@ export function PosPage() {
                     </div>
                   </div>
                   
-                  {/* ✅ UX FIX 2: Controles Táctiles Mejorados */}
-                  {/* Botones más grandes (h-10/12) y separados para dedos */}
                   <div className="flex items-center justify-between mt-1">
                     <div className="flex items-center bg-slate-100 rounded-lg p-1 gap-1 border border-slate-200">
                       <button 
@@ -417,9 +414,9 @@ export function PosPage() {
                       <div className="relative">
                         <input 
                             type="text" 
-                            inputMode="numeric" /* ✅ UX FIX: Teclado numérico en móvil */
+                            inputMode="numeric"
                             pattern="[0-9]*"
-                            className="w-12 text-center bg-transparent font-bold text-slate-800 focus:outline-none p-0 appearance-none text-base" /* text-base evita zoom en iOS */
+                            className="w-12 text-center bg-transparent font-bold text-slate-800 focus:outline-none p-0 appearance-none text-base"
                             value={item.quantity}
                             onChange={(e) => updateQuantity(item.id, parseFloat(e.target.value) || 0)}
                             onFocus={(e) => e.target.select()}

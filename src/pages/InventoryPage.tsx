@@ -3,7 +3,6 @@ import { useOutletContext } from 'react-router-dom';
 import { db, type Product, type Staff, type InventoryMovement } from '../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Plus, Search, Edit2, Trash2, Package, Loader2, History as HistoryIcon, LayoutList } from 'lucide-react';
-// ✅ CORRECCIÓN: Importamos syncPush que faltaba
 import { syncPush, addToQueue } from '../lib/sync';
 import { currency } from '../lib/currency';
 import { toast } from 'sonner';
@@ -11,13 +10,11 @@ import { logAuditAction } from '../lib/audit';
 import { InventoryHistory } from '../components/InventoryHistory';
 
 export function InventoryPage() {
-  // 1. Obtener usuario y Negocio (Contexto y LocalStorage)
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
   const businessId = localStorage.getItem('nexus_business_id');
 
   const [activeTab, setActiveTab] = useState<'stock' | 'history'>('stock');
 
-  // 2. Consulta de productos (BLINDADA por Negocio)
   const products = useLiveQuery(async () => {
     if (!businessId) return [];
     return await db.products
@@ -52,18 +49,16 @@ export function InventoryPage() {
     setIsLoading(true);
 
     try {
-      if (!businessId) {
-        throw new Error("No se identificó el negocio. Reinicia sesión.");
-      }
+      if (!businessId) throw new Error("No se identificó el negocio.");
 
-      // VALIDACIÓN: SKU ÚNICO
+      // Validación de SKU
       if (formData.sku && formData.sku.trim() !== '') {
         const duplicate = await db.products
           .where({ business_id: businessId, sku: formData.sku })
           .first();
         
         if (duplicate && duplicate.id !== editingId) {
-          toast.error(`El SKU "${formData.sku}" ya existe en el producto "${duplicate.name}"`);
+          toast.error(`El SKU "${formData.sku}" ya existe en "${duplicate.name}"`);
           setIsLoading(false);
           return;
         }
@@ -88,29 +83,25 @@ export function InventoryPage() {
         const original = await db.products.get(editingId);
         if (!original) return;
 
-        const finalBusinessId = original.business_id || businessId;
         const oldStock = original.stock;
         const newStock = productData.stock || 0;
         const difference = newStock - oldStock;
 
-        // ✅ CORRECCIÓN CRÍTICA: Agregamos db.audit_logs a la transacción
         await db.transaction('rw', [db.products, db.movements, db.action_queue, db.audit_logs], async () => {
-            // 1. Actualizar Producto
             const updatedProduct = {
               ...original,
               ...productData,
-              business_id: finalBusinessId,
+              business_id: businessId,
               sync_status: 'pending_update' as const
             };
             
             await db.products.update(editingId, updatedProduct);
             await addToQueue('PRODUCT_SYNC', updatedProduct);
 
-            // 2. Registrar Movimiento (si cambió el stock)
             if (difference !== 0) {
                 const movement: InventoryMovement = {
                     id: crypto.randomUUID(),
-                    business_id: finalBusinessId,
+                    business_id: businessId,
                     product_id: editingId,
                     staff_id: currentStaff?.id || 'system',
                     qty_change: difference,
@@ -122,14 +113,12 @@ export function InventoryPage() {
                 await db.movements.add(movement);
                 await addToQueue('MOVEMENT', movement);
 
-                // 3. Auditoría (Ahora sí funciona porque db.audit_logs está en la transacción)
                 await logAuditAction('UPDATE_STOCK', {
                     product: productData.name,
                     diff: difference
                 }, currentStaff);
             }
         });
-
         toast.success('Producto actualizado');
 
       } else {
@@ -137,7 +126,6 @@ export function InventoryPage() {
         const newProductId = crypto.randomUUID();
         const initialStock = productData.stock || 0;
 
-        // También agregamos db.audit_logs aquí por si acaso decidas auditar la creación en el futuro
         await db.transaction('rw', [db.products, db.movements, db.action_queue, db.audit_logs], async () => {
             const newProduct = {
                 id: newProductId,
@@ -156,6 +144,7 @@ export function InventoryPage() {
             await db.products.add(newProduct);
             await addToQueue('PRODUCT_SYNC', newProduct);
 
+            // Registrar movimiento inicial
             if (initialStock !== 0) {
                 const movement: InventoryMovement = {
                     id: crypto.randomUUID(),
@@ -167,18 +156,25 @@ export function InventoryPage() {
                     created_at: new Date().toISOString(),
                     sync_status: 'pending_create'
                 };
-
                 await db.movements.add(movement);
                 await addToQueue('MOVEMENT', movement);
             }
+
+            // ✅ NUEVO: Auditoría de creación
+            await logAuditAction('CREATE_PRODUCT', { 
+                product: newProduct.name, 
+                stock: initialStock 
+            }, currentStaff);
         });
         
-        toast.success('Producto creado correctamente');
+        toast.success('Producto creado');
       }
 
       setIsFormOpen(false);
       resetForm();
-      syncPush(); // ✅ Ahora sí existe esta función gracias a la corrección en sync.ts
+      
+      // Intentar subir cambios inmediatamente (sin bloquear)
+      syncPush().catch(console.error);
 
     } catch (error: unknown) {
       console.error(error);
@@ -219,7 +215,8 @@ export function InventoryPage() {
       await db.products.update(id, changes);
       await addToQueue('PRODUCT_SYNC', { ...product, ...changes });
       await logAuditAction('DELETE_PRODUCT', { productName: product.name, id: product.id }, currentStaff);
-
+      
+      syncPush().catch(console.error);
       toast.success('Producto eliminado');
     } catch (error) {
       console.error(error);
@@ -283,7 +280,6 @@ export function InventoryPage() {
         )}
       </div>
 
-      {/* CONTENIDO PRINCIPAL */}
       {activeTab === 'stock' ? (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in duration-200">
             {!products ? (
@@ -350,7 +346,6 @@ export function InventoryPage() {
           </div>
       )}
 
-      {/* MODAL FORMULARIO */}
       {isFormOpen && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
