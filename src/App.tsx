@@ -369,7 +369,7 @@ function BusinessApp() {
         // Creamos una promesa que falla automáticamente a los 10 segundos
         // Esto evita que la app se quede "colgada" si la VPN falla silenciosamente
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Tiempo de espera de red agotado')), 10000)
+          setTimeout(() => reject(new Error('Tiempo de espera de red agotado')), 30000)
         );
 
         // Competimos: ¿Quién gana? ¿Supabase o el Reloj?

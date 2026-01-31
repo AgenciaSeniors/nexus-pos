@@ -44,8 +44,6 @@ async function processItem(item: QueueItem) {
     case 'SALE': {
       const { sale, items } = payload as SalePayload;
       
-      // ✅ CORRECCIÓN: Ya no extraemos 'shift_id' manualmente. 
-      // Al dejarlo en 'saleClean', se enviará a Supabase, lo cual es correcto.
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...saleClean } = sale;
       
@@ -175,6 +173,7 @@ export async function processQueue() {
     }
   }
 }
+
 export async function syncPush() {
     console.log("⬆️ Iniciando subida manual...");
     await processQueue();
@@ -185,23 +184,23 @@ export async function syncPull() {
     await processQueue();
 }
 
-window.addEventListener('online', () => {
-    console.log("🌐 Conexión restaurada. Procesando cola...");
-    processQueue();
-});
-
-setInterval(() => {
-    if (isOnline()) {
+// Listeners globales
+if (typeof window !== 'undefined') {
+    window.addEventListener('online', () => {
+        console.log("🌐 Conexión restaurada. Procesando cola...");
         processQueue();
-    }
-}, 30000);
-// --- AGREGAR ESTO AL FINAL DE src/lib/sync.ts ---
+    });
 
-// Función para descargar la licencia y configuración desde la nube
-// Reemplaza la función syncBusinessProfile en src/lib/sync.ts
+    setInterval(() => {
+        if (isOnline()) {
+            processQueue();
+        }
+    }, 30000);
+}
+
+// --- FUNCIÓN DE CARGA INICIAL ---
 
 export async function syncBusinessProfile(businessId: string) {
-  // Solo intentamos si hay conexión
   if (!isOnline()) return; 
 
   try {
@@ -228,10 +227,10 @@ export async function syncBusinessProfile(businessId: string) {
         last_check: new Date().toISOString(), 
         sync_status: 'synced'
       });
+      console.log('✅ Negocio sincronizado.');
     }
 
-    // 2. EMPLEADOS (STAFF) - ¡ESTO ES LO QUE FALTABA!
-    // Esto recupera tu PIN real de la base de datos
+    // 2. EMPLEADOS (STAFF)
     const { data: staff, error: staffError } = await supabase
       .from('staff')
       .select('*')
@@ -245,7 +244,7 @@ export async function syncBusinessProfile(businessId: string) {
       console.log(`✅ ${staff.length} Empleados descargados.`);
     }
 
-    // 3. CAJAS REGISTRADORAS (Para que puedas abrir turno)
+    // 3. CAJAS REGISTRADORAS
     const { data: registers, error: regError } = await supabase
       .from('cash_registers')
       .select('*')
@@ -259,10 +258,12 @@ export async function syncBusinessProfile(businessId: string) {
             sync_status: 'synced'
         }));
         
+        // ¡Corregido! Sin comentarios extraños, el código es válido.
         await db.cash_registers.bulkPut(cleanRegisters);
+        console.log('✅ Cajas descargadas.');
     }
-    
-    console.log('✅ Sincronización inicial completada.');
+
+    console.log('✨ Sincronización inicial completada.');
 
   } catch (error) {
     console.error('⚠️ Error en sincronización inicial:', error);
