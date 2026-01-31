@@ -1,65 +1,92 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { Ban } from 'lucide-react'; // Quitamos LogOut que no se usaba
+import { db } from '../lib/db';
+import { syncBusinessProfile, isOnline } from '../lib/sync';
+import { Loader2 } from 'lucide-react';
 
-export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const [status, setStatus] = useState<'loading' | 'active' | 'suspended' | 'error'>('loading');
+interface AuthGuardProps {
+  children: React.ReactNode;
+}
+
+export function AuthGuard({ children }: AuthGuardProps) {
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [checkingLicense, setCheckingLicense] = useState(false);
 
   useEffect(() => {
-    // Definimos la función DENTRO del efecto para evitar errores de linting
-    async function checkBusinessStatus() {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      // Si no hay sesión, dejamos pasar (el Login se encargará después) o mostramos error
-      // Para este caso, si no hay sesión asumimos que está cargando o dejamos pasar al Login
-      if (!session) {
-        setStatus('active'); 
-        return;
-      }
+    let isMounted = true; // Bandera para evitar actualizar estado si el componente se desmonta
 
-      // 1. Buscamos el perfil
-      const { data: perfil } = await supabase
-        .from('profiles')
-        .select('business_id')
-        .eq('id', session.user.id)
-        .single();
-
-      if (perfil?.business_id) {
-        // 2. Buscamos el estado del negocio
-        const { data: business } = await supabase
-          .from('businesses')
-          .select('status')
-          .eq('id', perfil.business_id)
-          .single();
+    async function checkSession() {
+      try {
+        // 1. Verificamos sesión de Supabase (básico)
+        const { data: { session } } = await supabase.auth.getSession();
         
-        // Si es 'active' pasa, si no, 'suspended'
-        setStatus(business?.status === 'active' ? 'active' : 'suspended');
-      } else {
-        // Si tiene usuario pero no perfil/negocio, algo anda mal, pero lo dejamos activo para que no se bloquee
-        setStatus('active');
+        if (!session) {
+          if (isMounted) navigate('/login');
+          return;
+        }
+
+        // 2. Intentamos actualizar licencia si hay internet
+        // Esto refresca la fecha de vencimiento en Dexie
+        if (isOnline()) {
+          const localSettings = await db.settings.toArray();
+          // Solo intentamos sincronizar si ya sabemos qué negocio es (tenemos datos locales)
+          if (localSettings.length > 0) {
+             if (isMounted) setCheckingLicense(true);
+             await syncBusinessProfile(localSettings[0].id);
+          }
+        }
+
+        // 3. Validamos fecha de vencimiento local
+        // Leemos la configuración (ya sea la vieja o la que acabamos de bajar)
+        const settings = await db.settings.toArray();
+        const config = settings[0]; // Asumimos un solo negocio por dispositivo
+
+        if (config) {
+          // A) ¿Está suspendido manualmente?
+          if (config.status === 'suspended') {
+            alert('🚫 Su cuenta ha sido SUSPENDIDA. Contacte a soporte.');
+            if (isMounted) navigate('/login');
+            return;
+          }
+
+          // B) ¿Caducó la fecha?
+          if (config.subscription_expires_at) {
+            const expiryDate = new Date(config.subscription_expires_at);
+            const now = new Date();
+            
+            // Damos un pequeño margen de gracia o comparamos estrictamente
+            if (now > expiryDate) {
+              alert('⚠️ Su licencia ha VENCIDO. Por favor renueve para continuar.');
+              if (isMounted) navigate('/login');
+              return;
+            }
+          }
+        }
+
+        // Si pasamos todas las pruebas, dejamos entrar
+        if (isMounted) {
+          setLoading(false);
+          setCheckingLicense(false);
+        }
+
+      } catch (error) {
+        console.error('Error verificando sesión:', error);
+        if (isMounted) navigate('/login');
       }
     }
 
-    checkBusinessStatus();
-  }, []);
+    checkSession();
 
-  if (status === 'loading') return <div className="h-screen flex items-center justify-center text-slate-400">Verificando licencia...</div>;
+    return () => { isMounted = false; };
+  }, [navigate]);
 
-  if (status === 'suspended') {
+  if (loading || checkingLicense) {
     return (
-      <div className="h-screen flex flex-col items-center justify-center bg-slate-50 p-4 text-center">
-        <Ban size={64} className="text-red-500 mb-4" />
-        <h1 className="text-2xl font-bold text-slate-800">Servicio Suspendido</h1>
-        <p className="text-slate-500 mt-2 max-w-md">
-          La licencia de este negocio ha expirado o está pausada. 
-          Por favor, contacta al administrador para reactivar el servicio.
-        </p>
-        <button 
-          onClick={() => supabase.auth.signOut()}
-          className="mt-8 px-6 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition-colors"
-        >
-          Cerrar Sesión
-        </button>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-600 mb-4" />
+        <p className="text-gray-600">Verificando credenciales y licencia...</p>
       </div>
     );
   }
