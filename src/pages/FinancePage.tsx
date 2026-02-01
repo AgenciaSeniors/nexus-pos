@@ -14,7 +14,8 @@ import {
 import { 
   Calendar, TrendingUp, ArrowLeft, ArrowRight, RefreshCw,
   BarChart3, DollarSign, Wallet, PieChart as PieChartIcon, ClipboardCheck,
-  Printer, Trophy, Lock, Unlock, PlusCircle, MinusCircle, ShoppingBag, Loader2, X, ArrowRightLeft 
+  Printer, Trophy, Lock, Unlock, PlusCircle, MinusCircle, ShoppingBag, Loader2, X,
+  ArrowRightLeft
 } from 'lucide-react';
 
 const EMPTY_ARRAY: never[] = [];
@@ -29,7 +30,7 @@ export function FinancePage() {
   const [reason, setReason] = useState('');
   const [movementType, setMovementType] = useState<'in' | 'out' | null>(null);
   const [isClosing, setIsClosing] = useState(false);
-  const [isLoading, setIsLoading] = useState(false); // Estado de carga para botones
+  const [isLoading, setIsLoading] = useState(false); 
 
   const today = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState(today);
@@ -70,23 +71,25 @@ export function FinancePage() {
     return await db.sales.where('business_id').equals(businessId).toArray();
   }, [businessId]) || EMPTY_ARRAY;
 
-  // --- CÁLCULOS ---
+  // --- CÁLCULOS (BLINDADOS) ---
   const shiftStats = useMemo(() => {
     if (!activeShift || !shiftData) return null;
-    const startAmount = activeShift.start_amount;
     
-    // 1. Total Global (Lo que vendiste en total, no importa el método)
-    const totalSales = shiftData.sales.reduce((sum, s) => sum + s.total, 0);
+    // Aseguramos que startAmount sea un número válido, fallback a 0
+    const startAmount = activeShift.start_amount || 0;
+    
+    // 1. Total Global (Ventas totales sin importar método)
+    const totalSales = shiftData.sales.reduce((sum, s) => sum + (s.total || 0), 0);
 
     // 2. Solo Efectivo (Para el arqueo)
     const cashSales = shiftData.sales
-      .filter(s => s.payment_method === 'efectivo' || s.payment_method === 'mixto') // Asumimos mixto como efectivo parcial, idealmente se desglosa
-      .reduce((sum, s) => sum + (s.amount_tendered && s.payment_method === 'efectivo' ? s.total : s.total), 0); 
-      // Nota: Si 'mixto' separa montos, habría que ajustar lógica. Por ahora asumimos total.
+      .filter(s => s.payment_method === 'efectivo' || s.payment_method === 'mixto')
+      .reduce((sum, s) => sum + (s.total || 0), 0); 
     
-    const cashIn = shiftData.movements.filter(m => m.type === 'in').reduce((sum, m) => sum + m.amount, 0);
-    const cashOut = shiftData.movements.filter(m => m.type === 'out').reduce((sum, m) => sum + m.amount, 0);
+    const cashIn = shiftData.movements.filter(m => m.type === 'in').reduce((sum, m) => sum + (m.amount || 0), 0);
+    const cashOut = shiftData.movements.filter(m => m.type === 'out').reduce((sum, m) => sum + (m.amount || 0), 0);
 
+    // Cálculo final seguro
     const expectedCash = startAmount + cashSales + cashIn - cashOut;
 
     return { startAmount, cashSales, totalSales, cashIn, cashOut, expectedCash };
@@ -208,7 +211,6 @@ export function FinancePage() {
             sync_status: 'pending_create'
         };
 
-        // Transacción atómica
         await db.transaction('rw', [db.cash_shifts, db.action_queue, db.audit_logs], async () => {
             await db.cash_shifts.add(newShift);
             await addToQueue('SHIFT', newShift);
@@ -226,7 +228,7 @@ export function FinancePage() {
     }
   };
 
-  // 2. MOVIMIENTO DE CAJA (Entrada/Salida)
+  // 2. MOVIMIENTO DE CAJA
   const handleMovement = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeShift || !movementType || !businessId) return;
@@ -266,7 +268,7 @@ export function FinancePage() {
     }
   };
 
-  // 3. CERRAR CAJA (Arqueo)
+  // 3. CERRAR CAJA
   const handleCloseShift = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeShift || !shiftStats) return;
@@ -279,7 +281,6 @@ export function FinancePage() {
         const closedAt = new Date().toISOString();
 
         await db.transaction('rw', [db.cash_shifts, db.action_queue, db.audit_logs], async () => {
-            // Actualizar turno local
             await db.cash_shifts.update(activeShift.id, {
                 end_amount: finalCount, 
                 difference: difference, 
@@ -289,11 +290,9 @@ export function FinancePage() {
                 sync_status: 'pending_update'
             });
 
-            // Recuperar objeto completo para la cola
             const closedShift = await db.cash_shifts.get(activeShift.id);
             if(closedShift) await addToQueue('SHIFT', closedShift);
             
-            // Auditoría
             await logAuditAction('CLOSE_SHIFT', { 
                 expected: shiftStats.expectedCash, 
                 real: finalCount, 
@@ -317,9 +316,6 @@ export function FinancePage() {
     const newStr = d.toISOString().split('T')[0]; if (newStr <= today) setSelectedDate(newStr);
   };
   const handlePrint = () => window.print();
-  
-  // Colores de la marca: Navy #0B3B68, Green #7AC142, Accent #EF4444, Amber #F59E0B, Purple?
-  // Reemplazamos los colores genéricos por los de la marca en los gráficos
   const COLORS = ['#0B3B68', '#7AC142', '#F59E0B', '#EF4444', '#6B7280'];
 
   // --- UI: APERTURA DE CAJA ---
@@ -414,10 +410,12 @@ export function FinancePage() {
                <h3 className="text-2xl font-black text-[#7AC142]">+{currency.format(shiftStats.cashSales)}</h3>
             </div>
             
+            {/* --- AQUÍ ESTABA EL PROBLEMA --- */}
             <div className="bg-[#0B3B68] p-5 rounded-2xl shadow-lg shadow-[#0B3B68]/30 text-white relative overflow-hidden">
                <div className="absolute top-0 right-0 w-20 h-20 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
                <p className="text-gray-300 text-[10px] font-bold uppercase tracking-wider mb-1">Efectivo en Caja</p>
-               <h3 className="text-3xl font-black">{currency.format(shiftStats.expectedCash)}</h3>
+               {/* Usamos || 0 para evitar NaN si los datos están incompletos */}
+               <h3 className="text-3xl font-black">{currency.format(shiftStats.expectedCash || 0)}</h3>
                <p className="text-[10px] text-gray-400 mt-1">Calculado automáticamente</p>
             </div>
           </div>
@@ -439,7 +437,7 @@ export function FinancePage() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* TABLA MOVIMIENTOS (Mobile Card Table) */}
+            {/* TABLA MOVIMIENTOS */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
                     <h3 className="font-bold text-[#1F2937] text-sm flex items-center gap-2"><ArrowRightLeft className="text-[#6B7280]" size={16}/> Movimientos de Caja</h3>
@@ -464,7 +462,7 @@ export function FinancePage() {
                 </div>
             </div>
 
-            {/* TABLA VENTAS RECIENTES (Mobile Card Table) */}
+            {/* TABLA VENTAS RECIENTES */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
                     <h3 className="font-bold text-[#1F2937] text-sm flex items-center gap-2"><ShoppingBag className="text-[#6B7280]" size={16}/> Ventas Recientes</h3>
@@ -675,7 +673,7 @@ export function FinancePage() {
                 <div className="bg-gray-50 p-4 rounded-xl mb-6 border border-gray-100">
                     <div className="flex justify-between items-center mb-1">
                         <span className="text-xs font-bold text-[#6B7280] uppercase">Efectivo Esperado</span>
-                        <span className="text-lg font-black text-[#1F2937]">{currency.format(shiftStats.expectedCash)}</span>
+                        <span className="text-lg font-black text-[#1F2937]">{currency.format(shiftStats.expectedCash || 0)}</span>
                     </div>
                     <div className="h-px bg-gray-200 my-2"></div>
                     <p className="text-[10px] text-[#6B7280] leading-tight">
@@ -701,8 +699,8 @@ export function FinancePage() {
                                 (parseFloat(amount) - shiftStats.expectedCash) === 0 ? 'text-[#7AC142] bg-[#7AC142]/10' : 
                                 (parseFloat(amount) - shiftStats.expectedCash) > 0 ? 'text-blue-600 bg-blue-50' : 'text-[#EF4444] bg-[#EF4444]/10'
                             }`}>
-                                Diferencia: {((parseFloat(amount) || 0) - shiftStats.expectedCash) > 0 ? '+' : ''}
-                                {currency.format((parseFloat(amount) || 0) - shiftStats.expectedCash)}
+                                Diferencia: {((parseFloat(amount) || 0) - (shiftStats.expectedCash || 0)) > 0 ? '+' : ''}
+                                {currency.format((parseFloat(amount) || 0) - (shiftStats.expectedCash || 0))}
                             </div>
                         )}
                     </div>
