@@ -11,7 +11,6 @@ import { supabase } from '../lib/supabase';
 import logo from '../logo.png'; 
 import { toast } from 'sonner';
 
-// ✅ CORRECCIÓN: Se eliminó 'onLock' de la interfaz
 interface LayoutProps {
   currentStaff: Staff | null;
 }
@@ -35,11 +34,20 @@ export function Layout({ currentStaff }: LayoutProps) {
     };
   }, []);
 
+  // ✅ CORRECCIÓN: Conteo exhaustivo de todo lo que esté pendiente de sync
   const pendingCount = useLiveQuery(async () => {
     const sales = await db.sales.where('sync_status').equals('pending_create').count();
     const movements = await db.movements.where('sync_status').equals('pending_create').count();
     const audits = await db.audit_logs.where('sync_status').equals('pending_create').count();
-    return sales + movements + audits; 
+    
+    // Contar también ediciones de productos, clientes, configuración y turnos
+    const products = await db.products.filter(p => p.sync_status !== 'synced').count();
+    const customers = await db.customers.filter(c => c.sync_status !== 'synced').count();
+    const settings = await db.settings.filter(s => s.sync_status !== 'synced').count();
+    const shifts = await db.cash_shifts.filter(s => s.sync_status !== 'synced').count();
+    const cashMovements = await db.cash_movements.filter(m => m.sync_status !== 'synced').count();
+
+    return sales + movements + audits + products + customers + settings + shifts + cashMovements;
   }, []) || 0;
 
   const handleManualSync = async () => {
@@ -158,8 +166,6 @@ export function Layout({ currentStaff }: LayoutProps) {
                 )}
             </button>
 
-            {/* ✅ CORRECCIÓN: Eliminado botón de candado (Lock) */}
-
             <button onClick={handleLogout} className="p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors flex flex-col items-center justify-center" title="Cerrar Sesión">
                 <LogOut size={20}/>
             </button>
@@ -197,7 +203,6 @@ export function Layout({ currentStaff }: LayoutProps) {
                 {item.icon}
             </Link>
             ))}
-            {/* ✅ CORRECCIÓN: Eliminado botón de bloqueo móvil */}
         </nav>
 
         {isMobileMenuOpen && (

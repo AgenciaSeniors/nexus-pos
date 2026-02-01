@@ -66,8 +66,10 @@ async function processItem(item: QueueItem) {
       });
 
       if (error) {
-        console.error("Error RPC Venta:", error);
-        throw new Error(`Fallo transacción venta ${sale.id}: ${error.message}`);
+        // Si el error es de duplicado, asumimos que ya subió
+        if (error.code !== '23505') { 
+            throw new Error(`Fallo transacción venta ${sale.id}: ${error.message}`);
+        }
       }
       
       await db.sales.update(sale.id, { sync_status: 'synced' });
@@ -81,10 +83,9 @@ async function processItem(item: QueueItem) {
       const { sync_status, ...cleanMov } = movement;
       
       const { error } = await supabase.from('inventory_movements').insert(cleanMov);
-      if (error) throw new Error(`Error subiendo movimiento: ${error.message}`);
+      if (error && error.code !== '23505') throw new Error(`Error subiendo movimiento: ${error.message}`);
 
       if (db.movements) await db.movements.update(movement.id, { sync_status: 'synced' });
-      console.log('✅ Movimiento sincronizado.');
       break;
     }
 
@@ -94,10 +95,9 @@ async function processItem(item: QueueItem) {
       const { sync_status, ...cleanLog } = log;
       
       const { error } = await supabase.from('audit_logs').insert(cleanLog);
-      if (error) throw new Error(`Error subiendo audit: ${error.message}`);
+      if (error && error.code !== '23505') throw new Error(`Error subiendo audit: ${error.message}`);
 
       await db.audit_logs.update(log.id, { sync_status: 'synced' });
-      console.log('✅ Auditoría sincronizada.');
       break;
     }
 
@@ -108,6 +108,9 @@ async function processItem(item: QueueItem) {
       
       const { error } = await supabase.from('products').upsert(cleanProduct);
       if (error) throw new Error(`Error sync producto: ${error.message}`);
+
+      // ✅ ACTUALIZACIÓN DE ESTADO LOCAL
+      await db.products.update(product.id, { sync_status: 'synced' });
       break;
     }
 
@@ -118,6 +121,9 @@ async function processItem(item: QueueItem) {
       
       const { error } = await supabase.from('customers').upsert(cleanCustomer);
       if (error) throw new Error(`Error sync cliente: ${error.message}`);
+
+      // ✅ ACTUALIZACIÓN DE ESTADO LOCAL
+      await db.customers.update(customer.id, { sync_status: 'synced' });
       break;
     }
 
@@ -136,6 +142,9 @@ async function processItem(item: QueueItem) {
         .eq('id', config.id);
 
       if (error) throw new Error(`Error actualizando negocio: ${error.message}`);
+
+      // ✅ ACTUALIZACIÓN DE ESTADO LOCAL
+      await db.settings.update(config.id, { sync_status: 'synced' });
       break;
     }
 
@@ -147,8 +156,8 @@ async function processItem(item: QueueItem) {
         const { error } = await supabase.from('cash_shifts').upsert(cleanShift);
         if (error) throw new Error(`Error sincronizando turno: ${error.message}`);
 
+        // ✅ ACTUALIZACIÓN DE ESTADO LOCAL
         await db.cash_shifts.update(shift.id, { sync_status: 'synced' });
-        console.log('✅ Turno sincronizado.');
         break;
     }
 
@@ -158,10 +167,10 @@ async function processItem(item: QueueItem) {
         const { sync_status, ...cleanMov } = mov;
 
         const { error } = await supabase.from('cash_movements').insert(cleanMov);
-        if (error) throw new Error(`Error sincronizando movimiento: ${error.message}`);
+        if (error && error.code !== '23505') throw new Error(`Error sincronizando movimiento: ${error.message}`);
 
+        // ✅ ACTUALIZACIÓN DE ESTADO LOCAL
         await db.cash_movements.update(mov.id, { sync_status: 'synced' });
-        console.log('✅ Movimiento de caja sincronizado.');
         break;
     }
 
@@ -223,7 +232,6 @@ async function safeBulkPut<T extends { id: string; sync_status?: string }>(
   items: T[]
 ) {
   // 1. Identificar ítems locales "sucios" (pendientes de subida)
-  // Dexie no indexa sync_status por defecto en todos lados, así que filtramos
   const dirtyItems = await table
     .filter(i => i.sync_status !== undefined && i.sync_status !== 'synced')
     .primaryKeys();
@@ -296,10 +304,12 @@ export async function syncCriticalData(businessId: string) {
       await db.staff.bulkPut(staffResult.data);
     }
     if (registersResult.data) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const cleanRegisters = registersResult.data.map(r => ({ ...r, sync_status: 'synced' }));
       await db.cash_registers.bulkPut(cleanRegisters as never);
     }
     if (shiftsResult.data && shiftsResult.data.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const shifts = shiftsResult.data.map(s => ({ ...s, sync_status: 'synced' }));
         await safeBulkPut(db.cash_shifts as never, shifts);
     }
@@ -319,10 +329,12 @@ export async function syncHeavyData(businessId: string) {
     ]);
 
     if (productsData.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const cleanProducts = productsData.map(p => ({ ...p, sync_status: 'synced' }));
         await safeBulkPut(db.products as never, cleanProducts);
     }
     if (customersData.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const cleanCustomers = customersData.map(c => ({ ...c, sync_status: 'synced' }));
         await safeBulkPut(db.customers as never, cleanCustomers);
     }
