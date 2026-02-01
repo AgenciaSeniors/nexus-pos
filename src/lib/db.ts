@@ -12,6 +12,8 @@ export interface Product {
   category?: string;
   unit?: string;
   expiration_date?: string;
+  // ✅ AGREGADO: Campo necesario para ordenamiento
+  created_at?: string; 
   sync_status: 'synced' | 'pending_create' | 'pending_update' | 'pending_delete';
   deleted_at?: string | null;
 }
@@ -138,10 +140,11 @@ export interface AuditLog {
   business_id: string;
   staff_id: string;
   staff_name: string;
-  action: 'LOGIN' | 'LOGOUT' | 'SALE' | 'CREATE_PRODUCT' | 'DELETE_PRODUCT' | 
+  // ✅ AGREGADO: 'UPDATE_PRODUCT' para corregir el error de tipo en InventoryPage
+  action: 'LOGIN' | 'LOGOUT' | 'SALE' | 'CREATE_PRODUCT' | 'UPDATE_PRODUCT' | 'DELETE_PRODUCT' | 
           'UPDATE_STOCK' | 'OPEN_DRAWER' | 'VOID_SALE' | 'CREATE_CUSTOMER' | 
           'UPDATE_CUSTOMER' | 'DELETE_CUSTOMER' | 'OPEN_SHIFT' | 'CLOSE_SHIFT' | 
-          'CASH_IN' | 'CASH_OUT';
+          'CASH_IN' | 'CASH_OUT' | 'UPDATE_SETTINGS';
   details: Record<string, unknown> | null;
   created_at: string;
   sync_status: 'pending_create' | 'synced';
