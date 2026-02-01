@@ -1,6 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 
-// --- INTERFACES EXISTENTES ---
+// --- INTERFACES ---
 export interface Product {
   id: string;
   business_id: string;
@@ -34,10 +34,8 @@ export interface Sale {
   items: SaleItem[];
   staff_id?: string;
   staff_name?: string;
-  // ✅ NUEVO: Datos del Cliente
   customer_id?: string;
   customer_name?: string;
-  
   payment_method: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto';
   amount_tendered?: number;
   change?: number;
@@ -89,8 +87,7 @@ export interface ParkedOrder {
   items: SaleItem[];
   total: number;
   note?: string;
-  // ✅ NUEVO: Cliente en espera
-  customer_id?: string; 
+  customer_id?: string;
   customer_name?: string;
 }
 
@@ -172,8 +169,7 @@ export interface QueueItem {
   error?: string;
 }
 
-// =============================
-
+// --- DATABASE CLASS ---
 export class NexusDB extends Dexie {
   products!: Table<Product>;
   sales!: Table<Sale>;

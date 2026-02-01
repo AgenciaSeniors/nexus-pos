@@ -1,20 +1,19 @@
 import { useState, useEffect } from 'react';
+
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type BusinessConfig } from '../lib/db';
 import { supabase } from '../lib/supabase';
 import { 
-  Save, Building2, MapPin, Phone, Receipt, Loader2, 
+  Save, Building2, Receipt, Loader2, 
   MonitorX, LogOut 
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { addToQueue } from '../lib/sync';
+import { addToQueue, syncPush } from '../lib/sync';
 
 export function SettingsPage() {
-
-  // 1. Obtener ID del Negocio (Contexto de Seguridad)
   const businessId = localStorage.getItem('nexus_business_id');
 
-  // 2. Cargar Configuración
+  // Consulta reactiva de la configuración local
   const settings = useLiveQuery(async () => {
     if (!businessId) return null;
     return await db.settings.get(businessId);
@@ -24,12 +23,12 @@ export function SettingsPage() {
     name: '',
     address: '',
     phone: '',
-    receipt_message: '¡Gracias por su compra!'
+    receipt_message: '¡Gracias por su preferencia!'
   });
 
   const [isLoading, setIsLoading] = useState(false);
 
-  // Cargar datos al formulario cuando lleguen de la DB
+  // Efecto para cargar los datos en el formulario cuando la DB esté lista
   useEffect(() => {
     if (settings) {
       setFormData({
@@ -38,205 +37,209 @@ export function SettingsPage() {
         phone: settings.phone || '',
         receipt_message: settings.receipt_message || ''
       });
-    } else if (businessId) {
-      setFormData(prev => ({ ...prev, name: 'Mi Negocio' }));
     }
-  }, [settings, businessId]);
+  }, [settings]);
 
-  // --- FUNCIÓN GUARDAR CONFIGURACIÓN ---
+  // Manejador del formulario
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!businessId) return toast.error("Error de sesión: No hay ID de negocio");
+    if (!businessId) {
+        toast.error("Error: Sesión de negocio no encontrada.");
+        return;
+    }
 
     setIsLoading(true);
     try {
       const configToSave: BusinessConfig = {
         id: businessId, 
-        name: formData.name || 'Sin Nombre',
-        address: formData.address,
-        phone: formData.phone,
-        receipt_message: formData.receipt_message,
-        sync_status: settings ? 'pending_update' : 'pending_create'
+        name: formData.name?.trim() || 'Nexus Business',
+        address: formData.address?.trim(),
+        phone: formData.phone?.trim(),
+        receipt_message: formData.receipt_message?.trim(),
+        status: settings?.status || 'active',
+        subscription_expires_at: settings?.subscription_expires_at,
+        sync_status: 'pending_update'
       };
 
-      // 1. Guardar en local
+      // 1. Guardar localmente
       await db.settings.put(configToSave);
 
-      // 2. Encolar sincronización
+      // 2. Encolar para sincronización con Supabase
       await addToQueue('SETTINGS_SYNC', configToSave); 
-
-      toast.success('Configuración guardada correctamente');
       
-      // Forzar actualización visual global
-      window.dispatchEvent(new Event('storage')); 
+      toast.success('Configuración actualizada correctamente');
+      
+      // Intentar subir los cambios de inmediato
+      syncPush().catch(console.error);
 
     } catch (error) {
-      console.error(error);
-      toast.error('Error al guardar configuración');
+      console.error("Error saving settings:", error);
+      toast.error('No se pudo guardar la configuración');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // --- FUNCIÓN DESVINCULAR / SALIR (BLINDADA) ---
+  // Función para desvincular equipo y cerrar sesión
   const handleUnlinkDevice = async () => {
-    const isConfirmed = confirm("¿Cerrar sesión y liberar licencia?\n\nEsto te permitirá iniciar sesión en otro dispositivo.");
+    const isConfirmed = confirm(
+        "¿Cerrar sesión en este equipo?\n\nEsto permitirá que otro dispositivo use esta cuenta si tienes límites de licencia."
+    );
     if (!isConfirmed) return;
 
     setIsLoading(true);
     
-    // 1. Intentamos avisar a la nube (Best Effort)
     try {
+      // Intentar limpiar el hardware_id en la nube para liberar el cupo
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        await supabase
-          .from('profiles')
-          .update({ hardware_id: null })
-          .eq('id', user.id);
+        await supabase.from('profiles').update({ hardware_id: null }).eq('id', user.id);
       }
     } catch (error) {
-      console.warn("No se pudo actualizar la nube, pero cerraremos localmente.", error);
+      console.warn("No se pudo desvincular en la nube, continuando cierre local...", error);
     }
 
-    // 2. LIMPIEZA NUCLEAR LOCAL (Esto ocurre SIEMPRE)
     try {
-      // Borrar credenciales de Supabase
+      // Limpiar datos locales y cerrar sesión
       await supabase.auth.signOut();
-      
-      // Borrar rastros del negocio en este navegador
       localStorage.clear(); 
+      toast.success("Sesión finalizada");
       
-      // Opcional: Si quieres borrar también la DB local para que el próximo usuario empiece de cero
-      // await db.delete(); 
-
-      toast.success("Sesión cerrada correctamente.");
-      
-      // 3. Redirección forzada recargando la página para limpiar memoria
-      window.location.href = '/'; 
+      // Redirigir al inicio para forzar recarga de estado
+      setTimeout(() => window.location.href = '/', 500);
 
     } catch (error) {
-      console.error("Error crítico al salir:", error);
-      // Failsafe final: si todo falla, forzamos recarga
+      console.error("Logout error:", error);
       localStorage.clear();
       window.location.href = '/';
-    } finally {
-      setIsLoading(false);
     }
   };
 
-  if (!businessId) return <div className="p-8 text-center">Inicia sesión para configurar tu negocio.</div>;
+  if (!businessId) {
+    return (
+        <div className="flex items-center justify-center h-screen text-slate-500">
+            Cargando identificador de negocio...
+        </div>
+    );
+  }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto pb-24">
+    <div className="p-6 max-w-4xl mx-auto pb-24 animate-in fade-in duration-500">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-          <Building2 className="text-indigo-600"/> Configuración del Negocio
+          <Building2 className="text-indigo-600"/> Perfil del Negocio
         </h1>
-        <p className="text-slate-500 text-sm">Personaliza la información de tu empresa y gestiona tu licencia.</p>
+        <p className="text-slate-500 text-sm">Configura los datos que tus clientes verán en sus comprobantes.</p>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         <form onSubmit={handleSubmit} className="p-6 md:p-8 space-y-6">
           
-          {/* Nombre del Negocio */}
           <div className="grid md:grid-cols-2 gap-6">
+            {/* Nombre Comercial */}
             <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
-                <Building2 size={14}/> Nombre Comercial
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                Nombre de la Empresa
               </label>
               <input 
                 type="text" 
                 required
-                className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-slate-700"
+                className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-slate-700 bg-slate-50/30"
                 value={formData.name}
                 onChange={e => setFormData({...formData, name: e.target.value})}
-                placeholder="Ej. Restaurante El Buen Sabor"
+                placeholder="Nombre del negocio"
               />
             </div>
 
+            {/* Teléfono de Contacto */}
             <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
-                <Phone size={14}/> Teléfono / WhatsApp
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                Teléfono / Contacto
               </label>
               <input 
                 type="text" 
-                className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
+                className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50/30"
                 value={formData.phone}
                 onChange={e => setFormData({...formData, phone: e.target.value})}
-                placeholder="+53 5555 5555"
+                placeholder="Ej. +53 5200 0000"
               />
             </div>
           </div>
 
-          {/* Dirección */}
+          {/* Dirección Física */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
-              <MapPin size={14}/> Dirección Física
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+              Dirección del Local
             </label>
             <textarea 
               rows={2}
-              className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
+              className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none resize-none bg-slate-50/30"
               value={formData.address}
               onChange={e => setFormData({...formData, address: e.target.value})}
-              placeholder="Calle Principal #123, Ciudad..."
+              placeholder="Calle, Número, Ciudad..."
             />
           </div>
 
-          <hr className="border-slate-100" />
+          <div className="h-px bg-slate-100 my-2"></div>
 
-          {/* Configuración de Recibos */}
+          {/* Personalización de Recibos */}
           <div className="space-y-4">
-            <h3 className="font-bold text-slate-700 flex items-center gap-2">
-              <Receipt size={18} className="text-indigo-500"/> Personalización del Ticket
-            </h3>
+            <div className="flex items-center gap-2 text-slate-700 font-bold">
+              <Receipt size={18} className="text-indigo-500"/>
+              <span>Personalización de Recibos</span>
+            </div>
             
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-500 uppercase">Mensaje de Pie de Página</label>
+            <div className="bg-indigo-50/30 p-4 rounded-2xl border border-indigo-50 space-y-3">
+              <label className="text-[10px] font-bold text-indigo-400 uppercase">Mensaje al pie del ticket</label>
               <input 
                 type="text" 
-                className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-center font-mono text-sm"
+                className="w-full p-3 border border-indigo-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm bg-white text-center"
                 value={formData.receipt_message}
                 onChange={e => setFormData({...formData, receipt_message: e.target.value})}
-                placeholder="¡Gracias por su visita!"
               />
-              <p className="text-xs text-slate-400 text-center">Este mensaje aparecerá al final de todos los tickets impresos.</p>
+              <p className="text-[10px] text-slate-400 text-center uppercase tracking-tight font-medium">Este texto aparecerá al final de todas las impresiones.</p>
             </div>
           </div>
 
-          <hr className="border-slate-100 my-6" />
-
-          {/* ZONA DE DISPOSITIVO (NUEVA SECCIÓN) */}
-          <div className="bg-orange-50/50 rounded-xl p-5 border border-orange-100">
-            <h3 className="font-bold text-slate-700 flex items-center gap-2 mb-2">
-              <MonitorX size={18} className="text-orange-500"/> Gestión de Cuenta
-            </h3>
-            <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-              Cerrar sesión liberará la licencia de este dispositivo para que puedas usarla en otro lugar.
-            </p>
-            
-            <button 
-              type="button" 
-              onClick={handleUnlinkDevice}
-              disabled={isLoading}
-              className="w-full py-3 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl hover:bg-white hover:text-red-600 hover:border-red-300 transition-all flex items-center justify-center gap-2 shadow-sm"
-            >
-              <LogOut size={18} /> 
-              {isLoading ? 'Cerrando sesión...' : 'Cerrar Sesión / Liberar Licencia'}
-            </button>
-          </div>
-
-          {/* Botón Guardar Principal */}
+          {/* Botón de Acción Principal */}
           <div className="pt-4">
             <button 
               type="submit" 
               disabled={isLoading}
-              className="w-full md:w-auto px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2"
+              className="w-full md:w-auto px-12 py-4 bg-slate-900 hover:bg-black text-white font-bold rounded-2xl shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95"
             >
-              {isLoading ? <Loader2 className="animate-spin" /> : <><Save size={20} /> Guardar Cambios</>}
+              {isLoading ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <>
+                  <Save size={20} /> 
+                  <span>Guardar Configuración</span>
+                </>
+              )}
             </button>
           </div>
 
         </form>
+      </div>
+
+      {/* SECCIÓN DE CIERRE DE SESIÓN SEGURO */}
+      <div className="mt-12 p-8 bg-white rounded-3xl border border-red-100 flex flex-col md:flex-row justify-between items-center gap-6 shadow-sm">
+        <div className="text-center md:text-left">
+          <h3 className="font-bold text-slate-800 flex items-center justify-center md:justify-start gap-2 mb-1">
+            <MonitorX size={20} className="text-red-500"/> 
+            Cerrar Sesión en este dispositivo
+          </h3>
+          <p className="text-xs text-slate-400 max-w-sm">Si vas a cambiar de equipo, usa esta opción para liberar tu licencia y proteger tus datos.</p>
+        </div>
+        
+        <button 
+          type="button" 
+          onClick={handleUnlinkDevice}
+          className="w-full md:w-auto px-8 py-3 bg-red-50 border border-red-100 text-red-600 font-bold rounded-xl hover:bg-red-600 hover:text-white transition-all flex items-center justify-center gap-2 text-sm"
+        >
+          <LogOut size={18} /> 
+          <span>Desvincular Dispositivo</span>
+        </button>
       </div>
     </div>
   );
