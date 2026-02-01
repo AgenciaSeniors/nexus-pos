@@ -5,16 +5,15 @@ import { supabase } from './lib/supabase';
 import { type Staff, db } from './lib/db'; 
 import { type Session } from '@supabase/supabase-js';
 import { Toaster, toast } from 'sonner';
-import { syncBusinessProfile } from './lib/sync';
+// ✅ CAMBIO 1: Importamos las funciones separadas en lugar de syncBusinessProfile
+import { syncCriticalData, syncHeavyData } from './lib/sync';
 
 // --- IMPORTACIONES DE PÁGINAS Y COMPONENTES ---
 import { Layout } from './components/Layout';
-// ✅ CORRECCIÓN: Eliminado import de PinPad
 import { PosPage } from './pages/PosPage';
 import { InventoryPage } from './pages/InventoryPage'; 
 import { FinancePage } from './pages/FinancePage';
 import { SettingsPage } from './pages/SettingsPage';
-// ✅ CORRECCIÓN: Eliminado StaffPage si ya lo borraste, o mantenlo si solo ocultaste el menú
 import { SuperAdminPage } from './pages/SuperAdminPage';
 import { SuperAdminLogin } from './pages/SuperAdminLogin';
 import { CustomersPage } from './components/CustomersPage';
@@ -101,11 +100,13 @@ function LoginScreen() {
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
       <div className="bg-white w-full max-w-4xl rounded-2xl shadow-xl overflow-hidden flex flex-col md:flex-row">
+        
         <div className="w-full md:w-1/2 bg-slate-900 p-8 flex flex-col justify-between text-white relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
              <div className="absolute top-10 left-10 w-32 h-32 bg-indigo-500 rounded-full blur-3xl"></div>
              <div className="absolute bottom-10 right-10 w-40 h-40 bg-blue-500 rounded-full blur-3xl"></div>
           </div>
+          
           <div className="relative z-10">
             <div className="flex items-center gap-2 mb-8">
               <div className="bg-indigo-500 p-2 rounded-lg">
@@ -113,6 +114,7 @@ function LoginScreen() {
               </div>
               <span className="text-2xl font-bold tracking-tight">Nexus POS</span>
             </div>
+            
             <h1 className="text-4xl font-bold mb-4 leading-tight">
               {mode === 'login' ? 'Bienvenido de nuevo' : 'Comienza tu negocio hoy'}
             </h1>
@@ -122,6 +124,7 @@ function LoginScreen() {
                 : 'Únete a miles de negocios que confían en Nexus para crecer.'}
             </p>
           </div>
+
           <div className="relative z-10 mt-8 md:mt-0">
             <div className="flex items-center gap-4 text-sm text-slate-400">
               <span className="flex items-center gap-1"><CheckCircle className="w-4 h-4 text-green-400"/> Offline First</span>
@@ -140,59 +143,109 @@ function LoginScreen() {
             </p>
 
             <form onSubmit={mode === 'login' ? handleLogin : handleRegister} className="space-y-4">
+              
               {mode === 'register' && (
                 <>
                   <div className="space-y-1">
                     <label className="text-xs font-semibold text-slate-700 uppercase">Nombre Completo</label>
                     <div className="relative">
                       <User className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
-                      <input type="text" required className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="Ej. Juan Pérez" value={fullName} onChange={e => setFullName(e.target.value)} />
+                      <input 
+                        type="text" 
+                        required
+                        className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                        placeholder="Ej. Juan Pérez"
+                        value={fullName}
+                        onChange={e => setFullName(e.target.value)}
+                      />
                     </div>
                   </div>
+
                   <div className="space-y-1">
                     <label className="text-xs font-semibold text-slate-700 uppercase">Nombre del Negocio</label>
                     <div className="relative">
                       <Store className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
-                      <input type="text" required className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="Ej. Cafetería Central" value={businessName} onChange={e => setBusinessName(e.target.value)} />
+                      <input 
+                        type="text" 
+                        required
+                        className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                        placeholder="Ej. Cafetería Central"
+                        value={businessName}
+                        onChange={e => setBusinessName(e.target.value)}
+                      />
                     </div>
                   </div>
+
                   <div className="space-y-1">
                     <label className="text-xs font-semibold text-slate-700 uppercase">Teléfono</label>
                     <div className="relative">
                       <Phone className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
-                      <input type="tel" className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="+53 5555 5555" value={phone} onChange={e => setPhone(e.target.value)} />
+                      <input 
+                        type="tel" 
+                        className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                        placeholder="+53 5555 5555"
+                        value={phone}
+                        onChange={e => setPhone(e.target.value)}
+                      />
                     </div>
                   </div>
                 </>
               )}
+
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-slate-700 uppercase">Correo Electrónico</label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
-                  <input type="email" required className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="correo@ejemplo.com" value={email} onChange={e => setEmail(e.target.value)} />
+                  <input 
+                    type="email" 
+                    required
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                    placeholder="correo@ejemplo.com"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                  />
                 </div>
               </div>
+
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-slate-700 uppercase">Contraseña</label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
-                  <input type="password" required className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
+                  <input 
+                    type="password" 
+                    required
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                  />
                 </div>
               </div>
-              <button disabled={loading} type="submit" className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-slate-800 transition-all flex items-center justify-center gap-2 mt-4 shadow-lg shadow-slate-200 disabled:opacity-70">
+
+              <button 
+                disabled={loading}
+                type="submit" 
+                className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-slate-800 transition-all flex items-center justify-center gap-2 mt-4 shadow-lg shadow-slate-200 disabled:opacity-70"
+              >
                 {loading && <Loader2 className="animate-spin w-5 h-5" />}
                 {mode === 'login' ? 'Entrar al Sistema' : 'Registrar Negocio'}
                 {!loading && <ArrowRight className="w-5 h-5" />}
               </button>
+
             </form>
+
             <div className="mt-6 text-center">
               <p className="text-slate-500 text-sm">
                 {mode === 'login' ? '¿No tienes cuenta?' : '¿Ya tienes cuenta?'}
-                <button onClick={() => setMode(mode === 'login' ? 'register' : 'login')} className="ml-2 font-bold text-indigo-600 hover:text-indigo-700 transition-colors">
+                <button 
+                  onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
+                  className="ml-2 font-bold text-indigo-600 hover:text-indigo-700 transition-colors"
+                >
                   {mode === 'login' ? 'Regístrate' : 'Inicia Sesión'}
                 </button>
               </p>
             </div>
+
           </div>
         </div>
       </div>
@@ -201,7 +254,7 @@ function LoginScreen() {
 }
 
 // =============================================================================
-// 2. COMPONENTE BUSINESS APP (SIMPLIFICADO)
+// 2. COMPONENTE BUSINESS APP (OPTIMIZADO)
 // =============================================================================
 function BusinessApp() {
   const [session, setSession] = useState<Session | null>(null);
@@ -241,6 +294,7 @@ function BusinessApp() {
           return;
         }
 
+        // Actualizar datos de licencia (rápido)
         const { data: bizData } = await supabase
             .from('businesses')
             .select('subscription_expires_at')
@@ -252,7 +306,6 @@ function BusinessApp() {
             localStorage.setItem('nexus_last_sync', new Date().toISOString());
         }
 
-        // Crear objeto Staff local (Siempre es Admin/Dueño)
         const adminStaff: Staff = {
           id: data.id,
           name: data.full_name || data.email,
@@ -263,14 +316,21 @@ function BusinessApp() {
         };
 
         localStorage.setItem('nexus_business_id', data.business_id);
-        await syncBusinessProfile(data.business_id);
+
+        // ✅ CAMBIO CLAVE: Carga Inteligente en 2 Pasos
+        // Paso 1: Carga crítica (Config, Turnos) -> BLOQUEA UN INSTANTE
+        await syncCriticalData(data.business_id);
         
+        // Paso 2: Carga pesada (Productos, Clientes) -> SEGUNDO PLANO (NO BLOQUEA)
+        syncHeavyData(data.business_id).then(() => {
+            console.log("🔄 Inventario sincronizado en segundo plano");
+        }).catch(err => console.warn("Sync background warning:", err));
+        
+        // Entramos rápido a la app
         await db.staff.filter(s => s.business_id !== data.business_id).delete();
         await db.staff.put(adminStaff);
 
         lastLoadedUserId.current = userId; 
-        
-        // 🔥 CAMBIO CRÍTICO: Seteamos el staff directamente, sin bloqueo
         setCurrentStaff(adminStaff); 
       }
     } catch (error: unknown) {
@@ -316,7 +376,9 @@ function BusinessApp() {
       } catch (error) {
         console.error("🔴 Error crítico o Timeout al iniciar:", error);
         setSession(null);
-        toast.error("Problema de conexión. Verifica tu VPN.");
+        // Intentar recuperar sesión local si falla red
+        const localBiz = localStorage.getItem('nexus_business_id');
+        if(localBiz) toast.error("Modo Offline: Verifica tu conexión");
       } finally {
         setLoading(false);
       }
@@ -398,13 +460,11 @@ function BusinessApp() {
 
   return (
     <Routes>
-      {/* ✅ CORRECCIÓN: Eliminada prop onLock que ya no existe en Layout */}
       <Route element={<Layout currentStaff={currentStaff} />}>
         <Route path="/" element={<PosPage />} />
         <Route path="/clientes" element={<CustomersPage />} />
         <Route path="/inventario" element={<InventoryPage />} />
         <Route path="/finanzas" element={<FinancePage />} />
-        {/* Eliminamos /equipo si ya no usas StaffPage */}
         <Route path="/configuracion" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
@@ -435,7 +495,7 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
         
         if (mounted) setAuthorized(!error && data?.is_super_admin);
         
-      } catch { // ✅ CORRECCIÓN ESLINT: Eliminamos la variable 'e' no usada
+      } catch { 
         if (mounted) setAuthorized(false);
       }
     };
