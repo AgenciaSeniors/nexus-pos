@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { db, type Customer, type Staff} from '../lib/db';
+import { db, type Customer, type Staff } from '../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
     UserPlus, Search, Edit2, Trash2, Users, Loader2, Phone, Mail, MapPin, 
@@ -15,23 +15,18 @@ export function CustomersPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
   const businessId = localStorage.getItem('nexus_business_id');
 
-  // ESTADOS
   const [searchTerm, setSearchTerm] = useState('');
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [isDetailsOpen, setIsDetailsOpen] = useState(false); // Modal CRM
-  const [isPointsModalOpen, setIsPointsModalOpen] = useState(false); // Modal Puntos
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [isPointsModalOpen, setIsPointsModalOpen] = useState(false);
   
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // FORMULARIO CLIENTE
   const [formData, setFormData] = useState({ name: '', phone: '', email: '', address: '' });
-  
-  // FORMULARIO PUNTOS
   const [pointsAdjustment, setPointsAdjustment] = useState({ amount: 0, reason: '' });
 
-  // --- CONSULTAS ---
   const customers = useLiveQuery(async () => {
     if (!businessId) return [];
     return await db.customers
@@ -41,27 +36,29 @@ export function CustomersPage() {
       .sortBy('created_at');
   }, [businessId]) || [];
 
-  // Historial de ventas del cliente seleccionado
   const customerHistory = useLiveQuery(async () => {
-      if (!selectedCustomer) return { sales: [], totalSpent: 0, lastVisit: null };
+      if (!selectedCustomer || !businessId) return { sales: [], totalSpent: 0, lastVisit: null };
       
+      // NOTA: Usamos filter porque customer_id podría no estar indexado
       const sales = await db.sales
-        .where('customer_id').equals(selectedCustomer.id)
-        .reverse()
-        .sortBy('date');
+        .where('business_id').equals(businessId)
+        .filter(s => s.customer_id === selectedCustomer.id)
+        .toArray();
+      
+      // Ordenar por fecha descendente en memoria
+      sales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         
       const totalSpent = sales.reduce((sum, s) => sum + s.total, 0);
       const lastVisit = sales.length > 0 ? sales[0].date : null;
 
       return { sales, totalSpent, lastVisit };
-  }, [selectedCustomer]);
+  }, [selectedCustomer, businessId]);
 
   const filteredCustomers = customers.filter(c => 
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (c.phone && c.phone.includes(searchTerm))
   );
 
-  // --- LÓGICA DE CLIENTES (Crear/Editar) ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!businessId) return;
@@ -76,7 +73,6 @@ export function CustomersPage() {
             return toast.warning("El nombre es obligatorio");
         }
 
-        // Validación duplicados
         if (cleanPhone) {
             const duplicate = await db.customers
                 .where({ business_id: businessId })
@@ -84,7 +80,7 @@ export function CustomersPage() {
                 .first();
             
             if (duplicate && duplicate.id !== editingId) {
-                toast.warning(`El teléfono ${cleanPhone} ya pertenece a "${duplicate.name}"`);
+                toast.warning(`El teléfono ya existe.`);
                 setIsLoading(false);
                 return;
             }
@@ -137,7 +133,7 @@ export function CustomersPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('¿Eliminar cliente? Se mantendrá su historial de ventas pero no podrá asignarse a nuevas.')) return;
+    if (!confirm('¿Eliminar cliente?')) return;
     try {
         const customer = await db.customers.get(id);
         if (!customer) return;
@@ -153,10 +149,10 @@ export function CustomersPage() {
         toast.success("Cliente eliminado");
         if (selectedCustomer?.id === id) setSelectedCustomer(null);
         syncPush().catch(console.error);
-    } catch (e) {console.error(e); toast.error("Error al eliminar"); }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    } catch (e) { toast.error("Error al eliminar"); }
   };
 
-  // --- LÓGICA DE PUNTOS (Ajuste Manual) ---
   const handlePointsAdjustment = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!selectedCustomer || pointsAdjustment.amount === 0) return;
@@ -165,7 +161,7 @@ export function CustomersPage() {
       setIsLoading(true);
       try {
           const currentPoints = selectedCustomer.loyalty_points || 0;
-          const newPoints = Math.max(0, currentPoints + pointsAdjustment.amount); // No permitir negativos totales
+          const newPoints = Math.max(0, currentPoints + pointsAdjustment.amount);
 
           const updatedCustomer = {
               ...selectedCustomer,
@@ -177,7 +173,6 @@ export function CustomersPage() {
           await db.transaction('rw', [db.customers, db.action_queue, db.audit_logs], async () => {
               await db.customers.put(updatedCustomer);
               await addToQueue('CUSTOMER_SYNC', updatedCustomer);
-              // NOTA: Asegúrate que 'UPDATE_LOYALTY' esté en tu AuditLog type en db.ts
               await logAuditAction('UPDATE_LOYALTY', { 
                   customer: selectedCustomer.name, 
                   adjustment: pointsAdjustment.amount, 
@@ -187,7 +182,7 @@ export function CustomersPage() {
               }, currentStaff);
           });
 
-          setSelectedCustomer(updatedCustomer); // Actualizar vista local
+          setSelectedCustomer(updatedCustomer);
           setIsPointsModalOpen(false);
           setPointsAdjustment({ amount: 0, reason: '' });
           toast.success(`Puntos actualizados: ${newPoints} pts`);
@@ -201,7 +196,6 @@ export function CustomersPage() {
       }
   };
 
-  // --- UTILS ---
   const openEdit = (c: Customer) => {
       setEditingId(c.id);
       setFormData({ name: c.name, phone: c.phone || '', email: c.email || '', address: c.address || '' });
