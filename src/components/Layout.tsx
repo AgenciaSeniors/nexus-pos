@@ -1,23 +1,22 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { 
-  Store, Package, PieChart, Settings, Lock, Shield, 
+  Store, Package, PieChart, Settings, 
   Cloud, AlertCircle, RefreshCw, LogOut, Menu, X, Users as UsersIcon, CheckCircle2 
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff } from '../lib/db';
-// 🔥 IMPORTANTE: Usamos syncManualFull
 import { syncManualFull } from '../lib/sync'; 
 import { supabase } from '../lib/supabase';
 import logo from '../logo.png'; 
 import { toast } from 'sonner';
 
+// ✅ CORRECCIÓN: Se eliminó 'onLock' de la interfaz
 interface LayoutProps {
   currentStaff: Staff | null;
-  onLock: () => void;
 }
 
-export function Layout({ currentStaff, onLock }: LayoutProps) {
+export function Layout({ currentStaff }: LayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
   
@@ -36,7 +35,6 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
     };
   }, []);
 
-  // Monitorizamos datos pendientes en tiempo real
   const pendingCount = useLiveQuery(async () => {
     const sales = await db.sales.where('sync_status').equals('pending_create').count();
     const movements = await db.movements.where('sync_status').equals('pending_create').count();
@@ -44,7 +42,6 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
     return sales + movements + audits; 
   }, []) || 0;
 
-  // LÓGICA DEL BOTÓN DE SINCRONIZAR
   const handleManualSync = async () => {
     if (!isOnline) {
         toast.error("No hay conexión para sincronizar");
@@ -53,16 +50,12 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
     setIsSyncing(true);
     
     try {
-        // 🔥 CAMBIO CRÍTICO: Usamos la sincronización secuencial (Subir -> Bajar)
-        // Esto evita conflictos de inventario y asegura que veas el stock real.
         await syncManualFull();
-        
         toast.success('¡Sistema actualizado y al día!');
     } catch (error) {
         console.error(error);
         toast.error('Error al sincronizar');
     } finally {
-        // Un pequeño delay para que la UI se sienta natural
         setTimeout(() => setIsSyncing(false), 500);
     }
   };
@@ -74,7 +67,6 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
     navigate('/login');
   };
 
-  // ESTADO VISUAL DEL BOTÓN
   let buttonColorClass = "";
   let buttonIcon = <Cloud size={20} />;
   let buttonTitle = "";
@@ -84,17 +76,14 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
       buttonIcon = <RefreshCw size={20} className="animate-spin"/>;
       buttonTitle = "Sincronizando...";
   } else if (!isOnline && pendingCount > 0) {
-      // 🔴 ROJO: Offline + Datos pendientes (¡Peligro!)
       buttonColorClass = "bg-red-50 text-red-600 ring-1 ring-red-200 animate-pulse";
       buttonIcon = <AlertCircle size={20} />;
       buttonTitle = "¡ADVERTENCIA! Cambios sin guardar en la nube";
   } else if (pendingCount > 0) {
-      // 🟠 ÁMBAR: Online + Datos pendientes (Se subirán pronto)
       buttonColorClass = "bg-amber-50 text-amber-600 ring-1 ring-amber-200";
       buttonIcon = <RefreshCw size={20} />;
       buttonTitle = "Hay cambios pendientes de subir";
   } else {
-      // 🟢 VERDE: Todo perfecto
       buttonColorClass = "bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200 hover:bg-emerald-100";
       buttonIcon = <CheckCircle2 size={20} />;
       buttonTitle = "Sistema actualizado y seguro";
@@ -108,7 +97,6 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
     { path: '/clientes', icon: <UsersIcon size={22} />, label: 'Clientes', show: true }, 
     { path: '/inventario', icon: <Package size={22} />, label: 'Inventario', show: isAdmin },
     { path: '/finanzas', icon: <PieChart size={22} />, label: 'Finanzas', show: isAdmin },
-    { path: '/equipo', icon: <Shield size={22} />, label: 'Equipo', show: isAdmin },
     { path: '/configuracion', icon: <Settings size={22} />, label: 'Configuración', show: isAdmin }
   ];
 
@@ -155,7 +143,6 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
         </nav>
 
         <div className="flex flex-col gap-2 w-full px-2 mt-4 border-t border-slate-100 pt-4">
-            {/* BOTÓN DE SINCRONIZACIÓN MEJORADO */}
             <button 
                 onClick={handleManualSync}
                 disabled={!isOnline || isSyncing}
@@ -171,9 +158,7 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
                 )}
             </button>
 
-            <button onClick={onLock} className="p-3 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-colors flex flex-col items-center justify-center" title="Bloquear Pantalla">
-                <Lock size={20}/>
-            </button>
+            {/* ✅ CORRECCIÓN: Eliminado botón de candado (Lock) */}
 
             <button onClick={handleLogout} className="p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors flex flex-col items-center justify-center" title="Cerrar Sesión">
                 <LogOut size={20}/>
@@ -192,7 +177,6 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
                 <span className="text-sm">Nexus POS</span>
             </div>
             <div className="flex items-center gap-3">
-                {/* BOTÓN MÓVIL TAMBIÉN ACTUALIZADO */}
                 <button 
                     onClick={handleManualSync}
                     className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${buttonColorClass}`}
@@ -213,10 +197,9 @@ export function Layout({ currentStaff, onLock }: LayoutProps) {
                 {item.icon}
             </Link>
             ))}
-            <button onClick={onLock} className="p-2 text-slate-400 active:text-blue-500 rounded-xl"><Lock size={22}/></button>
+            {/* ✅ CORRECCIÓN: Eliminado botón de bloqueo móvil */}
         </nav>
 
-        {/* Menú Móvil Overlay */}
         {isMobileMenuOpen && (
             <div className="fixed inset-0 z-50 md:hidden flex">
                 <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setIsMobileMenuOpen(false)} />
