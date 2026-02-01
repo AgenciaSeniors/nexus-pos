@@ -1,63 +1,58 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Roboto:wght@400;500;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* --- 1. AJUSTES PARA SENSACIÓN DE APP NATIVA --- */
-:root {
-  /* Evita el "rebote" elástico de la página entera en iOS/Android */
-  overscroll-behavior: none;
+@layer base {
+  html {
+    @apply bg-[#F3F4F6] text-[#1F2937] font-sans antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Montserrat', sans-serif;
+    @apply font-bold text-[#0B3B68]; 
+  }
+
+  body, p, span, div, input, button {
+    font-family: 'Roboto', sans-serif;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-[#0B3B68]/20 rounded-full hover:bg-[#0B3B68]/40;
+  }
 }
 
-body {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  background-color: #f8fafc;
-  color: #1e293b;
-
-  /* IMPORTANTE: Desactiva la selección de texto (nadie selecciona texto en una app, salvo inputs) */
-  user-select: none;
-  -webkit-user-select: none;
+@layer components {
+  .mobile-card-table {
+    @apply w-full block md:table;
+  }
   
-  /* Quita el color de resaltado al tocar botones (tap highlight) */
-  -webkit-tap-highlight-color: transparent;
+  .mobile-card-table thead {
+    @apply hidden md:table-header-group;
+  }
   
-  /* Asegura que la app ocupe el 100% de la pantalla del celular */
-  min-height: 100vh;
-  min-height: -webkit-fill-available;
+  .mobile-card-table tbody {
+    @apply block md:table-row-group;
+  }
   
-  /* Evita el zoom accidental con doble toque */
-  touch-action: manipulation;
-}
-
-/* --- 2. EXCEPCIONES IMPORTANTES --- */
-/* Permitir seleccionar texto SOLO donde se escribe */
-input, textarea {
-  user-select: text;
-  -webkit-user-select: text;
-  transition: all 0.2s;
-}
-
-/* --- 3. ESTILOS DE UI --- */
-
-/* Animación de inputs al enfocar */
-input:focus, select:focus {
-  transform: translateY(-1px);
-}
-
-/* Ocultar scrollbar pero permitir deslizar (Estilo App Moderna) */
-.scrollbar-hide::-webkit-scrollbar {
-    display: none;
-}
-.scrollbar-hide {
-    -ms-overflow-style: none; /* IE and Edge */
-    scrollbar-width: none;  /* Firefox */
-}
-
-/* Animaciones Suaves */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.animate-fade-in {
-  animation: fadeIn 0.4s ease-out forwards;
+  .mobile-card-table tr {
+    @apply block bg-white rounded-xl shadow-sm border border-gray-200 mb-4 p-4 md:table-row md:border-b md:border-gray-100 md:shadow-none md:bg-transparent md:mb-0 md:p-0;
+  }
+  
+  .mobile-card-table td {
+    @apply flex justify-between items-center text-right py-2 border-b border-gray-50 last:border-0 md:table-cell md:text-left md:py-4 md:border-b md:border-gray-100;
+  }
+  
+  .mobile-card-table td::before {
+    content: attr(data-label);
+    @apply font-bold text-[#6B7280] text-xs uppercase mr-4 md:hidden;
+  }
 }

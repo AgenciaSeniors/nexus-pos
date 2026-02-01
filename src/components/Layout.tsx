@@ -34,13 +34,10 @@ export function Layout({ currentStaff }: LayoutProps) {
     };
   }, []);
 
-  // ✅ CORRECCIÓN: Conteo exhaustivo de todo lo que esté pendiente de sync
   const pendingCount = useLiveQuery(async () => {
     const sales = await db.sales.where('sync_status').equals('pending_create').count();
     const movements = await db.movements.where('sync_status').equals('pending_create').count();
     const audits = await db.audit_logs.where('sync_status').equals('pending_create').count();
-    
-    // Contar también ediciones de productos, clientes, configuración y turnos
     const products = await db.products.filter(p => p.sync_status !== 'synced').count();
     const customers = await db.customers.filter(c => c.sync_status !== 'synced').count();
     const settings = await db.settings.filter(s => s.sync_status !== 'synced').count();
@@ -59,7 +56,7 @@ export function Layout({ currentStaff }: LayoutProps) {
     
     try {
         await syncManualFull();
-        toast.success('¡Sistema actualizado y al día!');
+        toast.success('¡Sistema sincronizado con éxito!');
     } catch (error) {
         console.error(error);
         toast.error('Error al sincronizar');
@@ -75,28 +72,6 @@ export function Layout({ currentStaff }: LayoutProps) {
     navigate('/login');
   };
 
-  let buttonColorClass = "";
-  let buttonIcon = <Cloud size={20} />;
-  let buttonTitle = "";
-
-  if (isSyncing) {
-      buttonColorClass = "bg-indigo-50 text-indigo-600 ring-1 ring-indigo-200";
-      buttonIcon = <RefreshCw size={20} className="animate-spin"/>;
-      buttonTitle = "Sincronizando...";
-  } else if (!isOnline && pendingCount > 0) {
-      buttonColorClass = "bg-red-50 text-red-600 ring-1 ring-red-200 animate-pulse";
-      buttonIcon = <AlertCircle size={20} />;
-      buttonTitle = "¡ADVERTENCIA! Cambios sin guardar en la nube";
-  } else if (pendingCount > 0) {
-      buttonColorClass = "bg-amber-50 text-amber-600 ring-1 ring-amber-200";
-      buttonIcon = <RefreshCw size={20} />;
-      buttonTitle = "Hay cambios pendientes de subir";
-  } else {
-      buttonColorClass = "bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200 hover:bg-emerald-100";
-      buttonIcon = <CheckCircle2 size={20} />;
-      buttonTitle = "Sistema actualizado y seguro";
-  }
-
   const isAdmin = currentStaff?.role === 'admin';
   const isCashier = currentStaff?.role === 'vendedor';
 
@@ -108,27 +83,60 @@ export function Layout({ currentStaff }: LayoutProps) {
     { path: '/configuracion', icon: <Settings size={22} />, label: 'Configuración', show: isAdmin }
   ];
 
+  // --- LÓGICA DE ESTADO DEL BOTÓN (Simplificada y corregida) ---
+  const getButtonState = () => {
+    if (isSyncing) {
+      return {
+        className: "bg-amber-50 text-amber-600 ring-1 ring-amber-200",
+        icon: <RefreshCw size={20} className="animate-spin"/>,
+        title: "Sincronizando..."
+      };
+    } 
+    if (!isOnline && pendingCount > 0) {
+      return {
+        className: "bg-red-50 text-[#EF4444] ring-1 ring-red-200 animate-pulse",
+        icon: <AlertCircle size={20} />,
+        title: "¡ADVERTENCIA! Cambios sin guardar en la nube"
+      };
+    } 
+    if (pendingCount > 0) {
+      return {
+        className: "bg-amber-50 text-[#F59E0B] ring-1 ring-amber-200",
+        icon: <RefreshCw size={20} />,
+        title: "Hay cambios pendientes de subir"
+      };
+    } 
+    return {
+      className: "bg-[#7AC142]/10 text-[#7AC142] ring-1 ring-[#7AC142]/30 hover:bg-[#7AC142]/20",
+      icon: <CheckCircle2 size={20} />,
+      title: "Sistema actualizado y seguro"
+    };
+  };
+
+  const buttonState = getButtonState();
+
   return (
-    <div className="flex h-screen w-full bg-slate-50 overflow-hidden font-sans">
+    <div className="flex h-screen w-full bg-[#F3F4F6] overflow-hidden font-sans text-[#1F2937]">
       
       {/* SIDEBAR DESKTOP */}
-      <aside className={`hidden md:flex flex-col items-center py-6 z-20 shadow-sm transition-all bg-white border-r border-slate-200 duration-300 ${isCashier ? 'w-20' : 'w-24'}`}>
-        <div className="mb-4 p-1 bg-white rounded-xl shadow-sm border border-slate-100">
-          <img src={logo} alt="Logo" className="w-10 h-10 object-contain" />
+      <aside className={`hidden md:flex flex-col items-center py-6 z-20 shadow-xl transition-all bg-[#0B3B68] text-white duration-300 ${isCashier ? 'w-20' : 'w-24'}`}>
+        
+        <div className="mb-6 p-2 bg-white/10 rounded-2xl border border-white/10 shadow-inner">
+          <img src={logo} alt="Bisne" className="w-10 h-10 object-contain drop-shadow-md" />
         </div>
         
-        <div className="mb-6 text-center px-1 w-full group relative">
-          <div className={`w-9 h-9 rounded-full flex items-center justify-center mx-auto mb-1 text-white font-bold text-sm shadow-md transition-colors ${isAdmin ? 'bg-purple-600' : 'bg-indigo-500'}`}>
-            {currentStaff?.name.substring(0, 2).toUpperCase() || 'ST'}
+        <div className="mb-8 text-center px-1 w-full group relative">
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-2 font-bold text-sm shadow-lg transition-colors border-2 border-[#7AC142] ${isAdmin ? 'bg-[#7AC142] text-[#0B3B68]' : 'bg-white/10 text-white'}`}>
+            {currentStaff?.name.substring(0, 2).toUpperCase() || 'BT'}
           </div>
           {!isCashier && (
-             <p className="text-[10px] font-bold text-slate-600 truncate w-full px-1">
+             <p className="text-[10px] font-bold text-[#7AC142] truncate w-full px-1 uppercase tracking-wider opacity-90">
                {currentStaff?.name?.split(' ')[0]}
              </p>
           )}
         </div>
 
-        <nav className="flex-1 flex flex-col gap-3 w-full px-2">
+        <nav className="flex-1 flex flex-col gap-4 w-full px-3">
           {menuItems.filter(i => i.show).map((item) => {
             const isActive = location.pathname === item.path;
             return (
@@ -137,12 +145,12 @@ export function Layout({ currentStaff }: LayoutProps) {
                 to={item.path}
                 className={`flex flex-col items-center justify-center p-3 rounded-xl transition-all duration-200 group relative ${
                   isActive
-                    ? 'bg-indigo-50 text-indigo-600 shadow-sm ring-1 ring-indigo-100'
-                    : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
+                    ? 'bg-[#7AC142] text-[#0B3B68] shadow-lg shadow-[#7AC142]/20 font-bold translate-x-1'
+                    : 'text-gray-300 hover:text-white hover:bg-white/10'
                 }`}
               >
                 {item.icon}
-                <span className="absolute left-full ml-2 px-2 py-1 bg-slate-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 shadow-lg">
+                <span className="absolute left-full ml-4 px-3 py-2 bg-[#1F2937] text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 shadow-xl font-bold uppercase tracking-wide border border-gray-700">
                   {item.label}
                 </span>
               </Link>
@@ -150,23 +158,23 @@ export function Layout({ currentStaff }: LayoutProps) {
           })}
         </nav>
 
-        <div className="flex flex-col gap-2 w-full px-2 mt-4 border-t border-slate-100 pt-4">
+        <div className="flex flex-col gap-3 w-full px-3 mt-4 border-t border-white/10 pt-6">
             <button 
                 onClick={handleManualSync}
                 disabled={!isOnline || isSyncing}
-                className={`p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group ${buttonColorClass}`}
-                title={buttonTitle}
+                className={`p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group bg-white/5 hover:bg-white/10 border border-white/5 ${pendingCount > 0 ? 'text-[#F59E0B] border-[#F59E0B]/50' : 'text-[#7AC142]'}`}
+                title={buttonState.title}
             >
-                {buttonIcon}
+                {buttonState.icon}
                 {pendingCount > 0 && (
-                    <span className="absolute top-1 right-1 flex h-3 w-3">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-current opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500 text-[8px] text-white justify-center items-center font-bold"></span>
+                    <span className="absolute top-2 right-2 flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#F59E0B] opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#F59E0B]"></span>
                     </span>
                 )}
             </button>
 
-            <button onClick={handleLogout} className="p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors flex flex-col items-center justify-center" title="Cerrar Sesión">
+            <button onClick={handleLogout} className="p-3 text-gray-400 hover:text-[#EF4444] hover:bg-[#EF4444]/10 rounded-xl transition-colors flex flex-col items-center justify-center" title="Cerrar Sesión">
                 <LogOut size={20}/>
             </button>
         </div>
@@ -174,56 +182,70 @@ export function Layout({ currentStaff }: LayoutProps) {
 
       {/* HEADER MÓVIL */}
       <div className="flex-1 flex flex-col min-w-0 relative">
-        <header className="bg-white border-b border-slate-200 px-4 py-3 flex justify-between items-center md:hidden z-10 shadow-sm">
-            <button onClick={() => setIsMobileMenuOpen(true)} className="text-slate-600">
-                <Menu size={24} />
+        <header className="bg-[#0B3B68] text-white border-b border-[#0B3B68] px-4 py-3 flex justify-between items-center md:hidden z-10 shadow-lg sticky top-0">
+            <button onClick={() => setIsMobileMenuOpen(true)} className="text-white hover:text-[#7AC142] transition-colors">
+                <Menu size={26} />
             </button>
-            <div className="font-bold text-slate-800 flex items-center gap-2">
-                <img src={logo} alt="" className="w-6 h-6 object-contain"/> 
-                <span className="text-sm">Nexus POS</span>
+            <div className="font-bold text-lg flex items-center gap-2 tracking-tight">
+                <img src={logo} alt="" className="w-8 h-8 object-contain"/> 
+                <span>Bisne con Talla</span>
             </div>
             <div className="flex items-center gap-3">
                 <button 
                     onClick={handleManualSync}
-                    className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${buttonColorClass}`}
+                    className={`flex items-center justify-center w-9 h-9 rounded-full transition-all ${isSyncing || pendingCount > 0 ? 'bg-[#F59E0B] text-[#0B3B68] animate-pulse' : 'bg-[#7AC142] text-[#0B3B68]'}`}
                 >
-                    {isSyncing ? <RefreshCw size={14} className="animate-spin"/> : pendingCount > 0 ? <AlertCircle size={14}/> : <CheckCircle2 size={14}/>}
-                    {pendingCount > 0 && <span className="ml-1">{pendingCount}</span>}
+                    {isSyncing ? <RefreshCw size={18} className="animate-spin"/> : pendingCount > 0 ? <Cloud size={18}/> : <CheckCircle2 size={18}/>}
                 </button>
             </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto overflow-x-hidden relative bg-slate-50 pb-safe">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden relative bg-[#F3F4F6] pb-safe scroll-smooth">
             <Outlet context={{ currentStaff }} /> 
         </main>
 
-        <nav className="md:hidden bg-white border-t border-slate-200 flex justify-around items-center p-2 pb-safe z-30 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-            {menuItems.filter(i => i.show).slice(0, 4).map((item) => (
-            <Link key={item.path} to={item.path} className={`p-2 rounded-xl flex flex-col items-center transition-colors ${location.pathname === item.path ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400'}`}>
-                {item.icon}
-            </Link>
-            ))}
+        <nav className="md:hidden bg-white border-t border-gray-200 flex justify-around items-center p-2 pb-safe z-30 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] sticky bottom-0">
+            {menuItems.filter(i => i.show).slice(0, 4).map((item) => {
+              const isActive = location.pathname === item.path;
+              return (
+                <Link key={item.path} to={item.path} className={`flex-1 p-2 rounded-xl flex flex-col items-center transition-all duration-200 ${isActive ? 'text-[#0B3B68] bg-[#0B3B68]/5 transform -translate-y-1' : 'text-gray-400 hover:text-[#0B3B68]'}`}>
+                    <div className={isActive ? 'drop-shadow-sm' : ''}>{item.icon}</div>
+                    <span className={`text-[9px] font-bold mt-1 uppercase tracking-wider ${isActive ? 'opacity-100' : 'opacity-0'}`}>{item.label}</span>
+                </Link>
+              )
+            })}
         </nav>
 
         {isMobileMenuOpen && (
-            <div className="fixed inset-0 z-50 md:hidden flex">
-                <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setIsMobileMenuOpen(false)} />
-                <div className="relative bg-white w-64 h-full shadow-2xl flex flex-col animate-in slide-in-from-left duration-200">
-                    <div className="p-4 border-b flex justify-between items-center bg-slate-50">
-                        <span className="font-bold text-lg">Menú</span>
-                        <button onClick={() => setIsMobileMenuOpen(false)}><X size={24} className="text-slate-500"/></button>
+            <div className="fixed inset-0 z-50 md:hidden flex justify-end">
+                <div className="absolute inset-0 bg-[#0B3B68]/90 backdrop-blur-sm animate-in fade-in" onClick={() => setIsMobileMenuOpen(false)} />
+                
+                <div className="relative bg-[#F3F4F6] w-4/5 max-w-xs h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 border-l border-gray-200">
+                    <div className="p-6 bg-[#0B3B68] text-white">
+                        <div className="flex justify-between items-center mb-6">
+                           <img src={logo} alt="Logo" className="w-10 h-10 object-contain"/>
+                           <button onClick={() => setIsMobileMenuOpen(false)} className="bg-white/10 p-2 rounded-full hover:bg-white/20 text-white"><X size={20}/></button>
+                        </div>
+                        <h2 className="text-xl font-bold text-white mb-1">Menú Principal</h2>
+                        <p className="text-[#7AC142] text-sm font-medium">Hola, {currentStaff?.name.split(' ')[0]}</p>
                     </div>
-                    <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                        {menuItems.filter(i => i.show).map(item => (
-                            <Link key={item.path} to={item.path} onClick={() => setIsMobileMenuOpen(false)} className={`flex items-center gap-3 p-3 rounded-lg ${location.pathname === item.path ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-slate-600 hover:bg-slate-100'}`}>
-                                {item.icon}
-                                <span>{item.label}</span>
-                            </Link>
-                        ))}
+                    
+                    <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                        {menuItems.filter(i => i.show).map(item => {
+                             const isActive = location.pathname === item.path;
+                             return (
+                                <Link key={item.path} to={item.path} onClick={() => setIsMobileMenuOpen(false)} 
+                                    className={`flex items-center gap-4 p-4 rounded-xl transition-all ${isActive ? 'bg-[#0B3B68] text-white shadow-md font-bold' : 'text-[#1F2937] hover:bg-gray-100'}`}>
+                                    <span className={isActive ? 'text-[#7AC142]' : 'text-[#0B3B68]'}>{item.icon}</span>
+                                    <span>{item.label}</span>
+                                </Link>
+                             )
+                        })}
                     </div>
-                    <div className="p-4 border-t bg-slate-50">
-                        <button onClick={handleLogout} className="flex items-center gap-2 text-red-600 w-full p-2 hover:bg-red-50 rounded-lg font-bold">
-                            <LogOut size={20} /> Salir
+                    
+                    <div className="p-6 border-t border-gray-200 bg-white">
+                        <button onClick={handleLogout} className="flex items-center justify-center gap-3 text-[#EF4444] w-full p-4 hover:bg-[#EF4444]/5 rounded-xl font-bold transition-colors border border-[#EF4444]/20 hover:border-[#EF4444]">
+                            <LogOut size={20} /> Cerrar Sesión
                         </button>
                     </div>
                 </div>
