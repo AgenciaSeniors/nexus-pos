@@ -12,6 +12,7 @@ import {
   type CashMovement
 } from './db';
 import { supabase } from './supabase';
+import type { Table } from 'dexie';
 
 // Helper para verificar conexión real
 export function isOnline() {
@@ -138,7 +139,6 @@ async function processItem(item: QueueItem) {
       break;
     }
 
-    // GESTIÓN DE TURNOS (Apertura/Cierre)
     case 'SHIFT': {
         const shift = payload as CashShift;
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -152,7 +152,6 @@ async function processItem(item: QueueItem) {
         break;
     }
 
-    // MOVIMIENTOS DE CAJA
     case 'CASH_MOVEMENT': {
         const mov = payload as CashMovement;
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -215,47 +214,58 @@ export async function processQueue() {
   }
 }
 
-// --- FUNCIONES PÚBLICAS ---
+// --- UTILIDADES DE CARGA SEGURA ---
 
-export async function syncPush() {
-    console.log("⬆️ Iniciando Push...");
-    await resetProcessingItems(); 
-    await processQueue();
+// 🔥 PROTECCIÓN CONTRA SOBRESCRITURA
+// Solo guarda datos de la nube si NO tenemos cambios locales pendientes.
+async function safeBulkPut<T extends { id: string; sync_status?: string }>(
+  table: Table<T, string>, 
+  items: T[]
+) {
+  // 1. Identificar ítems locales "sucios" (pendientes de subida)
+  // Dexie no indexa sync_status por defecto en todos lados, así que filtramos
+  const dirtyItems = await table
+    .filter(i => i.sync_status !== undefined && i.sync_status !== 'synced')
+    .primaryKeys();
+  
+  const dirtySet = new Set(dirtyItems);
+
+  // 2. Filtrar lo que viene de la nube: Si tengo un cambio local, IGNORO la nube
+  const safeItems = items.filter(i => !dirtySet.has(i.id));
+
+  if (safeItems.length > 0) {
+    await table.bulkPut(safeItems);
+  } else {
+    console.log(`🛡️ Se omitieron ${items.length} ítems para proteger cambios locales.`);
+  }
 }
 
-export async function syncPull() {
-    if (!isOnline()) return;
+// 🔥 PAGINACIÓN AUTOMÁTICA
+// Evita timeouts al bajar miles de registros
+async function fetchAll(table: string, businessId: string) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allData: any[] = [];
+    let page = 0;
+    const size = 1000;
     
-    console.log("⬇️ Iniciando Pull...");
-    const settings = await db.settings.toArray();
-    
-    if (settings.length > 0) {
-        const businessId = settings[0].id;
-        await Promise.all([
-            syncCriticalData(businessId), 
-            syncHeavyData(businessId)     
-        ]);
-        console.log("✨ Pull completado.");
+    // eslint-disable-next-line no-constant-condition
+    while(true) {
+        const { data, error } = await supabase.from(table)
+            .select('*')
+            .eq('business_id', businessId)
+            .range(page * size, (page + 1) * size - 1);
+        
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        
+        allData.push(...data);
+        if (data.length < size) break; // Si bajamos menos del límite, es la última página
+        page++;
     }
+    return allData;
 }
 
-export async function syncManualFull() {
-    if (!isOnline()) throw new Error("Sin conexión a internet");
-    console.log("🔄 Iniciando Sync Manual...");
-    await syncPush();
-    await syncPull();
-    console.log("✅ Sync Manual Finalizado.");
-}
-
-if (typeof window !== 'undefined') {
-    window.addEventListener('online', () => {
-        resetProcessingItems().then(() => processQueue());
-    });
-    resetProcessingItems();
-    setInterval(() => { if (isOnline()) processQueue(); }, 30000);
-}
-
-// --- DATA FETCHING ---
+// --- FUNCIONES DE SINCRONIZACIÓN (PULL) ---
 
 export async function syncCriticalData(businessId: string) {
   if (!isOnline()) return; 
@@ -281,19 +291,17 @@ export async function syncCriticalData(businessId: string) {
       });
     }
     if (staffResult.data) {
+      // Staff no suele cambiar mucho, reemplazamos
       await db.staff.clear(); 
       await db.staff.bulkPut(staffResult.data);
     }
     if (registersResult.data) {
       const cleanRegisters = registersResult.data.map(r => ({ ...r, sync_status: 'synced' }));
-      
-      await db.cash_registers.bulkPut(cleanRegisters);
+      await db.cash_registers.bulkPut(cleanRegisters as never);
     }
-    // Recuperar turno abierto
     if (shiftsResult.data && shiftsResult.data.length > 0) {
         const shifts = shiftsResult.data.map(s => ({ ...s, sync_status: 'synced' }));
-        
-        await db.cash_shifts.bulkPut(shifts);
+        await safeBulkPut(db.cash_shifts as never, shifts);
     }
 
   } catch (error) {
@@ -304,25 +312,69 @@ export async function syncCriticalData(businessId: string) {
 export async function syncHeavyData(businessId: string) {
   if (!isOnline()) return; 
   try {
-    const [productsResult, customersResult] = await Promise.all([
-      supabase.from('products').select('*').eq('business_id', businessId),
-      supabase.from('customers').select('*').eq('business_id', businessId)
+    // Usamos el fetchAll paginado
+    const [productsData, customersData] = await Promise.all([
+      fetchAll('products', businessId),
+      fetchAll('customers', businessId)
     ]);
 
-    if (productsResult.data) {
-        const cleanProducts = productsResult.data.map(p => ({ ...p, sync_status: 'synced' }));
-        
-        await db.products.bulkPut(cleanProducts);
+    if (productsData.length > 0) {
+        const cleanProducts = productsData.map(p => ({ ...p, sync_status: 'synced' }));
+        await safeBulkPut(db.products as never, cleanProducts);
     }
-    if (customersResult.data) {
-        const cleanCustomers = customersResult.data.map(c => ({ ...c, sync_status: 'synced' }));
-        
-        await db.customers.bulkPut(cleanCustomers);
+    if (customersData.length > 0) {
+        const cleanCustomers = customersData.map(c => ({ ...c, sync_status: 'synced' }));
+        await safeBulkPut(db.customers as never, cleanCustomers);
     }
-  } catch (error) { console.error('⚠️ Error carga inventario:', error); }
+    console.log("📦 Inventario y Clientes sincronizados.");
+  } catch (error) { 
+      console.error('⚠️ Error carga inventario:', error); 
+  }
 }
 
+// Coordinador principal
 export async function syncBusinessProfile(businessId: string) {
   await syncCriticalData(businessId);
   await syncHeavyData(businessId);
+}
+
+// --- COMANDOS MANUALES ---
+
+export async function syncPush() {
+    console.log("⬆️ Iniciando Push...");
+    await resetProcessingItems(); 
+    await processQueue();
+}
+
+export async function syncPull() {
+    if (!isOnline()) return;
+    console.log("⬇️ Iniciando Pull...");
+    const settings = await db.settings.toArray();
+    if (settings.length > 0) {
+        const businessId = settings[0].id;
+        // Priorizamos la crítica, luego la pesada
+        await syncCriticalData(businessId);
+        await syncHeavyData(businessId);
+        console.log("✨ Pull completado.");
+    }
+}
+
+export async function syncManualFull() {
+    if (!isOnline()) throw new Error("Sin conexión a internet");
+    console.log("🔄 Iniciando Sync Manual...");
+    await syncPush(); // Primero subimos lo nuestro
+    await syncPull(); // Luego bajamos lo nuevo (sin pisar lo pendiente)
+    console.log("✅ Sync Manual Finalizado.");
+}
+
+// Watcher automático
+if (typeof window !== 'undefined') {
+    window.addEventListener('online', () => {
+        console.log("🌐 Conexión detectada. Reanudando cola...");
+        resetProcessingItems().then(() => processQueue());
+    });
+    // Limpieza inicial
+    resetProcessingItems();
+    // Intervalo de seguridad (30s)
+    setInterval(() => { if (isOnline()) processQueue(); }, 30000);
 }

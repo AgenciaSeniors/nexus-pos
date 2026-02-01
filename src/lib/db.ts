@@ -139,7 +139,7 @@ export interface AuditLog {
   business_id: string;
   staff_id: string;
   staff_name: string;
-  // ✅ AGREGADO: 'UPDATE_LOYALTY' para ajustes de puntos
+  // ✅ UPDATE_LOYALTY y UPDATE_PRODUCT agregados para cobertura completa
   action: 'LOGIN' | 'LOGOUT' | 'SALE' | 'CREATE_PRODUCT' | 'UPDATE_PRODUCT' | 'DELETE_PRODUCT' | 
           'UPDATE_STOCK' | 'OPEN_DRAWER' | 'VOID_SALE' | 'CREATE_CUSTOMER' | 
           'UPDATE_CUSTOMER' | 'DELETE_CUSTOMER' | 'UPDATE_LOYALTY' | 'OPEN_SHIFT' | 'CLOSE_SHIFT' | 
