@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-
+// ❌ Se eliminó useOutletContext porque ya no se usa
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type BusinessConfig } from '../lib/db';
 import { supabase } from '../lib/supabase';
+// ✅ AGREGADOS: MapPin y Phone que faltaban
 import { 
-  Save, Building2, Receipt, Loader2, 
+  Save, Building2, MapPin, Phone, Receipt, Loader2, 
   MonitorX, LogOut 
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -139,7 +140,7 @@ export function SettingsPage() {
             {/* Nombre Comercial */}
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                Nombre de la Empresa
+                <Building2 size={14}/> Nombre de la Empresa
               </label>
               <input 
                 type="text" 
@@ -154,7 +155,7 @@ export function SettingsPage() {
             {/* Teléfono de Contacto */}
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                Teléfono / Contacto
+                <Phone size={14}/> Teléfono / Contacto
               </label>
               <input 
                 type="text" 
@@ -169,7 +170,7 @@ export function SettingsPage() {
           {/* Dirección Física */}
           <div className="space-y-2">
             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              Dirección del Local
+              <MapPin size={14}/> Dirección del Local
             </label>
             <textarea 
               rows={2}
