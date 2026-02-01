@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { db, type Customer, type Staff } from '../lib/db';
+import { db, type Customer, type Staff} from '../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
     UserPlus, Search, Edit2, Trash2, Users, Loader2, Phone, Mail, MapPin, 
@@ -153,8 +153,7 @@ export function CustomersPage() {
         toast.success("Cliente eliminado");
         if (selectedCustomer?.id === id) setSelectedCustomer(null);
         syncPush().catch(console.error);
-    } catch (e) { console.error(e);
-        toast.error("Error al eliminar"); }
+    } catch (e) {console.error(e); toast.error("Error al eliminar"); }
   };
 
   // --- LÓGICA DE PUNTOS (Ajuste Manual) ---

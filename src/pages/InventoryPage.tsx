@@ -36,7 +36,7 @@ export function InventoryPage() {
   // --- DATOS AJUSTE STOCK ---
   const [stockAdjustment, setStockAdjustment] = useState({
       newStock: 0,
-      reason: 'restock',
+      reason: 'restock', // restock, correction, damage, return
       notes: ''
   });
 
@@ -55,13 +55,14 @@ export function InventoryPage() {
     p.sku?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // --- LOGICA DE GUARDADO ---
+  // --- 1. GUARDAR PRODUCTO (CREAR / EDITAR INFO) ---
   const handleSubmitProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!businessId) return;
     setIsLoading(true);
 
     try {
+        // Validar SKU duplicado
         if (formData.sku) {
             const duplicate = await db.products
                 .where({ business_id: businessId, sku: formData.sku })
@@ -86,17 +87,19 @@ export function InventoryPage() {
         };
 
         if (editingProduct) {
+            // EDICIÓN (No toca stock)
             const updated = { ...editingProduct, ...productData, sync_status: 'pending_update' as const };
             await db.products.put(updated);
             await addToQueue('PRODUCT_SYNC', updated);
             await logAuditAction('UPDATE_PRODUCT', { name: updated.name }, currentStaff);
             toast.success('Información actualizada');
         } else {
+            // CREACIÓN (Stock inicial se maneja aparte o en 0)
             const newProduct: Product = {
                 id: crypto.randomUUID(),
                 business_id: businessId,
                 ...productData,
-                stock: 0,
+                stock: 0, 
                 sync_status: 'pending_create',
                 created_at: new Date().toISOString()
             };
@@ -120,6 +123,7 @@ export function InventoryPage() {
     }
   };
 
+  // --- 2. AJUSTAR STOCK (AUDITADO) ---
   const handleStockAdjustment = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!editingProduct || !businessId) return;
@@ -137,6 +141,7 @@ export function InventoryPage() {
           }
 
           await db.transaction('rw', [db.products, db.movements, db.action_queue, db.audit_logs], async () => {
+              // 1. Actualizar Producto
               const updatedProduct = { 
                   ...editingProduct, 
                   stock: newStock, 
@@ -145,6 +150,7 @@ export function InventoryPage() {
               await db.products.put(updatedProduct);
               await addToQueue('PRODUCT_SYNC', updatedProduct);
 
+              // 2. Registrar Movimiento
               const movement: InventoryMovement = {
                   id: crypto.randomUUID(),
                   business_id: businessId,
@@ -158,6 +164,7 @@ export function InventoryPage() {
               await db.movements.add(movement);
               await addToQueue('MOVEMENT', movement);
 
+              // 3. Auditoría
               await logAuditAction('UPDATE_STOCK', { 
                   product: editingProduct.name, 
                   old: currentStock, 
@@ -181,6 +188,7 @@ export function InventoryPage() {
 
   const handleDelete = async (product: Product) => {
       if (!confirm(`¿Eliminar "${product.name}"?`)) return;
+      
       try {
           const deleted = { ...product, deleted_at: new Date().toISOString(), sync_status: 'pending_update' as const };
           await db.products.put(deleted);
@@ -348,7 +356,7 @@ export function InventoryPage() {
           <InventoryHistory /> 
       )}
 
-      {/* --- MODAL 1: FORMULARIO PRODUCTO --- */}
+      {/* --- MODAL 1: FORMULARIO PRODUCTO (Sin Stock) --- */}
       {isFormOpen && (
         <div className="fixed inset-0 bg-[#0B3B68]/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden">
@@ -421,7 +429,7 @@ export function InventoryPage() {
         </div>
       )}
 
-      {/* --- MODAL 2: AJUSTE DE STOCK --- */}
+      {/* --- MODAL 2: AJUSTE DE STOCK (CRÍTICO) --- */}
       {isStockModalOpen && editingProduct && (
         <div className="fixed inset-0 bg-[#0B3B68]/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border-t-4 border-[#0B3B68]">
@@ -481,6 +489,7 @@ export function InventoryPage() {
                       <button onClick={() => setIsHistoryModalOpen(false)}><X className="text-[#6B7280] hover:text-[#1F2937]"/></button>
                   </div>
                   <div className="flex-1 overflow-hidden p-0 bg-gray-50">
+                      {/* Reutilizamos el componente con el filtro */}
                       <InventoryHistory productId={editingProduct.id} />
                   </div>
               </div>
