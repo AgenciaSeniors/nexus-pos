@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff } from '../lib/db';
-import { syncPush, addToQueue, syncPull } from '../lib/sync';
+import { addToQueue, syncPull, syncPush } from '../lib/sync';
 import { logAuditAction } from '../lib/audit';
 import { currency } from '../lib/currency';
 import { TicketModal } from '../components/TicketModal';
@@ -19,6 +19,15 @@ import {
 } from 'lucide-react';
 
 const EMPTY_ARRAY: never[] = [];
+
+// --- HELPER PARA BLINDAR NÚMEROS ---
+// Convierte cualquier valor (string, null, undefined) a un número flotante válido.
+// Si falla, devuelve 0 para no romper las sumas.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const safeFloat = (val: any): number => {
+  const num = parseFloat(val);
+  return isNaN(num) ? 0 : num;
+};
 
 export function FinancePage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
@@ -45,6 +54,8 @@ export function FinancePage() {
 
   const shiftData = useLiveQuery(async () => {
     if (!activeShift || !businessId) return null;
+    
+    // Obtenemos ventas y movimientos asociados a ESTE turno específico
     const [sales, movements] = await Promise.all([
       db.sales
         .where('shift_id')
@@ -59,7 +70,7 @@ export function FinancePage() {
     ]);
 
     return { sales, movements };
-  }, [activeShift]);
+  }, [activeShift, businessId]);
 
   const products = useLiveQuery<Product[]>(async () => {
     if (!businessId) return [];
@@ -75,22 +86,32 @@ export function FinancePage() {
   const shiftStats = useMemo(() => {
     if (!activeShift || !shiftData) return null;
     
-    // Aseguramos que startAmount sea un número válido, fallback a 0
-    const startAmount = activeShift.start_amount || 0;
+    // 1. Base Inicial (Forzamos número)
+    const startAmount = safeFloat(activeShift.start_amount);
     
-    // 1. Total Global (Ventas totales sin importar método)
-    const totalSales = shiftData.sales.reduce((sum, s) => sum + (s.total || 0), 0);
+    // 2. Total Global de Ventas (Suma de todo, sin importar método)
+    const totalSales = shiftData.sales.reduce((sum, s) => sum + safeFloat(s.total), 0);
 
-    // 2. Solo Efectivo (Para el arqueo)
+    // 3. Ventas SOLO en Efectivo (Para el arqueo de caja física)
+    // Filtramos por método 'efectivo' o 'mixto' (asumiendo que mixto toca caja)
     const cashSales = shiftData.sales
-      .filter(s => s.payment_method === 'efectivo' || s.payment_method === 'mixto')
-      .reduce((sum, s) => sum + (s.total || 0), 0); 
+      .filter(s => {
+          const method = s.payment_method?.toLowerCase() || 'efectivo'; // Default a efectivo si es nulo
+          return method === 'efectivo' || method === 'mixto';
+      })
+      .reduce((sum, s) => sum + safeFloat(s.total), 0); 
     
-    const cashIn = shiftData.movements.filter(m => m.type === 'in').reduce((sum, m) => sum + (m.amount || 0), 0);
-    const cashOut = shiftData.movements.filter(m => m.type === 'out').reduce((sum, m) => sum + (m.amount || 0), 0);
+    // 4. Movimientos manuales
+    const cashIn = shiftData.movements
+        .filter(m => m.type === 'in')
+        .reduce((sum, m) => sum + safeFloat(m.amount), 0);
+        
+    const cashOut = shiftData.movements
+        .filter(m => m.type === 'out')
+        .reduce((sum, m) => sum + safeFloat(m.amount), 0);
 
-    // Cálculo final seguro
-    const expectedCash = startAmount + cashSales + cashIn - cashOut;
+    // 5. Cálculo final: Base + Ventas(Efectivo) + Entradas - Salidas
+    const expectedCash = (startAmount + cashSales + cashIn) - cashOut;
 
     return { startAmount, cashSales, totalSales, cashIn, cashOut, expectedCash };
   }, [activeShift, shiftData]);
@@ -99,7 +120,7 @@ export function FinancePage() {
     const costs = new Map<string, number>();
     const cats = new Map<string, string>();
     products.forEach((p) => {
-      costs.set(p.id, p.cost || 0);
+      costs.set(p.id, safeFloat(p.cost));
       cats.set(p.id, p.category || 'General');
     });
     return { costs, cats };
@@ -115,16 +136,26 @@ export function FinancePage() {
     for (let i = 7; i <= 23; i++) hourlyCounts[i.toString().padStart(2, '0') + ":00"] = 0;
 
     salesForDay.forEach((sale) => {
-      revenue += sale.total;
-      const h = new Date(sale.date).getHours().toString().padStart(2, '0') + ":00";
-      if (hourlyCounts[h] !== undefined) hourlyCounts[h] += sale.total;
+      const saleTotal = safeFloat(sale.total);
+      revenue += saleTotal;
+      
+      const saleDate = new Date(sale.date);
+      if (!isNaN(saleDate.getTime())) {
+          const h = saleDate.getHours().toString().padStart(2, '0') + ":00";
+          if (hourlyCounts[h] !== undefined) hourlyCounts[h] += saleTotal;
+      }
 
       sale.items.forEach((item) => {
-        const historicalCost = item.cost !== undefined ? item.cost : (productMeta.costs.get(item.product_id) || 0);
-        cost += historicalCost * item.quantity;
+        const itemQty = safeFloat(item.quantity);
+        const itemPrice = safeFloat(item.price);
+        // Costo histórico si existe, sino costo actual del producto
+        const historicalCost = item.cost !== undefined ? safeFloat(item.cost) : (productMeta.costs.get(item.product_id) || 0);
+        
+        cost += historicalCost * itemQty;
+        
         const cat = productMeta.cats.get(item.product_id) || 'General';
-        categoryCounts[cat] = (categoryCounts[cat] || 0) + (item.price * item.quantity);
-        productCounts[item.name] = (productCounts[item.name] || 0) + item.quantity;
+        categoryCounts[cat] = (categoryCounts[cat] || 0) + (itemPrice * itemQty);
+        productCounts[item.name] = (productCounts[item.name] || 0) + itemQty;
       });
     });
 
@@ -145,14 +176,17 @@ export function FinancePage() {
     const productSummary: Record<string, { quantity: number, total: number }> = {};
 
     sales.forEach((sale) => {
-      if (sale.payment_method === 'efectivo') cashTotal += sale.total;
-      else if (sale.payment_method === 'tarjeta') cardTotal += sale.total;
-      else transferTotal += sale.total;
+      const saleTotal = safeFloat(sale.total);
+      const method = sale.payment_method?.toLowerCase() || 'efectivo';
+
+      if (method === 'efectivo') cashTotal += saleTotal;
+      else if (method === 'tarjeta') cardTotal += saleTotal;
+      else transferTotal += saleTotal;
 
       sale.items.forEach((item) => {
         if (!productSummary[item.name]) productSummary[item.name] = { quantity: 0, total: 0 };
-        productSummary[item.name].quantity += item.quantity;
-        productSummary[item.name].total += (item.price * item.quantity);
+        productSummary[item.name].quantity += safeFloat(item.quantity);
+        productSummary[item.name].total += (safeFloat(item.price) * safeFloat(item.quantity));
       });
     });
 
@@ -171,15 +205,16 @@ export function FinancePage() {
     const salesByDate: Record<string, number> = {};
 
     filteredSales.forEach((sale) => {
-      totalRevenue += sale.total;
+      const saleTotal = safeFloat(sale.total);
+      totalRevenue += saleTotal;
       let saleCost = 0;
       sale.items.forEach((i) => {
-          const historicalCost = i.cost !== undefined ? i.cost : (productMeta.costs.get(i.product_id) || 0);
-          saleCost += historicalCost * i.quantity;
+          const historicalCost = i.cost !== undefined ? safeFloat(i.cost) : (productMeta.costs.get(i.product_id) || 0);
+          saleCost += historicalCost * safeFloat(i.quantity);
       });
       totalCost += saleCost;
       const dateKey = new Date(sale.date).toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' });
-      salesByDate[dateKey] = (salesByDate[dateKey] || 0) + sale.total;
+      salesByDate[dateKey] = (salesByDate[dateKey] || 0) + saleTotal;
     });
 
     const totalProfit = totalRevenue - totalCost;
@@ -189,15 +224,24 @@ export function FinancePage() {
     return { totalRevenue, totalCost, totalProfit, totalMargin, chartData, count: filteredSales.length };
   }, [allSales, trendFilter, productMeta]);
 
+  // --- HELPER PARA FORMATO MONEDA SEGURO ---
+  const formatMoney = (val: number) => {
+    try {
+        return currency.format(val);
+    } catch {
+        return `$${val.toFixed(2)}`;
+    }
+  };
+
   // --- HANDLERS TRANSACCIONALES ---
 
   // 1. ABRIR CAJA
   const handleOpenShift = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!businessId) return;
-    const startAmount = parseFloat(amount);
+    const startAmount = safeFloat(amount);
     if (isNaN(startAmount) || startAmount < 0) return toast.error('Monto inicial inválido');
-
+    
     setIsLoading(true);
     try {
         const shiftId = crypto.randomUUID();
@@ -232,9 +276,9 @@ export function FinancePage() {
   const handleMovement = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeShift || !movementType || !businessId) return;
-    const val = parseFloat(amount);
+    const val = safeFloat(amount);
     
-    if (isNaN(val) || val <= 0) return toast.error('Monto inválido');
+    if (val <= 0) return toast.error('Monto inválido');
     if (!reason.trim()) return toast.error('Debes indicar un motivo');
 
     setIsLoading(true);
@@ -272,8 +316,7 @@ export function FinancePage() {
   const handleCloseShift = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeShift || !shiftStats) return;
-    const finalCount = parseFloat(amount);
-    if (isNaN(finalCount) || finalCount < 0) return toast.error('Ingresa el monto final válido');
+    const finalCount = safeFloat(amount);
     
     setIsLoading(true);
     try {
@@ -300,7 +343,7 @@ export function FinancePage() {
             }, currentStaff);
         });
 
-        toast.success(`Caja cerrada. Diferencia: ${currency.format(difference)}`);
+        toast.success(`Caja cerrada. Diferencia: ${formatMoney(difference)}`);
         setIsClosing(false); setAmount('');
         syncPush().catch(console.error);
     } catch (error) {
@@ -396,26 +439,25 @@ export function FinancePage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
                <p className="text-[#6B7280] text-[10px] font-bold uppercase tracking-wider mb-1 flex items-center gap-1"><ShoppingBag size={12}/> Total Ventas</p>
-               <h3 className="text-2xl font-black text-[#1F2937]">{currency.format(shiftStats.totalSales)}</h3>
+               <h3 className="text-2xl font-black text-[#1F2937]">{formatMoney(shiftStats.totalSales)}</h3>
                <p className="text-[10px] text-[#6B7280] mt-1">Todos los métodos</p>
             </div>
 
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
                <p className="text-[#6B7280] text-[10px] font-bold uppercase tracking-wider mb-1">Base Inicial</p>
-               <h3 className="text-2xl font-black text-[#0B3B68]">{currency.format(shiftStats.startAmount)}</h3>
+               <h3 className="text-2xl font-black text-[#0B3B68]">{formatMoney(shiftStats.startAmount)}</h3>
             </div>
             
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
                <p className="text-[#7AC142] text-[10px] font-bold uppercase tracking-wider mb-1">Ventas Efectivo</p>
-               <h3 className="text-2xl font-black text-[#7AC142]">+{currency.format(shiftStats.cashSales)}</h3>
+               <h3 className="text-2xl font-black text-[#7AC142]">+{formatMoney(shiftStats.cashSales)}</h3>
             </div>
             
-            {/* --- AQUÍ ESTABA EL PROBLEMA --- */}
+            {/* CAJA EN TIEMPO REAL - BLINDADO */}
             <div className="bg-[#0B3B68] p-5 rounded-2xl shadow-lg shadow-[#0B3B68]/30 text-white relative overflow-hidden">
                <div className="absolute top-0 right-0 w-20 h-20 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
                <p className="text-gray-300 text-[10px] font-bold uppercase tracking-wider mb-1">Efectivo en Caja</p>
-               {/* Usamos || 0 para evitar NaN si los datos están incompletos */}
-               <h3 className="text-3xl font-black">{currency.format(shiftStats.expectedCash || 0)}</h3>
+               <h3 className="text-3xl font-black">{formatMoney(shiftStats.expectedCash)}</h3>
                <p className="text-[10px] text-gray-400 mt-1">Calculado automáticamente</p>
             </div>
           </div>
@@ -453,7 +495,7 @@ export function FinancePage() {
                                 <td className="p-3 text-[#6B7280] text-xs font-mono" data-label="Hora">{new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
                                 <td className="p-3" data-label="Tipo"><span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${m.type==='in'?'bg-[#7AC142]/10 text-[#7AC142] border-[#7AC142]/20':'bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/20'}`}>{m.type === 'in' ? 'Entrada' : 'Salida'}</span></td>
                                 <td className="p-3 font-medium text-[#1F2937] text-xs" data-label="Motivo">{m.reason}</td>
-                                <td className={`p-3 text-right font-bold text-xs ${m.type==='in'?'text-[#7AC142]':'text-[#EF4444]'}`} data-label="Monto">{m.type==='out'?'-':'+'}{currency.format(m.amount)}</td>
+                                <td className={`p-3 text-right font-bold text-xs ${m.type==='in'?'text-[#7AC142]':'text-[#EF4444]'}`} data-label="Monto">{m.type==='out'?'-':'+'}{formatMoney(m.amount)}</td>
                             </tr>
                         ))}
                         {shiftData?.movements.length === 0 && <tr><td colSpan={4} className="p-8 text-center text-[#6B7280] italic text-xs">Sin movimientos registrados</td></tr>}
@@ -478,7 +520,7 @@ export function FinancePage() {
                             <tr key={s.id} onClick={() => setSelectedTicket(s)} className="cursor-pointer hover:bg-[#0B3B68]/5 transition-colors group">
                                 <td className="p-3 text-[#6B7280] text-xs font-mono group-hover:text-[#0B3B68]" data-label="Hora">{new Date(s.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
                                 <td className="p-3" data-label="Método"><span className="px-2 py-0.5 bg-gray-100 text-[#6B7280] rounded text-[10px] font-bold uppercase border border-gray-200">{s.payment_method}</span></td>
-                                <td className="p-3 text-right font-bold text-[#1F2937] text-xs" data-label="Total">{currency.format(s.total)}</td>
+                                <td className="p-3 text-right font-bold text-[#1F2937] text-xs" data-label="Total">{formatMoney(s.total)}</td>
                             </tr>
                         ))}
                         {shiftData?.sales.length === 0 && <tr><td colSpan={3} className="p-8 text-center text-[#6B7280] italic text-xs">Sin ventas en este turno</td></tr>}
@@ -508,19 +550,19 @@ export function FinancePage() {
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 relative overflow-hidden group">
                <div className="relative">
                   <p className="text-[#6B7280] text-xs font-bold uppercase mb-1 flex items-center gap-1"><DollarSign size={14} /> Ventas</p>
-                  <h3 className="text-2xl font-bold text-[#1F2937]">${dailyStats.revenue.toFixed(2)}</h3>
+                  <h3 className="text-2xl font-bold text-[#1F2937]">{formatMoney(dailyStats.revenue)}</h3>
                </div>
             </div>
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 relative overflow-hidden group">
                <div className="relative">
                   <p className="text-[#6B7280] text-xs font-bold uppercase mb-1 flex items-center gap-1"><Wallet size={14} /> Costos</p>
-                  <h3 className="text-2xl font-bold text-[#1F2937]">${dailyStats.cost.toFixed(2)}</h3>
+                  <h3 className="text-2xl font-bold text-[#1F2937]">{formatMoney(dailyStats.cost)}</h3>
                </div>
             </div>
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 relative overflow-hidden group">
                <div className="relative">
                   <p className="text-[#6B7280] text-xs font-bold uppercase mb-1 flex items-center gap-1"><TrendingUp size={14} /> Ganancia</p>
-                  <h3 className="text-2xl font-bold text-[#7AC142]">${dailyStats.profit.toFixed(2)}</h3>
+                  <h3 className="text-2xl font-bold text-[#7AC142]">{formatMoney(dailyStats.profit)}</h3>
                   <span className="text-[10px] bg-[#7AC142]/10 text-[#7AC142] px-2 py-0.5 rounded-full font-bold inline-block border border-[#7AC142]/20">Margen: {dailyStats.margin.toFixed(0)}%</span>
                </div>
             </div>
@@ -586,10 +628,10 @@ export function FinancePage() {
              </div>
              <div className="mb-8">
                <div className="space-y-3 font-mono text-sm text-[#1F2937]">
-                 <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Efectivo</span><span className="font-bold">${closingStats.cashTotal.toFixed(2)}</span></div>
-                 <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Tarjeta</span><span className="font-bold">${closingStats.cardTotal.toFixed(2)}</span></div>
-                 <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Transferencia</span><span className="font-bold">${closingStats.transferTotal.toFixed(2)}</span></div>
-                 <div className="border-t-2 border-[#0B3B68] pt-3 flex justify-between text-lg font-black mt-2"><span>TOTAL</span><span>${(closingStats.cashTotal + closingStats.transferTotal + closingStats.cardTotal).toFixed(2)}</span></div>
+                 <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Efectivo</span><span className="font-bold">{formatMoney(closingStats.cashTotal)}</span></div>
+                 <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Tarjeta</span><span className="font-bold">{formatMoney(closingStats.cardTotal)}</span></div>
+                 <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Transferencia</span><span className="font-bold">{formatMoney(closingStats.transferTotal)}</span></div>
+                 <div className="border-t-2 border-[#0B3B68] pt-3 flex justify-between text-lg font-black mt-2"><span>TOTAL</span><span>{formatMoney(closingStats.cashTotal + closingStats.transferTotal + closingStats.cardTotal)}</span></div>
                </div>
              </div>
              <div>
@@ -601,7 +643,7 @@ export function FinancePage() {
                     </thead>
                     <tbody className="divide-y divide-dashed divide-gray-200">
                         {closingStats.productsList.map((p, i) => (
-                            <tr key={i}><td className="py-2 w-12 font-bold">{p.quantity}</td><td className="py-2 text-xs">{p.name}</td><td className="py-2 text-right">${p.total.toFixed(2)}</td></tr>
+                            <tr key={i}><td className="py-2 w-12 font-bold">{p.quantity}</td><td className="py-2 text-xs">{p.name}</td><td className="py-2 text-right">{formatMoney(p.total)}</td></tr>
                         ))}
                     </tbody>
                  </table>
@@ -673,7 +715,7 @@ export function FinancePage() {
                 <div className="bg-gray-50 p-4 rounded-xl mb-6 border border-gray-100">
                     <div className="flex justify-between items-center mb-1">
                         <span className="text-xs font-bold text-[#6B7280] uppercase">Efectivo Esperado</span>
-                        <span className="text-lg font-black text-[#1F2937]">{currency.format(shiftStats.expectedCash || 0)}</span>
+                        <span className="text-lg font-black text-[#1F2937]">{formatMoney(shiftStats.expectedCash)}</span>
                     </div>
                     <div className="h-px bg-gray-200 my-2"></div>
                     <p className="text-[10px] text-[#6B7280] leading-tight">
@@ -693,14 +735,13 @@ export function FinancePage() {
                                 placeholder="0.00"
                             />
                         </div>
-                        {/* Calculadora de Diferencia en tiempo real */}
                         {amount && (
                             <div className={`mt-2 text-center text-xs font-bold px-2 py-1 rounded ${
-                                (parseFloat(amount) - shiftStats.expectedCash) === 0 ? 'text-[#7AC142] bg-[#7AC142]/10' : 
-                                (parseFloat(amount) - shiftStats.expectedCash) > 0 ? 'text-blue-600 bg-blue-50' : 'text-[#EF4444] bg-[#EF4444]/10'
+                                (safeFloat(amount) - shiftStats.expectedCash) === 0 ? 'text-[#7AC142] bg-[#7AC142]/10' : 
+                                (safeFloat(amount) - shiftStats.expectedCash) > 0 ? 'text-blue-600 bg-blue-50' : 'text-[#EF4444] bg-[#EF4444]/10'
                             }`}>
-                                Diferencia: {((parseFloat(amount) || 0) - (shiftStats.expectedCash || 0)) > 0 ? '+' : ''}
-                                {currency.format((parseFloat(amount) || 0) - (shiftStats.expectedCash || 0))}
+                                Diferencia: {((safeFloat(amount) || 0) - (shiftStats.expectedCash || 0)) > 0 ? '+' : ''}
+                                {formatMoney((safeFloat(amount) || 0) - (shiftStats.expectedCash || 0))}
                             </div>
                         )}
                     </div>

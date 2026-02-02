@@ -36,7 +36,6 @@ export function PosPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
 
   // --- ESTADO VISUAL MÓVIL ---
-  // 'catalog' = Viendo productos | 'cart' = Viendo carrito (Solo afecta a móviles)
   const [mobileView, setMobileView] = useState<'catalog' | 'cart'>('catalog');
 
   const businessId = localStorage.getItem('nexus_business_id');
@@ -53,6 +52,7 @@ export function PosPage() {
 
   const activeShift = useLiveQuery(async () => {
     if (!businessId) return null;
+    // Aseguramos obtener el turno abierto correcto
     return await db.cash_shifts
         .where({ business_id: businessId, status: 'open' })
         .first();
@@ -86,7 +86,6 @@ export function PosPage() {
       return [...prev, { ...product, quantity: 1 }];
     });
     
-    // Feedback rápido
     if (navigator.vibrate) navigator.vibrate(50);
     toast.success("Agregado", { duration: 800, position: 'bottom-center' });
   };
@@ -166,13 +165,25 @@ export function PosPage() {
       }
   };
 
-  // --- PROCESAMIENTO DE VENTA ---
-  const handleCheckout = async (method: 'efectivo' | 'transferencia', tendered: number, change: number) => {
-    if (!activeShift) return toast.error("Caja cerrada");
+  // --- PROCESAMIENTO DE VENTA (CORE FIX) ---
+  const handleCheckout = async (methodInput: string, tendered: number, change: number) => {
+    // Validación estricta de turno abierto
+    if (!activeShift || !activeShift.id) return toast.error("Caja cerrada o turno inválido");
+    
     setIsCheckout(true);
     setShowPaymentModal(false);
 
     try {
+        // Normalización del método de pago para que coincida con FinancePage
+        // Esto asegura que "Efectivo", "EFECTIVO", "cash" se guarden como "efectivo"
+        let normalizedMethod: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto' = 'efectivo';
+        const m = methodInput.toLowerCase().trim();
+        
+        if (m.includes('transf')) normalizedMethod = 'transferencia';
+        else if (m.includes('tarj')) normalizedMethod = 'tarjeta';
+        else if (m.includes('mix')) normalizedMethod = 'mixto';
+        else normalizedMethod = 'efectivo';
+
         const saleId = crypto.randomUUID();
         const total = cart.reduce((sum, i) => sum + (i.price * i.quantity), 0);
         
@@ -189,11 +200,11 @@ export function PosPage() {
             id: saleId,
             business_id: businessId!,
             date: new Date().toISOString(),
-            shift_id: activeShift.id,
+            shift_id: activeShift.id, // ¡CRUCIAL! Vincula la venta al turno actual
             staff_id: currentStaff.id,
             staff_name: currentStaff.name,
             total: total,
-            payment_method: method,
+            payment_method: normalizedMethod, // Usamos el método normalizado
             amount_tendered: tendered,
             change: change,
             items: saleItems,
@@ -217,7 +228,7 @@ export function PosPage() {
                 }
             }
 
-            // 3. Puntos de fidelidad (1 pto por cada $10 gastados)
+            // 3. Puntos de fidelidad
             if (selectedCustomer) {
                 const pointsEarned = Math.floor(total / 10);
                 const currentPoints = selectedCustomer.loyalty_points || 0;
@@ -235,14 +246,14 @@ export function PosPage() {
         setLastSale(sale);
         setCart([]);
         setSelectedCustomer(null);
-        setMobileView('catalog'); // Volver al catálogo
+        setMobileView('catalog');
         toast.success(`Venta completada. Cambio: ${currency.format(sale.change || 0)}`);
         
         syncPush().catch(console.error);
 
     } catch (error) {
-        console.error(error);
-        toast.error("Error al procesar venta");
+        console.error("Error crítico en venta:", error);
+        toast.error("Error al procesar venta. Revisa la consola.");
     } finally {
         setIsCheckout(false);
     }
@@ -251,19 +262,15 @@ export function PosPage() {
   const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  // --- RENDERIZADO (BISNE CON TALLA - IDENTIDAD VISUAL) ---
+  // --- UI RENDER ---
   return (
     <div className="flex flex-col md:flex-row h-[calc(100vh-60px)] md:h-screen bg-background overflow-hidden font-body">
       
-      {/* =======================================================
-          COLUMNA IZQUIERDA: CATÁLOGO DE PRODUCTOS
-          En móvil se oculta si mobileView === 'cart'
-         ======================================================= */}
+      {/* COLUMNA IZQUIERDA: CATÁLOGO */}
       <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ${mobileView === 'cart' ? 'hidden md:flex' : 'flex'}`}>
         
-        {/* Barra Superior: Buscador y Categorías */}
+        {/* Barra Superior */}
         <div className="p-4 bg-surface border-b border-gray-200 sticky top-0 z-10 shadow-sm flex flex-col gap-3">
-            {/* Buscador */}
             <div className="relative w-full">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-text-secondary w-5 h-5 group-focus-within:text-bisne-navy transition-colors" />
                 <input 
@@ -282,7 +289,6 @@ export function PosPage() {
                 )}
             </div>
 
-            {/* Categorías (Scroll horizontal) */}
             <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
                 {categories.map(cat => (
                     <button
@@ -323,9 +329,7 @@ export function PosPage() {
                             onClick={() => addToCart(product)}
                             className="bg-surface p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-talla-growth active:scale-[0.98] transition-all flex flex-col justify-between text-left group h-full relative overflow-hidden"
                         >
-                            {/* Borde verde en hover (Bisne Growth) */}
                             <div className="absolute top-0 left-0 w-1 h-full bg-talla-growth opacity-0 group-hover:opacity-100 transition-opacity"></div>
-
                             <div className="w-full mb-3">
                                 <div className="flex justify-between items-start mb-1">
                                     <span className="text-[10px] font-bold uppercase text-text-secondary bg-gray-100 px-2 py-0.5 rounded-md truncate max-w-[70%] font-heading">
@@ -341,7 +345,6 @@ export function PosPage() {
                                     {product.name}
                                 </h3>
                             </div>
-                            
                             <div className="w-full flex justify-between items-end border-t border-gray-50 pt-2 mt-auto">
                                 <div className="text-xs text-text-secondary font-body">
                                     Stock: <span className="font-bold text-text-main">{product.stock}</span>
@@ -357,13 +360,9 @@ export function PosPage() {
         </div>
       </div>
 
-      {/* =======================================================
-          COLUMNA DERECHA: CARRITO DE COMPRAS
-          En móvil es un overlay completo o sidebar.
-         ======================================================= */}
+      {/* COLUMNA DERECHA: CARRITO */}
       <div className={`w-full md:w-[420px] bg-surface border-l border-gray-200 flex flex-col shadow-2xl z-20 transition-transform duration-300 absolute md:relative inset-0 md:inset-auto ${mobileView === 'cart' ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}`}>
         
-        {/* Header Carrito - Fondo Bisne Navy */}
         <div className="p-5 bg-bisne-navy text-white flex justify-between items-center shadow-md shrink-0">
             <div className="flex items-center gap-3">
                 <div className="p-2 bg-white/10 rounded-xl relative">
@@ -379,29 +378,22 @@ export function PosPage() {
                     <p className="text-xs text-gray-300 font-body">{cart.length} productos distintos</p>
                 </div>
             </div>
-            
             <div className="flex gap-2">
                 {cart.length > 0 && (
                     <button onClick={clearCart} className="p-2 hover:bg-white/10 rounded-lg text-state-error bg-surface transition-colors" title="Vaciar Carrito">
                         <Trash2 size={20} />
                     </button>
                 )}
-                {/* Botón Cerrar (Solo Móvil) */}
                 <button onClick={() => setMobileView('catalog')} className="md:hidden p-2 hover:bg-white/10 rounded-lg text-white">
                     <X size={24} />
                 </button>
             </div>
         </div>
 
-        {/* Selección de Cliente */}
         <div className="bg-background border-b border-gray-200 p-3">
-            <CustomerSelect 
-                selectedCustomer={selectedCustomer} 
-                onSelect={setSelectedCustomer} 
-            />
+            <CustomerSelect selectedCustomer={selectedCustomer} onSelect={setSelectedCustomer} />
         </div>
 
-        {/* Lista de Ítems */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-background">
             {cart.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-text-secondary opacity-60 text-center p-8 space-y-4">
@@ -427,7 +419,6 @@ export function PosPage() {
                                 {currency.format(item.price * item.quantity)}
                             </div>
                         </div>
-                        
                         <div className="flex justify-between items-center bg-background p-1 rounded-lg mt-1 border border-gray-100">
                             <div className="flex items-center gap-1">
                                 <button onClick={() => updateQuantity(item.id, -1)} className="w-9 h-9 flex items-center justify-center bg-surface rounded-md text-text-main shadow-sm hover:bg-gray-100 border border-gray-200 active:scale-95 transition-all">
@@ -447,10 +438,7 @@ export function PosPage() {
             )}
         </div>
 
-        {/* Footer: Acciones y Totales */}
         <div className="p-5 bg-surface border-t border-gray-200 shadow-[0_-4px_20px_-5px_rgba(0,0,0,0.1)] relative z-30 shrink-0">
-            
-            {/* Botones de Acción Secundaria */}
             <div className="grid grid-cols-2 gap-3 mb-4">
                 <button 
                     onClick={() => setShowParkedModal(true)} 
@@ -469,7 +457,6 @@ export function PosPage() {
                 </button>
             </div>
 
-            {/* Totales */}
             <div className="space-y-1 mb-5">
                 <div className="flex justify-between items-end border-b border-gray-100 pb-2 mb-2">
                     <span className="text-sm font-medium text-text-secondary font-heading">Subtotal</span>
@@ -483,7 +470,6 @@ export function PosPage() {
                 </div>
             </div>
 
-            {/* Botón Principal de Cobro - Verde Growth */}
             <button 
                 onClick={() => setShowPaymentModal(true)} 
                 disabled={cart.length === 0 || isCheckout || !activeShift} 
@@ -502,9 +488,6 @@ export function PosPage() {
         </div>
       </div>
 
-      {/* =======================================================
-          BOTÓN FLOTANTE MÓVIL (SOLO VISIBLE EN MOBILE CATALOG)
-         ======================================================= */}
       {mobileView === 'catalog' && cart.length > 0 && (
           <div className="md:hidden fixed bottom-20 left-4 right-4 z-50">
               <button 
@@ -525,7 +508,6 @@ export function PosPage() {
           </div>
       )}
 
-      {/* --- MODALES --- */}
       {showPaymentModal && <PaymentModal total={totalAmount} onCancel={() => setShowPaymentModal(false)} onConfirm={handleCheckout} />}
       {showParkedModal && <ParkedOrdersModal onClose={() => setShowParkedModal(false)} onRestore={handleRestoreOrder} />}
       {lastSale && <TicketModal sale={lastSale} onClose={() => { setLastSale(null); setTimeout(() => searchInputRef.current?.focus(), 100); }} />}
