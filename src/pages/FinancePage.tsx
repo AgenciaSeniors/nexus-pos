@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff } from '../lib/db';
@@ -39,7 +39,8 @@ export function FinancePage() {
   const [reason, setReason] = useState('');
   const [movementType, setMovementType] = useState<'in' | 'out' | null>(null);
   const [isClosing, setIsClosing] = useState(false);
-  const [isLoading, setIsLoading] = useState(false); 
+  const [isLoading, setIsLoading] = useState(false);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
 
   const today = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState(today);
@@ -49,11 +50,15 @@ export function FinancePage() {
   // --- DATOS ---
   const activeShift = useLiveQuery(async () => {
     if (!businessId) return null;
-    return await db.cash_shifts.where({ business_id: businessId, status: 'open' }).first();
+    const shift = await db.cash_shifts.where({ business_id: businessId, status: 'open' }).first();
+    console.log('🔄 ActiveShift cargado:', shift?.id || 'ninguno');
+    return shift;
   }, [businessId]);
 
   const shiftData = useLiveQuery(async () => {
     if (!activeShift || !businessId) return null;
+    
+    console.log('📊 Cargando datos del turno:', activeShift.id);
     
     // Obtenemos ventas y movimientos asociados a ESTE turno específico
     const [sales, movements] = await Promise.all([
@@ -69,6 +74,7 @@ export function FinancePage() {
         .toArray()
     ]);
 
+    console.log('📦 Datos cargados - Ventas:', sales.length, 'Movimientos:', movements.length);
     return { sales, movements };
   }, [activeShift, businessId]);
 
@@ -77,41 +83,111 @@ export function FinancePage() {
     return await db.products.where('business_id').equals(businessId).toArray();
   }, [businessId]) || EMPTY_ARRAY;
 
+  // OPTIMIZACIÓN: Solo cargar ventas de los últimos 30 días para no sobrecargar
   const allSales = useLiveQuery<Sale[]>(async () => {
     if (!businessId) return [];
-    return await db.sales.where('business_id').equals(businessId).toArray();
-  }, [businessId]) || EMPTY_ARRAY;
+    
+    // Solo cargar si estamos en vista daily o trends
+    if (viewMode !== 'daily' && viewMode !== 'trends' && viewMode !== 'closing') {
+      return [];
+    }
+    
+    // Cargar solo últimos 30 días
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const cutoffDate = thirtyDaysAgo.toISOString();
+    
+    console.log('📅 Cargando ventas desde:', cutoffDate);
+    return await db.sales
+        .where('business_id').equals(businessId)
+        .filter(s => s.date >= cutoffDate)
+        .toArray();
+  }, [businessId, viewMode]) || EMPTY_ARRAY;
 
-  // --- CÁLCULOS (BLINDADOS) ---
+  // Detectar cuando los datos críticos están listos
+  useEffect(() => {
+    if (activeShift !== undefined && shiftData !== undefined) {
+      setIsInitialLoad(false);
+    }
+  }, [activeShift, shiftData]);
+
+  // --- CÁLCULOS (BLINDADOS CON LOGS DE DEPURACIÓN) ---
   const shiftStats = useMemo(() => {
-    if (!activeShift || !shiftData) return null;
+    console.log('🔢 Calculando shiftStats...');
+    
+    // VALIDACIÓN ROBUSTA
+    if (!activeShift) {
+        console.warn('⚠️ No hay turno activo');
+        return null;
+    }
+    
+    if (!shiftData) {
+        console.warn('⚠️ shiftData es null');
+        return null;
+    }
+    
+    if (!shiftData.sales || !shiftData.movements) {
+        console.warn('⚠️ Datos incompletos:', shiftData);
+        return null;
+    }
+    
+    // Logs de depuración
+    console.log('✅ Datos válidos para cálculo');
+    console.log('- Turno ID:', activeShift.id);
+    console.log('- Ventas:', shiftData.sales.length);
+    console.log('- Movimientos:', shiftData.movements.length);
     
     // 1. Base Inicial (Forzamos número)
     const startAmount = safeFloat(activeShift.start_amount);
+    console.log('💵 Base Inicial:', startAmount, '(tipo:', typeof activeShift.start_amount, ')');
     
     // 2. Total Global de Ventas (Suma de todo, sin importar método)
-    const totalSales = shiftData.sales.reduce((sum, s) => sum + safeFloat(s.total), 0);
+    const totalSales = shiftData.sales.reduce((sum, s) => {
+        const val = safeFloat(s.total);
+        if (val > 0) console.log('  📝 Venta:', s.id.slice(0, 8), '→', val, '(método:', s.payment_method, ')');
+        return sum + val;
+    }, 0);
+    console.log('💰 Total Ventas (todos los métodos):', totalSales);
 
     // 3. Ventas SOLO en Efectivo (Para el arqueo de caja física)
     // Filtramos por método 'efectivo' o 'mixto' (asumiendo que mixto toca caja)
     const cashSales = shiftData.sales
       .filter(s => {
           const method = s.payment_method?.toLowerCase() || 'efectivo'; // Default a efectivo si es nulo
-          return method === 'efectivo' || method === 'mixto';
+          const isCash = method === 'efectivo' || method === 'mixto';
+          if (isCash) console.log('  💵 Venta en efectivo:', s.id.slice(0, 8), '→', safeFloat(s.total));
+          return isCash;
       })
       .reduce((sum, s) => sum + safeFloat(s.total), 0); 
+    
+    console.log('🟢 Ventas en Efectivo:', cashSales);
     
     // 4. Movimientos manuales
     const cashIn = shiftData.movements
         .filter(m => m.type === 'in')
-        .reduce((sum, m) => sum + safeFloat(m.amount), 0);
+        .reduce((sum, m) => {
+            const val = safeFloat(m.amount);
+            if (val > 0) console.log('  ➕ Ingreso:', m.reason, '→', val);
+            return sum + val;
+        }, 0);
         
     const cashOut = shiftData.movements
         .filter(m => m.type === 'out')
-        .reduce((sum, m) => sum + safeFloat(m.amount), 0);
+        .reduce((sum, m) => {
+            const val = safeFloat(m.amount);
+            if (val > 0) console.log('  ➖ Retiro:', m.reason, '→', val);
+            return sum + val;
+        }, 0);
+
+    console.log('🔼 Ingresos manuales:', cashIn);
+    console.log('🔽 Retiros manuales:', cashOut);
 
     // 5. Cálculo final: Base + Ventas(Efectivo) + Entradas - Salidas
     const expectedCash = (startAmount + cashSales + cashIn) - cashOut;
+    
+    console.log('🧮 Fórmula: ', startAmount, '+', cashSales, '+', cashIn, '-', cashOut);
+    console.log('💰💰💰 EFECTIVO ESPERADO:', expectedCash);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     return { startAmount, cashSales, totalSales, cashIn, cashOut, expectedCash };
   }, [activeShift, shiftData]);
@@ -261,11 +337,12 @@ export function FinancePage() {
             await logAuditAction('OPEN_SHIFT', { amount: startAmount }, currentStaff);
         });
 
+        console.log('✅ Caja abierta - ID:', shiftId, 'Base:', startAmount);
         toast.success('¡Caja Abierta!');
         setAmount('');
         syncPush().catch(console.error);
     } catch (error) {
-        console.error(error);
+        console.error('❌ Error al abrir caja:', error);
         toast.error("Error al abrir caja");
     } finally {
         setIsLoading(false);
@@ -301,11 +378,12 @@ export function FinancePage() {
             await logAuditAction(movementType === 'in' ? 'CASH_IN' : 'CASH_OUT', { amount: val, reason }, currentStaff);
         });
 
+        console.log(`✅ Movimiento registrado - ${movementType === 'in' ? 'Ingreso' : 'Retiro'}:`, val);
         toast.success('Movimiento registrado');
         setAmount(''); setReason(''); setMovementType(null);
         syncPush().catch(console.error);
     } catch (error) {
-        console.error(error);
+        console.error('❌ Error al registrar movimiento:', error);
         toast.error("Error al registrar movimiento");
     } finally {
         setIsLoading(false);
@@ -343,11 +421,12 @@ export function FinancePage() {
             }, currentStaff);
         });
 
+        console.log('✅ Caja cerrada - Diferencia:', difference);
         toast.success(`Caja cerrada. Diferencia: ${formatMoney(difference)}`);
         setIsClosing(false); setAmount('');
         syncPush().catch(console.error);
     } catch (error) {
-        console.error(error);
+        console.error('❌ Error al cerrar caja:', error);
         toast.error("Error al cerrar caja");
     } finally {
         setIsLoading(false);
@@ -360,6 +439,19 @@ export function FinancePage() {
   };
   const handlePrint = () => window.print();
   const COLORS = ['#0B3B68', '#7AC142', '#F59E0B', '#EF4444', '#6B7280'];
+
+  // --- PANTALLA DE CARGA INICIAL ---
+  if (isInitialLoad) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-[#F3F4F6]">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin text-[#0B3B68] mx-auto mb-4" />
+          <p className="text-[#6B7280] font-semibold">Cargando datos del turno...</p>
+          <p className="text-xs text-[#9CA3AF] mt-2">Por favor espera</p>
+        </div>
+      </div>
+    );
+  }
 
   // --- UI: APERTURA DE CAJA ---
   if (!activeShift) {
@@ -453,11 +545,16 @@ export function FinancePage() {
                <h3 className="text-2xl font-black text-[#7AC142]">+{formatMoney(shiftStats.cashSales)}</h3>
             </div>
             
-            {/* CAJA EN TIEMPO REAL - BLINDADO */}
+            {/* CAJA EN TIEMPO REAL - CORREGIDO CON VALIDACIÓN */}
             <div className="bg-[#0B3B68] p-5 rounded-2xl shadow-lg shadow-[#0B3B68]/30 text-white relative overflow-hidden">
                <div className="absolute top-0 right-0 w-20 h-20 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
                <p className="text-gray-300 text-[10px] font-bold uppercase tracking-wider mb-1">Efectivo en Caja</p>
-               <h3 className="text-3xl font-black">{formatMoney(shiftStats.expectedCash)}</h3>
+               <h3 className="text-3xl font-black">
+                 {shiftStats.expectedCash !== undefined && shiftStats.expectedCash !== null
+                   ? formatMoney(shiftStats.expectedCash)
+                   : <span className="text-yellow-400">Calculando...</span>
+                 }
+               </h3>
                <p className="text-[10px] text-gray-400 mt-1">Calculado automáticamente</p>
             </div>
           </div>

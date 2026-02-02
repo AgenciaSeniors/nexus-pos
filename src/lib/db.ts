@@ -189,23 +189,151 @@ export class NexusDB extends Dexie {
   constructor() {
     super('NexusPOS_DB');
 
-    this.version(6).stores({
+    // 🚀 VERSIÓN 8 - ÍNDICES OPTIMIZADOS PARA MEJOR RENDIMIENTO
+    this.version(8).stores({
       businesses: 'id',
-      products: 'id, business_id, sku, name, sync_status',
-      sales: 'id, business_id, shift_id, date, sync_status',
+      
+      // ✅ PRODUCTOS: Índices compuestos para búsquedas rápidas
+      products: 'id, business_id, sku, name, sync_status, [business_id+sync_status], [business_id+deleted_at]',
+      
+      // ✅ VENTAS: Índice compuesto shift_id+business_id para búsquedas del turno
+      sales: 'id, business_id, shift_id, date, sync_status, [shift_id+business_id], [business_id+date]',
+      
+      // ✅ MOVIMIENTOS: Optimizado para búsquedas por turno
       movements: 'id, business_id, product_id, created_at, sync_status',
       inventory_movements: 'id, business_id, product_id, sync_status',
-      customers: 'id, business_id, name, phone, sync_status', 
+      
+      // ✅ CLIENTES: Índice compuesto para filtros complejos
+      customers: 'id, business_id, name, phone, sync_status, [business_id+sync_status], [business_id+deleted_at]',
+      
       parked_orders: 'id, business_id, date',
       settings: 'id',
-      staff: 'id, business_id, pin, active',
+      
+      // ✅ STAFF: Índice compuesto para búsquedas activas
+      staff: 'id, business_id, pin, active, [business_id+active]',
+      
       audit_logs: 'id, business_id, action, created_at, sync_status',
-      action_queue: 'id, type, timestamp, status',
+      
+      // ✅ COLA: Índice compuesto para procesamiento eficiente
+      action_queue: 'id, type, timestamp, status, [status+timestamp]',
+      
       cash_registers: 'id, business_id',
-      cash_shifts: 'id, business_id, staff_id, status, [business_id+status]', 
-      cash_movements: 'id, shift_id, business_id'
+      
+      // ✅ TURNOS: Índice compuesto crítico para búsquedas rápidas del turno activo
+      cash_shifts: 'id, business_id, staff_id, status, [business_id+status], opened_at',
+      
+      // ✅ MOVIMIENTOS DE CAJA: Índice compuesto para búsquedas por turno
+      cash_movements: 'id, shift_id, business_id, [shift_id+business_id], created_at'
+    });
+
+    // 🔧 Hook de upgrade para migración de datos
+    this.version(8).upgrade(async (trans) => {
+      console.log('🔄 Migrando base de datos a versión 8...');
+      
+      // Verificar que los datos críticos tengan valores válidos
+      const shifts = await trans.table('cash_shifts').toArray();
+      for (const shift of shifts) {
+        if (typeof shift.start_amount !== 'number') {
+          console.warn(`⚠️ Corrigiendo start_amount del turno ${shift.id}`);
+          await trans.table('cash_shifts').update(shift.id, {
+            start_amount: parseFloat(shift.start_amount) || 0
+          });
+        }
+      }
+      
+      const sales = await trans.table('sales').toArray();
+      for (const sale of sales) {
+        if (typeof sale.total !== 'number') {
+          console.warn(`⚠️ Corrigiendo total de venta ${sale.id}`);
+          await trans.table('sales').update(sale.id, {
+            total: parseFloat(sale.total) || 0
+          });
+        }
+      }
+      
+      console.log('✅ Migración completada');
     });
   }
 }
 
 export const db = new NexusDB();
+
+// 🛠️ UTILIDADES DE DEPURACIÓN
+
+// Verificar integridad de la base de datos
+export async function verifyDatabaseIntegrity() {
+  console.log('🔍 Verificando integridad de la base de datos...');
+  
+  try {
+    // Verificar turnos
+    const shifts = await db.cash_shifts.toArray();
+    console.log(`📊 Turnos totales: ${shifts.length}`);
+    
+    const openShifts = shifts.filter(s => s.status === 'open');
+    console.log(`🟢 Turnos abiertos: ${openShifts.length}`);
+    
+    for (const shift of openShifts) {
+      console.log(`  ↳ ID: ${shift.id}, Inicio: ${shift.start_amount}, Tipo: ${typeof shift.start_amount}`);
+      
+      // Verificar ventas del turno
+      const shiftSales = await db.sales.where('shift_id').equals(shift.id).toArray();
+      console.log(`    💰 Ventas: ${shiftSales.length}`);
+      
+      // Verificar movimientos del turno
+      const shiftMovements = await db.cash_movements.where('shift_id').equals(shift.id).toArray();
+      console.log(`    🔄 Movimientos: ${shiftMovements.length}`);
+    }
+    
+    // Verificar cola de sincronización
+    const queuePending = await db.action_queue.where('status').equals('pending').count();
+    const queueProcessing = await db.action_queue.where('status').equals('processing').count();
+    const queueFailed = await db.action_queue.where('status').equals('failed').count();
+    
+    console.log('📮 Cola de sincronización:');
+    console.log(`  ⏳ Pendientes: ${queuePending}`);
+    console.log(`  🔄 Procesando: ${queueProcessing}`);
+    console.log(`  ❌ Fallidos: ${queueFailed}`);
+    
+    console.log('✅ Verificación completada');
+  } catch (error) {
+    console.error('❌ Error verificando base de datos:', error);
+  }
+}
+
+// Limpiar datos corruptos
+export async function cleanCorruptedData() {
+  console.log('🧹 Limpiando datos corruptos...');
+  
+  try {
+    // Limpiar ventas sin shift_id
+    const salesWithoutShift = await db.sales.filter(s => !s.shift_id).toArray();
+    if (salesWithoutShift.length > 0) {
+      console.warn(`⚠️ Encontradas ${salesWithoutShift.length} ventas sin turno`);
+    }
+    
+    // Limpiar movimientos sin shift_id
+    const movementsWithoutShift = await db.cash_movements.filter(m => !m.shift_id).toArray();
+    if (movementsWithoutShift.length > 0) {
+      console.warn(`⚠️ Encontrados ${movementsWithoutShift.length} movimientos sin turno`);
+    }
+    
+    console.log('✅ Limpieza completada');
+  } catch (error) {
+    console.error('❌ Error limpiando datos:', error);
+  }
+}
+
+// Exportar para uso en consola del navegador
+if (typeof window !== 'undefined') {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (window as any).dbDebug = {
+    verify: verifyDatabaseIntegrity,
+    clean: cleanCorruptedData,
+    db: db
+  };
+  
+  console.log('🛠️ Herramientas de depuración disponibles:');
+  console.log('  → window.dbDebug.verify() - Verificar integridad');
+  console.log('  → window.dbDebug.clean() - Limpiar datos corruptos');
+  console.log('  → window.dbDebug.db - Acceso directo a la base de datos');
+}
