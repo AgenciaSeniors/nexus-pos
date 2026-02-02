@@ -156,7 +156,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
                         <Loader2 className="text-indigo-600 w-8 h-8 animate-pulse" />
                     </div>
                 </div>
-                <h2 className="text-2xl font-black text-slate-800 mb-2 tracking-tight">Nexus POS</h2>
+                <h2 className="text-2xl font-black text-slate-800 mb-2 tracking-tight">Bisne con Talla</h2>
                 <p className="text-slate-400 font-medium text-sm animate-pulse">{loadingMessage}</p>
             </div>
         )}

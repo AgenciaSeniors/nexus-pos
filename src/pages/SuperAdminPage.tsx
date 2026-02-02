@@ -202,7 +202,7 @@ export function SuperAdminPage() {
               <Shield className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold tracking-tight leading-none">NEXUS ADMIN</h1>
+              <h1 className="text-lg font-bold tracking-tight leading-none">BISNE CON TALLA ADMIN</h1>
               <p className="text-[10px] text-slate-400 font-medium tracking-wide uppercase">Panel Maestro</p>
             </div>
           </div>

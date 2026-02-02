@@ -1,10 +1,10 @@
 {
-  "name": "nexus-pos",
+  "name": "bisne_con_talla",
   "private": true,
   "version": "1.0.0",
   "type": "module",
   "main": "electron/main.js",
-  "description": "Nexus POS System",
+  "description": "Bisne con Talla System",
   "author": "Agencia Señores",
   "scripts": {
     "dev": "vite",
@@ -15,7 +15,7 @@
   },
   "build": {
     "appId": "com.nexuspos.app",
-    "productName": "Nexus POS",
+    "productName": "Bisne con Talla",
     "directories": {
       "output": "release"
     },

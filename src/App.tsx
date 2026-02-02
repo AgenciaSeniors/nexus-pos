@@ -112,7 +112,7 @@ function LoginScreen() {
               <div className="bg-indigo-500 p-2 rounded-lg">
                 <Store className="w-6 h-6 text-white" />
               </div>
-              <span className="text-2xl font-bold tracking-tight">Nexus POS</span>
+              <span className="text-2xl font-bold tracking-tight">Bisne con Talla</span>
             </div>
             
             <h1 className="text-4xl font-bold mb-4 leading-tight">
@@ -121,7 +121,7 @@ function LoginScreen() {
             <p className="text-slate-400 text-lg">
               {mode === 'login' 
                 ? 'Gestiona tus ventas, inventario y clientes desde un solo lugar.' 
-                : 'Únete a miles de negocios que confían en Nexus para crecer.'}
+                : 'Únete a miles de negocios que confían en Bisne con Talla para crecer.'}
             </p>
           </div>
 
@@ -433,7 +433,7 @@ function BusinessApp() {
         ) : (
           <div className="flex flex-col items-center gap-1">
             <Loader2 className="animate-spin text-indigo-600 w-8 h-8 mb-4" />
-            <p className="text-slate-700 font-bold text-lg">Iniciando Nexus POS...</p>
+            <p className="text-slate-700 font-bold text-lg">Iniciando Bisne con Talla...</p>
           </div>
         )}
       </div>

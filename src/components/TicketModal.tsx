@@ -47,7 +47,7 @@ export function TicketModal({ sale, onClose }: TicketModalProps) {
           {/* 1. ENCABEZADO */}
           <div className="text-center mb-4">
             <h2 className="text-xl font-black uppercase tracking-wider mb-1">
-               {config?.name || 'NEXUS POS'}
+               {config?.name || 'BISNE CON TALLA'}
             </h2>
             {config?.address && <p className="text-[10px] text-slate-500 uppercase">{config.address}</p>}
             {config?.phone && <p className="text-[10px] text-slate-500">Tel: {config.phone}</p>}
@@ -148,7 +148,7 @@ export function TicketModal({ sale, onClose }: TicketModalProps) {
           {/* 5. PIE DE PÁGINA */}
           <div className="text-center mt-6 pt-4 border-t border-slate-200">
             <p className="font-medium italic">"{config?.receipt_message || '¡Gracias por su compra!'}"</p>
-            <p className="text-[9px] text-slate-400 mt-2 uppercase print:hidden">Powered by Nexus POS</p>
+            <p className="text-[9px] text-slate-400 mt-2 uppercase print:hidden">Powered by Agencia Seniors</p>
           </div>
         </div>
 
