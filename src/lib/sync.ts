@@ -32,6 +32,7 @@ export async function resetProcessingItems() {
 
 export async function addToQueue(type: QueueItem['type'], payload: QueuePayload) {
   try {
+    // 1. La operación de base de datos sigue siendo parte de la transacción (await)
     await db.action_queue.add({
       id: crypto.randomUUID(),
       type,
@@ -41,11 +42,18 @@ export async function addToQueue(type: QueueItem['type'], payload: QueuePayload)
       status: 'pending'
     });
     
+    // 2. CORRECCIÓN: Sacamos processQueue de la transacción actual.
+    // Usamos setTimeout para que se ejecute en el siguiente "tick", 
+    // permitiendo que la transacción de la Venta (Sale) se complete y cierre exitosamente primero.
     if (isOnline()) {
-      processQueue();
+      setTimeout(() => {
+        processQueue().catch(err => console.error("Error en sync background:", err));
+      }, 50); // Un pequeño delay de 50ms es suficiente y seguro
     }
   } catch (error) {
     console.error("Error crítico al añadir a la cola de sincronización:", error);
+    // Es importante relanzar el error para que la transacción padre (ej. Venta) se entere y haga rollback si falla el guardado en cola
+    throw error; 
   }
 }
 

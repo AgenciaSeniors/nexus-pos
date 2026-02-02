@@ -302,12 +302,14 @@ export function FinancePage() {
 
   // --- HELPER PARA FORMATO MONEDA SEGURO ---
   const formatMoney = (val: number) => {
-    try {
-        return currency.format(val);
-    } catch {
-        return `$${val.toFixed(2)}`;
-    }
-  };
+  if (val === undefined || val === null || isNaN(val)) return '$0.00';
+  try {
+    return currency.format(val);
+  } catch (err) {
+    console.warn("Error formateando moneda:", err);
+    return `$${val.toFixed(2)}`;
+  }
+};
 
   // --- HANDLERS TRANSACCIONALES ---
 
@@ -550,11 +552,11 @@ export function FinancePage() {
                <div className="absolute top-0 right-0 w-20 h-20 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
                <p className="text-gray-300 text-[10px] font-bold uppercase tracking-wider mb-1">Efectivo en Caja</p>
                <h3 className="text-3xl font-black">
-                 {shiftStats.expectedCash !== undefined && shiftStats.expectedCash !== null
-                   ? formatMoney(shiftStats.expectedCash)
-                   : <span className="text-yellow-400">Calculando...</span>
-                 }
-               </h3>
+                {shiftStats?.expectedCash !== undefined 
+                  ? formatMoney(shiftStats.expectedCash)
+                  : <span className="text-yellow-400 text-lg">Cargando...</span>
+                }
+              </h3>
                <p className="text-[10px] text-gray-400 mt-1">Calculado automáticamente</p>
             </div>
           </div>
