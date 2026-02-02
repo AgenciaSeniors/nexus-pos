@@ -166,16 +166,16 @@ export function PosPage() {
   };
 
   // --- PROCESAMIENTO DE VENTA (CORE FIX) ---
-  const handleCheckout = async (methodInput: string, tendered: number, change: number) => {
-    // Validación estricta de turno abierto
+ const handleCheckout = async (methodInput: string, tendered: number, change: number) => {
+    // 1. VALIDACIÓN PREVIA (Rápida, sin tocar DB)
     if (!activeShift || !activeShift.id) return toast.error("Caja cerrada o turno inválido");
     
     setIsCheckout(true);
     setShowPaymentModal(false);
 
     try {
-        // Normalización del método de pago para que coincida con FinancePage
-        // Esto asegura que "Efectivo", "EFECTIVO", "cash" se guarden como "efectivo"
+        // 2. PREPARACIÓN DE DATOS (Síncrono - Fuera de la transacción)
+        // Normalizamos el método de pago antes de entrar a la lógica crítica
         let normalizedMethod: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto' = 'efectivo';
         const m = methodInput.toLowerCase().trim();
         
@@ -187,6 +187,7 @@ export function PosPage() {
         const saleId = crypto.randomUUID();
         const total = cart.reduce((sum, i) => sum + (i.price * i.quantity), 0);
         
+        // Preparamos los items de venta
         const saleItems: SaleItem[] = cart.map(i => ({
             product_id: i.id,
             name: i.name,
@@ -196,15 +197,16 @@ export function PosPage() {
             unit: i.unit
         }));
 
+        // Construimos el objeto de venta completo
         const sale: Sale = {
             id: saleId,
             business_id: businessId!,
             date: new Date().toISOString(),
-            shift_id: activeShift.id, // ¡CRUCIAL! Vincula la venta al turno actual
+            shift_id: activeShift.id, // Vinculación crítica al turno
             staff_id: currentStaff.id,
             staff_name: currentStaff.name,
             total: total,
-            payment_method: normalizedMethod, // Usamos el método normalizado
+            payment_method: normalizedMethod,
             amount_tendered: tendered,
             change: change,
             items: saleItems,
@@ -213,12 +215,16 @@ export function PosPage() {
             sync_status: 'pending_create'
         };
 
+        // 3. TRANSACCIÓN ATÓMICA (Dexie)
+        // Usamos 'rw' (lectura/escritura) en todas las tablas involucradas
         await db.transaction('rw', [db.sales, db.products, db.movements, db.action_queue, db.audit_logs, db.customers], async () => {
-            // 1. Guardar Venta
+            
+            // A. Guardar la Venta
             await db.sales.add(sale);
             
-            // 2. Actualizar stock
-            for (const item of cart) {
+            // B. Actualizar Stock (PARALELIZADO CON PROMISE.ALL)
+            // Esto evita que la transacción se "duerma" esperando iteración por iteración
+            const updateStockPromises = cart.map(async (item) => {
                 const product = await db.products.get(item.id);
                 if (product) {
                     await db.products.update(item.id, { 
@@ -226,34 +232,54 @@ export function PosPage() {
                         sync_status: 'pending_update' 
                     });
                 }
-            }
+            });
+            await Promise.all(updateStockPromises);
 
-            // 3. Puntos de fidelidad
-            if (selectedCustomer) {
+            // C. Puntos de fidelidad (Si aplica)
+            if (selectedCustomer?.id) {
                 const pointsEarned = Math.floor(total / 10);
-                const currentPoints = selectedCustomer.loyalty_points || 0;
-                await db.customers.update(selectedCustomer.id, {
-                    loyalty_points: currentPoints + pointsEarned,
-                    sync_status: 'pending_update'
-                });
+                // Leemos el cliente fresco dentro de la transacción para evitar condiciones de carrera
+                const freshCustomer = await db.customers.get(selectedCustomer.id);
+                
+                if (freshCustomer) {
+                    await db.customers.update(selectedCustomer.id, {
+                        loyalty_points: (freshCustomer.loyalty_points || 0) + pointsEarned,
+                        sync_status: 'pending_update'
+                    });
+                }
             }
 
-            // 4. Cola y Auditoría
+            // D. Cola de Sincronización y Auditoría
+            // Ambas operaciones son locales en Dexie y deben ser parte de la atomicidad
             await addToQueue('SALE', { sale, items: saleItems });
             await logAuditAction('SALE', { total: sale.total, method: sale.payment_method }, currentStaff);
         });
 
+        // 4. ACTUALIZACIÓN DE ESTADO Y UI (Fuera de la transacción)
+        // Si llegamos aquí, la transacción fue exitosa (Commit implícito)
         setLastSale(sale);
         setCart([]);
         setSelectedCustomer(null);
         setMobileView('catalog');
         toast.success(`Venta completada. Cambio: ${currency.format(sale.change || 0)}`);
         
-        syncPush().catch(console.error);
+        // 5. SINCRONIZACIÓN DE RED (Background)
+        // Disparamos el push sin 'await' para no bloquear la UI del usuario
+        syncPush().catch(error => {
+            console.error("⚠️ La venta se guardó localmente, pero falló el sync inmediato:", error);
+            // No mostramos error al usuario porque la venta YA es válida localmente ("Offline-First")
+        });
 
     } catch (error) {
-        console.error("Error crítico en venta:", error);
-        toast.error("Error al procesar venta. Revisa la consola.");
+        console.error("❌ Error crítico en transacción de venta:", error);
+        
+        // Manejo específico de errores de Dexie
+        if (error instanceof Error && (error.name === 'TransactionInactiveError' || error.name === 'AbortError')) {
+             toast.error("Error de concurrencia en base de datos. Por favor intente de nuevo.");
+        } else {
+             toast.error("Error al procesar la venta. Verifique el stock.");
+        }
+        // Nota: Como la transacción falló, Dexie hace rollback automático de todos los cambios (stock, venta, puntos)
     } finally {
         setIsCheckout(false);
     }

@@ -31,11 +31,9 @@ export function CustomerSelect({ onSelect, selectedCustomer }: Props) {
         // 3. Comprobamos nombre (siempre existe y es string)
         const matchName = c.name.toLowerCase().includes(term);
         
-        // 4. Comprobamos teléfono (es opcional, aseguramos booleano)
-        // Usamos (c.phone || '') para evitar 'undefined' y .includes() devuelve boolean
+        // 4. Comprobamos teléfono
         const matchPhone = c.phone ? c.phone.includes(term) : false;
 
-        // 5. Retornamos BOOLEANO estricto
         return matchName || matchPhone;
       })
       .limit(5)

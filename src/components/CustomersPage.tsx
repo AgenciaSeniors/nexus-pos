@@ -27,6 +27,7 @@ export function CustomersPage() {
   const [formData, setFormData] = useState({ name: '', phone: '', email: '', address: '' });
   const [pointsAdjustment, setPointsAdjustment] = useState({ amount: 0, reason: '' });
 
+  // Carga de clientes (Optimizado para no traer borrados)
   const customers = useLiveQuery(async () => {
     if (!businessId) return [];
     return await db.customers
@@ -36,16 +37,16 @@ export function CustomersPage() {
       .sortBy('created_at');
   }, [businessId]) || [];
 
+  // Historial del cliente seleccionado (Cálculo en memoria para evitar índices complejos)
   const customerHistory = useLiveQuery(async () => {
       if (!selectedCustomer || !businessId) return { sales: [], totalSpent: 0, lastVisit: null };
       
-      // NOTA: Usamos filter porque customer_id podría no estar indexado
       const sales = await db.sales
         .where('business_id').equals(businessId)
         .filter(s => s.customer_id === selectedCustomer.id)
         .toArray();
       
-      // Ordenar por fecha descendente en memoria
+      // Ordenar por fecha descendente
       sales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         
       const totalSpent = sales.reduce((sum, s) => sum + s.total, 0);
@@ -54,11 +55,13 @@ export function CustomersPage() {
       return { sales, totalSpent, lastVisit };
   }, [selectedCustomer, businessId]);
 
+  // Filtrado en cliente (Rápido para listas < 1000 items)
   const filteredCustomers = customers.filter(c => 
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (c.phone && c.phone.includes(searchTerm))
   );
 
+  // --- MANEJO DE FORMULARIO (CREAR / EDITAR) ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!businessId) return;
@@ -73,6 +76,7 @@ export function CustomersPage() {
             return toast.warning("El nombre es obligatorio");
         }
 
+        // Validación de duplicados (Teléfono único)
         if (cleanPhone) {
             const duplicate = await db.customers
                 .where({ business_id: businessId })
@@ -93,17 +97,27 @@ export function CustomersPage() {
             address: formData.address.trim() || undefined
         };
 
+        // TRANSACCIÓN ATÓMICA CON SYNC
         await db.transaction('rw', [db.customers, db.action_queue, db.audit_logs], async () => {
             if (editingId) {
+                // EDITAR
                 const original = await db.customers.get(editingId);
                 if (!original) throw new Error("Cliente no encontrado");
 
-                const updated = { ...original, ...customerData, sync_status: 'pending_update' as const, updated_at: new Date().toISOString() };
+                const updated = { 
+                    ...original, 
+                    ...customerData, 
+                    sync_status: 'pending_update' as const, 
+                    updated_at: new Date().toISOString() 
+                };
+
                 await db.customers.put(updated);
-                await addToQueue('CUSTOMER_SYNC', updated);
+                await addToQueue('CUSTOMER_SYNC', updated); // <--- CLAVE PARA SYNC
                 await logAuditAction('UPDATE_CUSTOMER', { name: updated.name }, currentStaff);
+                
                 toast.success("Cliente actualizado");
             } else {
+                // CREAR
                 const newCustomer: Customer = {
                     id: crypto.randomUUID(),
                     business_id: businessId,
@@ -113,16 +127,18 @@ export function CustomersPage() {
                     updated_at: new Date().toISOString(),
                     sync_status: 'pending_create' as const
                 };
+
                 await db.customers.add(newCustomer);
-                await addToQueue('CUSTOMER_SYNC', newCustomer);
+                await addToQueue('CUSTOMER_SYNC', newCustomer); // <--- CLAVE PARA SYNC
                 await logAuditAction('CREATE_CUSTOMER', { name: newCustomer.name }, currentStaff);
+                
                 toast.success("Cliente registrado");
             }
         });
 
         setIsFormOpen(false);
         resetForm();
-        syncPush().catch(console.error);
+        syncPush().catch(console.error); // Empujar cambios a la nube
 
     } catch (error) {
         console.error(error);
@@ -132,27 +148,37 @@ export function CustomersPage() {
     }
   };
 
+  // --- ELIMINAR CLIENTE ---
   const handleDelete = async (id: string) => {
     if (!confirm('¿Eliminar cliente?')) return;
     try {
         const customer = await db.customers.get(id);
         if (!customer) return;
 
-        const deleted = { ...customer, deleted_at: new Date().toISOString(), sync_status: 'pending_update' as const };
+        // Soft Delete: Marcamos fecha de borrado y pendiente de sync
+        const deleted = { 
+            ...customer, 
+            deleted_at: new Date().toISOString(), 
+            sync_status: 'pending_update' as const 
+        };
         
         await db.transaction('rw', [db.customers, db.action_queue, db.audit_logs], async () => {
             await db.customers.put(deleted);
-            await addToQueue('CUSTOMER_SYNC', deleted);
+            await addToQueue('CUSTOMER_SYNC', deleted); // <--- CLAVE PARA SYNC
             await logAuditAction('DELETE_CUSTOMER', { name: customer.name }, currentStaff);
         });
         
         toast.success("Cliente eliminado");
         if (selectedCustomer?.id === id) setSelectedCustomer(null);
         syncPush().catch(console.error);
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    } catch (e) { toast.error("Error al eliminar"); }
+
+    } catch (e) { 
+        console.error(e);
+        toast.error("Error al eliminar"); 
+    }
   };
 
+  // --- AJUSTE MANUAL DE PUNTOS ---
   const handlePointsAdjustment = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!selectedCustomer || pointsAdjustment.amount === 0) return;
@@ -172,7 +198,7 @@ export function CustomersPage() {
 
           await db.transaction('rw', [db.customers, db.action_queue, db.audit_logs], async () => {
               await db.customers.put(updatedCustomer);
-              await addToQueue('CUSTOMER_SYNC', updatedCustomer);
+              await addToQueue('CUSTOMER_SYNC', updatedCustomer); // <--- CLAVE PARA SYNC
               await logAuditAction('UPDATE_LOYALTY', { 
                   customer: selectedCustomer.name, 
                   adjustment: pointsAdjustment.amount, 
@@ -243,7 +269,7 @@ export function CustomersPage() {
         </div>
       </div>
 
-      {/* LISTA */}
+      {/* LISTA DE CLIENTES */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in duration-300">
         {!customers ? (
              <div className="p-12 flex justify-center"><Loader2 className="animate-spin text-[#0B3B68]"/></div>

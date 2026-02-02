@@ -551,8 +551,8 @@ export function FinancePage() {
             <div className="bg-[#0B3B68] p-5 rounded-2xl shadow-lg shadow-[#0B3B68]/30 text-white relative overflow-hidden">
                <div className="absolute top-0 right-0 w-20 h-20 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
                <p className="text-gray-300 text-[10px] font-bold uppercase tracking-wider mb-1">Efectivo en Caja</p>
-               <h3 className="text-3xl font-black">
-                {shiftStats?.expectedCash !== undefined 
+               <h3 className="text-3xl font-black text-white"> {/* Forzamos color blanco */}
+                {shiftStats && typeof shiftStats.expectedCash === 'number'
                   ? formatMoney(shiftStats.expectedCash)
                   : <span className="text-yellow-400 text-lg">Cargando...</span>
                 }
