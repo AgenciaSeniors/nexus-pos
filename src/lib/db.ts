@@ -30,7 +30,7 @@ export interface Sale {
   id: string;
   business_id: string;
   date: string;
-  shift_id?: string;
+  shift_id: string;
   total: number;
   items: SaleItem[];
   staff_id?: string;
