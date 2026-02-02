@@ -251,9 +251,9 @@ export function PosPage() {
   const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  // --- RENDERIZADO (BISNE VISUAL) ---
+  // --- RENDERIZADO (BISNE CON TALLA - IDENTIDAD VISUAL) ---
   return (
-    <div className="flex flex-col md:flex-row h-[calc(100vh-60px)] md:h-screen bg-[#F3F4F6] overflow-hidden font-sans">
+    <div className="flex flex-col md:flex-row h-[calc(100vh-60px)] md:h-screen bg-background overflow-hidden font-body">
       
       {/* =======================================================
           COLUMNA IZQUIERDA: CATÁLOGO DE PRODUCTOS
@@ -262,10 +262,10 @@ export function PosPage() {
       <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ${mobileView === 'cart' ? 'hidden md:flex' : 'flex'}`}>
         
         {/* Barra Superior: Buscador y Categorías */}
-        <div className="p-4 bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm flex flex-col gap-3">
+        <div className="p-4 bg-surface border-b border-gray-200 sticky top-0 z-10 shadow-sm flex flex-col gap-3">
             {/* Buscador */}
             <div className="relative w-full">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5 group-focus-within:text-[#0B3B68] transition-colors" />
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-text-secondary w-5 h-5 group-focus-within:text-bisne-navy transition-colors" />
                 <input 
                     ref={searchInputRef}
                     type="text" 
@@ -273,10 +273,10 @@ export function PosPage() {
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     autoFocus
-                    className="w-full pl-12 pr-10 py-3 bg-[#F3F4F6] border-none rounded-2xl text-lg focus:ring-2 focus:ring-[#0B3B68] focus:bg-white transition-all shadow-inner outline-none text-[#1F2937] placeholder-gray-400"
+                    className="w-full pl-12 pr-10 py-3 bg-background border-none rounded-2xl text-lg focus:ring-2 focus:ring-bisne-navy focus:bg-surface transition-all shadow-inner outline-none text-text-main placeholder-gray-400 font-body"
                 />
                 {query && (
-                    <button onClick={() => {setQuery(''); searchInputRef.current?.focus();}} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#6B7280] hover:text-[#EF4444] p-1">
+                    <button onClick={() => {setQuery(''); searchInputRef.current?.focus();}} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-secondary hover:text-state-error p-1">
                         <X size={18} />
                     </button>
                 )}
@@ -288,10 +288,10 @@ export function PosPage() {
                     <button
                         key={cat}
                         onClick={() => setSelectedCategory(cat)}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${
+                        className={`px-4 py-2 rounded-xl text-xs font-bold font-heading whitespace-nowrap transition-all border ${
                             selectedCategory === cat 
-                                ? 'bg-[#0B3B68] text-white border-[#0B3B68] shadow-md shadow-[#0B3B68]/20' 
-                                : 'bg-white text-[#6B7280] border-gray-200 hover:border-[#0B3B68] hover:text-[#0B3B68]'
+                                ? 'bg-bisne-navy text-white border-bisne-navy shadow-md shadow-bisne-navy/20' 
+                                : 'bg-surface text-text-secondary border-gray-200 hover:border-bisne-navy hover:text-bisne-navy'
                         }`}
                     >
                         {cat}
@@ -301,19 +301,19 @@ export function PosPage() {
         </div>
 
         {/* Rejilla de Productos */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-[#F3F4F6] scroll-smooth">
+        <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-background scroll-smooth">
             {!activeShift && (
-                <div className="mb-6 p-4 bg-[#F59E0B]/10 border border-[#F59E0B] rounded-xl flex flex-col md:flex-row items-center justify-center gap-2 text-[#F59E0B] font-bold animate-pulse text-center">
+                <div className="mb-6 p-4 bg-state-warning/10 border border-state-warning rounded-xl flex flex-col md:flex-row items-center justify-center gap-2 text-state-warning font-bold animate-pulse text-center font-heading">
                     <Lock size={20}/>
                     <span>ATENCIÓN: La caja está cerrada. Debes abrir un turno para vender.</span>
                 </div>
             )}
 
             {filteredProducts.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-[#6B7280] opacity-50 py-10">
+                <div className="h-full flex flex-col items-center justify-center text-text-secondary opacity-50 py-10">
                     <Package size={64} className="mb-4 stroke-1"/>
-                    <p className="text-xl font-bold font-heading text-[#0B3B68]">Sin resultados</p>
-                    <p className="text-sm">Intenta con otro término de búsqueda</p>
+                    <p className="text-xl font-bold font-heading text-bisne-navy">Sin resultados</p>
+                    <p className="text-sm font-body">Intenta con otro término de búsqueda</p>
                 </div>
             ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4 pb-24 md:pb-0">
@@ -321,32 +321,32 @@ export function PosPage() {
                         <button
                             key={product.id}
                             onClick={() => addToCart(product)}
-                            className="bg-white p-3 md:p-4 rounded-2xl border border-gray-200 shadow-sm hover:shadow-md hover:border-[#7AC142] active:scale-[0.98] transition-all flex flex-col justify-between text-left group h-full relative overflow-hidden"
+                            className="bg-surface p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-talla-growth active:scale-[0.98] transition-all flex flex-col justify-between text-left group h-full relative overflow-hidden"
                         >
-                            {/* Borde verde en hover */}
-                            <div className="absolute top-0 left-0 w-1 h-full bg-[#7AC142] opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                            {/* Borde verde en hover (Bisne Growth) */}
+                            <div className="absolute top-0 left-0 w-1 h-full bg-talla-growth opacity-0 group-hover:opacity-100 transition-opacity"></div>
 
                             <div className="w-full mb-3">
                                 <div className="flex justify-between items-start mb-1">
-                                    <span className="text-[10px] font-bold uppercase text-[#6B7280] bg-gray-100 px-2 py-0.5 rounded-md truncate max-w-[70%]">
+                                    <span className="text-[10px] font-bold uppercase text-text-secondary bg-gray-100 px-2 py-0.5 rounded-md truncate max-w-[70%] font-heading">
                                         {product.category || 'General'}
                                     </span>
                                     {product.stock <= 5 && (
-                                        <div className="text-[#F59E0B] flex items-center gap-1 bg-[#F59E0B]/10 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                                        <div className="text-state-warning flex items-center gap-1 bg-state-warning/10 px-1.5 py-0.5 rounded text-[10px] font-bold">
                                             <AlertTriangle size={10} /> Bajo
                                         </div>
                                     )}
                                 </div>
-                                <h3 className="font-bold text-[#1F2937] text-sm md:text-base leading-tight line-clamp-2 h-10">
+                                <h3 className="font-bold text-bisne-navy text-sm md:text-base leading-tight line-clamp-2 h-10 font-heading">
                                     {product.name}
                                 </h3>
                             </div>
                             
                             <div className="w-full flex justify-between items-end border-t border-gray-50 pt-2 mt-auto">
-                                <div className="text-xs text-[#6B7280]">
-                                    Stock: <span className="font-bold text-[#1F2937]">{product.stock}</span>
+                                <div className="text-xs text-text-secondary font-body">
+                                    Stock: <span className="font-bold text-text-main">{product.stock}</span>
                                 </div>
-                                <div className="text-lg font-black text-[#7AC142]">
+                                <div className="text-lg font-bold text-talla-growth font-body">
                                     {currency.format(product.price)}
                                 </div>
                             </div>
@@ -361,28 +361,28 @@ export function PosPage() {
           COLUMNA DERECHA: CARRITO DE COMPRAS
           En móvil es un overlay completo o sidebar.
          ======================================================= */}
-      <div className={`w-full md:w-[420px] bg-white border-l border-gray-200 flex flex-col shadow-2xl z-20 transition-transform duration-300 absolute md:relative inset-0 md:inset-auto ${mobileView === 'cart' ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}`}>
+      <div className={`w-full md:w-[420px] bg-surface border-l border-gray-200 flex flex-col shadow-2xl z-20 transition-transform duration-300 absolute md:relative inset-0 md:inset-auto ${mobileView === 'cart' ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}`}>
         
-        {/* Header Carrito */}
-        <div className="p-5 bg-[#0B3B68] text-white flex justify-between items-center shadow-md shrink-0">
+        {/* Header Carrito - Fondo Bisne Navy */}
+        <div className="p-5 bg-bisne-navy text-white flex justify-between items-center shadow-md shrink-0">
             <div className="flex items-center gap-3">
                 <div className="p-2 bg-white/10 rounded-xl relative">
-                    <ShoppingCart size={24} className="text-[#7AC142]"/>
+                    <ShoppingCart size={24} className="text-talla-growth"/>
                     {cartCount > 0 && (
-                        <span className="absolute -top-1 -right-1 bg-[#7AC142] text-[#0B3B68] text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center border-2 border-[#0B3B68]">
+                        <span className="absolute -top-1 -right-1 bg-talla-growth text-bisne-navy text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center border-2 border-bisne-navy">
                             {cartCount > 99 ? '99+' : cartCount}
                         </span>
                     )}
                 </div>
                 <div>
                     <h2 className="font-bold text-lg leading-tight font-heading">Orden Actual</h2>
-                    <p className="text-xs text-gray-300">{cart.length} productos distintos</p>
+                    <p className="text-xs text-gray-300 font-body">{cart.length} productos distintos</p>
                 </div>
             </div>
             
             <div className="flex gap-2">
                 {cart.length > 0 && (
-                    <button onClick={clearCart} className="p-2 hover:bg-white/10 rounded-lg text-[#EF4444] bg-white transition-colors" title="Vaciar Carrito">
+                    <button onClick={clearCart} className="p-2 hover:bg-white/10 rounded-lg text-state-error bg-surface transition-colors" title="Vaciar Carrito">
                         <Trash2 size={20} />
                     </button>
                 )}
@@ -394,7 +394,7 @@ export function PosPage() {
         </div>
 
         {/* Selección de Cliente */}
-        <div className="bg-[#F9FAFB] border-b border-gray-200 p-3">
+        <div className="bg-background border-b border-gray-200 p-3">
             <CustomerSelect 
                 selectedCustomer={selectedCustomer} 
                 onSelect={setSelectedCustomer} 
@@ -402,43 +402,43 @@ export function PosPage() {
         </div>
 
         {/* Lista de Ítems */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#F9FAFB]">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-background">
             {cart.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-[#6B7280] opacity-60 text-center p-8 space-y-4">
+                <div className="h-full flex flex-col items-center justify-center text-text-secondary opacity-60 text-center p-8 space-y-4">
                     <div className="w-20 h-20 bg-gray-200 rounded-full flex items-center justify-center">
                         <Barcode size={40} className="stroke-1"/>
                     </div>
                     <div>
-                        <p className="font-bold text-[#1F2937] text-lg">Carrito Vacío</p>
-                        <p className="text-sm">Escanea o selecciona productos del catálogo.</p>
+                        <p className="font-bold text-bisne-navy text-lg font-heading">Carrito Vacío</p>
+                        <p className="text-sm font-body">Escanea o selecciona productos del catálogo.</p>
                     </div>
                 </div>
             ) : (
                 cart.map(item => (
-                    <div key={item.id} className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm flex flex-col gap-2 animate-in slide-in-from-right-4 duration-200">
+                    <div key={item.id} className="bg-surface p-3 rounded-xl border border-gray-200 shadow-sm flex flex-col gap-2 animate-in slide-in-from-right-4 duration-200">
                         <div className="flex justify-between items-start">
                             <div className="flex-1 pr-2">
-                                <h4 className="font-bold text-[#1F2937] text-sm leading-tight line-clamp-2">{item.name}</h4>
-                                <p className="text-xs text-[#6B7280] font-mono mt-0.5">
+                                <h4 className="font-bold text-text-main text-sm leading-tight line-clamp-2 font-heading">{item.name}</h4>
+                                <p className="text-xs text-text-secondary font-mono mt-0.5">
                                     {currency.format(item.price)} <span className="opacity-70">x unidad</span>
                                 </p>
                             </div>
-                            <div className="font-black text-[#1F2937] text-lg text-right whitespace-nowrap">
+                            <div className="font-black text-text-main text-lg text-right whitespace-nowrap font-body">
                                 {currency.format(item.price * item.quantity)}
                             </div>
                         </div>
                         
-                        <div className="flex justify-between items-center bg-[#F3F4F6] p-1 rounded-lg mt-1 border border-gray-100">
+                        <div className="flex justify-between items-center bg-background p-1 rounded-lg mt-1 border border-gray-100">
                             <div className="flex items-center gap-1">
-                                <button onClick={() => updateQuantity(item.id, -1)} className="w-9 h-9 flex items-center justify-center bg-white rounded-md text-[#1F2937] shadow-sm hover:bg-gray-100 border border-gray-200 active:scale-95 transition-all">
+                                <button onClick={() => updateQuantity(item.id, -1)} className="w-9 h-9 flex items-center justify-center bg-surface rounded-md text-text-main shadow-sm hover:bg-gray-100 border border-gray-200 active:scale-95 transition-all">
                                     <Minus size={16}/>
                                 </button>
-                                <span className="font-bold text-lg text-[#0B3B68] w-10 text-center tabular-nums">{item.quantity}</span>
-                                <button onClick={() => updateQuantity(item.id, 1)} className="w-9 h-9 flex items-center justify-center bg-[#0B3B68] text-white rounded-md shadow-sm hover:bg-[#0B3B68]/90 active:scale-95 transition-all">
+                                <span className="font-bold text-lg text-bisne-navy w-10 text-center tabular-nums font-body">{item.quantity}</span>
+                                <button onClick={() => updateQuantity(item.id, 1)} className="w-9 h-9 flex items-center justify-center bg-bisne-navy text-white rounded-md shadow-sm hover:bg-bisne-navy/90 active:scale-95 transition-all">
                                     <Plus size={16}/>
                                 </button>
                             </div>
-                            <button onClick={() => removeFromCart(item.id)} className="p-2 text-gray-400 hover:text-[#EF4444] hover:bg-red-50 rounded-lg transition-colors">
+                            <button onClick={() => removeFromCart(item.id)} className="p-2 text-gray-400 hover:text-state-error hover:bg-red-50 rounded-lg transition-colors">
                                 <X size={18} />
                             </button>
                         </div>
@@ -448,13 +448,13 @@ export function PosPage() {
         </div>
 
         {/* Footer: Acciones y Totales */}
-        <div className="p-5 bg-white border-t border-gray-200 shadow-[0_-4px_20px_-5px_rgba(0,0,0,0.1)] relative z-30 shrink-0">
+        <div className="p-5 bg-surface border-t border-gray-200 shadow-[0_-4px_20px_-5px_rgba(0,0,0,0.1)] relative z-30 shrink-0">
             
             {/* Botones de Acción Secundaria */}
             <div className="grid grid-cols-2 gap-3 mb-4">
                 <button 
                     onClick={() => setShowParkedModal(true)} 
-                    className="flex items-center justify-center gap-2 py-2.5 px-3 bg-[#F3F4F6] text-[#0B3B68] font-bold rounded-xl hover:bg-gray-200 text-xs uppercase tracking-wide transition-colors border border-gray-200"
+                    className="flex items-center justify-center gap-2 py-2.5 px-3 bg-background text-bisne-navy font-bold rounded-xl hover:bg-gray-200 text-xs uppercase tracking-wide transition-colors border border-gray-200 font-heading"
                 >
                     <ClipboardList size={16}/> 
                     <span>Pendientes {parkedCount > 0 && `(${parkedCount})`}</span>
@@ -462,7 +462,7 @@ export function PosPage() {
                 <button 
                     onClick={handleParkOrder} 
                     disabled={cart.length === 0}
-                    className="flex items-center justify-center gap-2 py-2.5 px-3 bg-[#F3F4F6] text-[#F59E0B] font-bold rounded-xl hover:bg-[#F59E0B]/10 text-xs uppercase tracking-wide transition-colors border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center justify-center gap-2 py-2.5 px-3 bg-background text-state-warning font-bold rounded-xl hover:bg-state-warning/10 text-xs uppercase tracking-wide transition-colors border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed font-heading"
                 >
                     <PauseCircle size={16}/> 
                     <span>Guardar Orden</span>
@@ -472,25 +472,25 @@ export function PosPage() {
             {/* Totales */}
             <div className="space-y-1 mb-5">
                 <div className="flex justify-between items-end border-b border-gray-100 pb-2 mb-2">
-                    <span className="text-sm font-medium text-[#6B7280]">Subtotal</span>
-                    <span className="text-sm font-bold text-[#1F2937]">{currency.format(totalAmount)}</span>
+                    <span className="text-sm font-medium text-text-secondary font-heading">Subtotal</span>
+                    <span className="text-sm font-bold text-text-main font-body">{currency.format(totalAmount)}</span>
                 </div>
                 <div className="flex justify-between items-end">
-                    <span className="font-bold text-lg text-[#1F2937] flex items-center gap-2">
-                        <Keyboard size={18} className="hidden md:block text-[#6B7280]"/> Total a Pagar
+                    <span className="font-bold text-lg text-text-main flex items-center gap-2 font-heading">
+                        <Keyboard size={18} className="hidden md:block text-text-secondary"/> Total a Pagar
                     </span>
-                    <span className="font-black text-4xl text-[#0B3B68] tracking-tight">{currency.format(totalAmount)}</span>
+                    <span className="font-black text-4xl text-bisne-navy tracking-tight font-body">{currency.format(totalAmount)}</span>
                 </div>
             </div>
 
-            {/* Botón Principal de Cobro */}
+            {/* Botón Principal de Cobro - Verde Growth */}
             <button 
                 onClick={() => setShowPaymentModal(true)} 
                 disabled={cart.length === 0 || isCheckout || !activeShift} 
-                className={`w-full py-4 rounded-xl font-bold text-lg shadow-xl flex items-center justify-center gap-2 transition-all duration-200 uppercase tracking-wide
+                className={`w-full py-4 rounded-xl font-bold text-lg shadow-xl flex items-center justify-center gap-2 transition-all duration-200 uppercase tracking-wide font-heading
                     ${!activeShift 
                         ? 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none' 
-                        : 'bg-[#7AC142] text-white hover:bg-[#7AC142]/90 active:scale-[0.98] hover:shadow-[#7AC142]/30 shadow-[#7AC142]/20'
+                        : 'bg-talla-growth text-white hover:bg-talla-dark active:scale-[0.98] hover:shadow-talla-growth/30 shadow-talla-growth/20'
                     }`}
             >
                 {!activeShift ? (
@@ -509,17 +509,17 @@ export function PosPage() {
           <div className="md:hidden fixed bottom-20 left-4 right-4 z-50">
               <button 
                 onClick={() => setMobileView('cart')}
-                className="w-full bg-[#0B3B68] text-white p-4 rounded-2xl shadow-2xl flex justify-between items-center animate-in slide-in-from-bottom-4 active:scale-95 transition-transform"
+                className="w-full bg-bisne-navy text-white p-4 rounded-2xl shadow-2xl flex justify-between items-center animate-in slide-in-from-bottom-4 active:scale-95 transition-transform"
               >
                   <div className="flex items-center gap-3">
-                      <div className="bg-[#7AC142] text-[#0B3B68] text-xs font-black px-2.5 py-1 rounded-full border-2 border-[#0B3B68]">
+                      <div className="bg-talla-growth text-bisne-navy text-xs font-black px-2.5 py-1 rounded-full border-2 border-bisne-navy font-body">
                           {cartCount}
                       </div>
-                      <span className="font-bold text-sm uppercase tracking-wide">Ver Carrito</span>
+                      <span className="font-bold text-sm uppercase tracking-wide font-heading">Ver Carrito</span>
                   </div>
                   <div className="flex items-center gap-2">
-                      <span className="font-black text-xl">{currency.format(totalAmount)}</span>
-                      <ChevronRight size={24} className="text-[#7AC142]" />
+                      <span className="font-black text-xl font-body">{currency.format(totalAmount)}</span>
+                      <ChevronRight size={24} className="text-talla-growth" />
                   </div>
               </button>
           </div>

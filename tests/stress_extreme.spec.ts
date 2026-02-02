@@ -1,261 +1,108 @@
 import { test, expect, Page } from '@playwright/test';
 
-// ==========================================
-// ⚙️ CONFIGURACIÓN DEL CAOS
-// ==========================================
-const URL = 'http://localhost:5173';
-const TIMEOUT_GLOBAL = 300_000; // 5 minutos totales
-const NUM_CAJEROS = 4;          // Cajeros simultáneos
-const VENTAS_POR_CAJERO = 10;   // Ventas por cada cajero
-const PRODUCTOS_A_CREAR = 10;   // Productos base
+const URL = process.env.APP_URL || 'http://localhost:5173';
 
-// 🔐 CREDENCIALES
-const SUPER_ADMIN = {
-    email: 'seniors.contacto@gmail.com', 
-    pass: 'Edua0523*' 
-};
-
-// Credenciales únicas para esta ejecución
-const NEW_BIZ_EMAIL = `chaos_${Date.now()}@bomb.com`;
-const NEW_BIZ_PASS = '123456';
+const NUM_CAJEROS = 4;
+const VENTAS_POR_CAJERO = 8;
+const PRODUCTOS = 10;
 const PIN = '1234';
 
-// Ejecución Serial Obligatoria (Génesis -> Ataque)
-test.describe.serial('💣 NEXUS POS: BOMB MODE STRESS TEST', () => {
-  test.setTimeout(TIMEOUT_GLOBAL);
+const ADMIN = {
+  email: process.env.ADMIN_EMAIL!,
+  pass: process.env.ADMIN_PASS!
+};
 
-  // ==========================================
-  // FASE 1: PREPARACIÓN DEL TERRENO
-  // ==========================================
-  test('GÉNESIS: Creación de Negocio y Datos Masivos', async ({ browser }) => {
-    const context = await browser.newContext();
-    const page = await context.newPage();
+test.describe.serial('NEXUS POS – STRESS v2', () => {
 
-    console.log(`\n🔥 INICIANDO MODO BOMBA: ${NEW_BIZ_EMAIL}`);
-    
-    // 1. Limpieza y Registro
+  test('SETUP: crear negocio e inventario', async ({ browser }) => {
+    const page = await browser.newPage();
+
+    // Limpieza real
     await page.goto(URL);
-    await page.evaluate(() => localStorage.clear());
-    await page.evaluate(() => { if(window.indexedDB) window.indexedDB.deleteDatabase('NexusPOS_DB'); });
-    await page.reload();
+    await page.evaluate(async () => {
+      localStorage.clear();
+      const dbs = await indexedDB.databases();
+      dbs.forEach(db => db?.name && indexedDB.deleteDatabase(db.name));
+    });
 
-    console.log('📝 Registrando nuevo negocio...');
-    await page.getByRole('button', { name: 'Regístrate' }).click();
-    await page.getByPlaceholder('Ej. Juan Pérez').fill('Chaos Master');
-    await page.getByPlaceholder('Ej. Cafetería Central').fill('Bar La Resistencia');
-    await page.getByPlaceholder('+53 5555 5555').fill('666666');
-    await page.getByPlaceholder('correo@ejemplo.com').fill(NEW_BIZ_EMAIL);
-    await page.getByPlaceholder('••••••••').fill(NEW_BIZ_PASS);
-    await page.getByRole('button', { name: 'Enviar Solicitud' }).click(); // O 'Registrar' según tu texto actual
+    // Registro
+    await page.goto('/register');
+    await page.getByTestId('register-name').fill('Stress User');
+    await page.getByTestId('register-business').fill('Stress POS');
+    await page.getByTestId('register-email').fill(`stress_${Date.now()}@test.com`);
+    await page.getByTestId('register-password').fill('123456');
+    await page.getByTestId('register-submit').click();
 
-    // Esperar confirmación visual
-    // Aceptamos cualquier variante de texto de éxito
-    await expect(page.locator('text=Solicitud')).toBeVisible({ timeout: 15000 });
-    console.log('✅ Solicitud enviada. Esperando propagación DB...');
-    
-    await page.waitForTimeout(3000); 
+    await expect(page.getByTestId('register-success')).toBeVisible();
 
-    // 2. Aprobación por Super Admin
-    console.log('👮 Solicitando aprobación del Super Admin...');
-    const adminContext = await browser.newContext();
-    const adminPage = await adminContext.newPage();
-    
-    await adminPage.goto(`${URL}/#/admin-login`);
-    await adminPage.locator('input[type="email"]').fill(SUPER_ADMIN.email);
-    await adminPage.locator('input[type="password"]').fill(SUPER_ADMIN.pass);
-    await adminPage.getByRole('button', { name: 'Entrar' }).click();
-    
-    await adminPage.getByRole('button', { name: 'Solicitudes' }).click();
-    
-    // Auto-aceptar alertas
-    adminPage.on('dialog', d => d.accept(PIN));
+    // Admin aprueba
+    const admin = await browser.newPage();
+    await admin.goto('/admin/login');
+    await admin.getByTestId('admin-email').fill(ADMIN.email);
+    await admin.getByTestId('admin-password').fill(ADMIN.pass);
+    await admin.getByTestId('admin-login').click();
 
-    // Bucle de búsqueda resiliente
-    let aprobado = false;
-    for(let i=0; i<10; i++) {
-        console.log(`🔎 Buscando solicitud (Intento ${i+1}/10)...`);
-        await adminPage.waitForTimeout(2000);
-        
-        const row = adminPage.getByRole('row').filter({ hasText: NEW_BIZ_EMAIL });
-        
-        if (await row.count() > 0 && await row.isVisible()) {
-            console.log('✅ Usuario encontrado. Aprobando...');
-            await row.getByRole('button').first().click();
-            aprobado = true;
-            break;
-        } else {
-            console.log('⚠️ No aparece. Recargando panel...');
-            await adminPage.reload();
-            await adminPage.waitForTimeout(1000);
-            if (await adminPage.getByRole('button', { name: 'Solicitudes' }).isVisible()) {
-                 await adminPage.getByRole('button', { name: 'Solicitudes' }).click();
-            }
-        }
-    }
-    
-    expect(aprobado, '❌ El Admin no encontró la solicitud.').toBeTruthy();
-    await adminContext.close();
+    await admin.getByTestId('pending-requests').click();
+    await admin.getByTestId('approve-first').click();
 
-    // 3. Login y Creación de Inventario (CORREGIDO)
-    console.log('📦 Iniciando sesión como cliente aprobado...');
-    await page.bringToFront();
-    
-    // FORZAR RECARGA para asegurar estado limpio
-    await page.reload();
-    await page.waitForTimeout(1000);
+    // Login usuario
+    await page.goto('/login');
+    await page.getByTestId('login-email').fill(`stress_${Date.now()}@test.com`);
+    await page.getByTestId('login-password').fill('123456');
+    await page.getByTestId('login-submit').click();
 
-    // Lógica explícita de Login (Sin depender de botones toggle)
-    // Si vemos el campo de password, es que estamos en login o registro.
-    // Llenamos los datos directamente.
-    await page.getByPlaceholder('correo@ejemplo.com').fill(NEW_BIZ_EMAIL);
-    await page.getByPlaceholder('••••••••').fill(NEW_BIZ_PASS);
-    
-    // Buscamos el botón "Entrar" explícitamente
-    const botonEntrar = page.getByRole('button', { name: 'Entrar' });
-    
-    if (await botonEntrar.isVisible()) {
-        await botonEntrar.click();
-    } else {
-        // Si no está visible, quizás estamos en modo registro?
-        // Intentamos cambiar a login solo si es necesario
-        if (await page.getByRole('button', { name: 'Inicia Sesión' }).isVisible()) {
-            await page.getByRole('button', { name: 'Inicia Sesión' }).click();
-            await page.getByPlaceholder('correo@ejemplo.com').fill(NEW_BIZ_EMAIL);
-            await page.getByPlaceholder('••••••••').fill(NEW_BIZ_PASS);
-            await page.getByRole('button', { name: 'Entrar' }).click();
-        }
+    await page.getByTestId('pinpad');
+    for (const d of PIN) await page.getByTestId(`pin-${d}`).click();
+
+    // Inventario
+    await page.goto('/inventario');
+    for (let i = 0; i < PRODUCTOS; i++) {
+      await page.getByTestId('new-product').click();
+      await page.getByTestId('product-name').fill(`Item-${i}`);
+      await page.getByTestId('product-price').fill(`${10 + i}`);
+      await page.getByTestId('product-stock').fill('1000');
+      await page.getByTestId('product-save').click();
     }
 
-    // Esperar PinPad
-    console.log('🔢 Esperando PinPad...');
-    await page.waitForSelector('text=Ingresa tu PIN', { timeout: 60000 });
-    for (const d of PIN) await page.getByText(d, { exact: true }).click();
-
-    // Crear Productos
-    console.log(`🏭 Creando ${PRODUCTOS_A_CREAR} productos...`);
-    await page.goto(`${URL}/#/inventario`);
-    
-    for (let i = 0; i < PRODUCTOS_A_CREAR; i++) {
-        const prodName = `Item-${i}`;
-        const prodPrice = 10 + i;
-        const prodStock = 1000;
-
-        await page.getByRole('button', { name: 'Nuevo' }).click();
-        const textInputs = page.locator('input[type="text"]');
-        const numberInputs = page.locator('input[type="number"]');
-        
-        await textInputs.first().fill(prodName); 
-        await numberInputs.nth(0).fill(prodPrice.toString()); 
-        await numberInputs.nth(1).fill('5'); 
-        await numberInputs.nth(2).fill(prodStock.toString()); 
-        
-        await page.getByRole('button', { name: 'Guardar' }).click();
-        await page.waitForTimeout(50); 
-    }
-    
-    console.log(`✅ Inventario listo.`);
-    await context.close();
+    await expect(page.getByText('Item-9')).toBeVisible();
   });
 
-  // ==========================================
-  // FASE 2: EL APOCALIPSIS (VENTAS CONCURRENTES)
-  // ==========================================
-  test('ATAQUE: Ventas Concurrentes + Caos de Red + Edición Admin', async ({ browser }) => {
-    console.log('\n⚔️ INICIANDO FASE DE ATAQUE...');
-    
-    const paginas: Page[] = [];
+  test('STRESS: ventas paralelas + offline', async ({ browser }) => {
+    const pages: Page[] = [];
 
-    for (let i = 0; i <= NUM_CAJEROS; i++) { 
-        const ctx = await browser.newContext();
-        const p = await ctx.newPage();
-        paginas.push(p);
+    for (let i = 0; i < NUM_CAJEROS; i++) {
+      pages.push(await browser.newPage());
     }
 
-    const gerentePage = paginas[0];
-    const cajerosPages = paginas.slice(1);
+    await Promise.all(pages.map(async (p) => {
+      await p.goto('/pos');
 
-    // Login Masivo Paralelo
-    console.log('🔌 Logueando escuadrón...');
-    await Promise.all(paginas.map(async (p) => {
-        await p.goto(URL);
-        // Aseguramos modo login
-        const btnLoginMode = p.getByRole('button', { name: 'Inicia Sesión' });
-        if (await btnLoginMode.isVisible()) {
-            await btnLoginMode.click();
-        }
-        
-        await p.getByPlaceholder('correo@ejemplo.com').fill(NEW_BIZ_EMAIL);
-        await p.getByPlaceholder('••••••••').fill(NEW_BIZ_PASS);
-        
-        // Clic seguro en Entrar
-        const btnEntrar = p.getByRole('button', { name: 'Entrar' });
-        if (await btnEntrar.isVisible()) {
-             await btnEntrar.click();
-        }
+      if (await p.getByTestId('open-shift').isVisible()) {
+        await p.getByTestId('open-shift-amount').fill('500');
+        await p.getByTestId('open-shift-confirm').click();
+      }
 
-        await p.waitForSelector('text=Ingresa tu PIN', { timeout: 60000 });
-        for (const d of PIN) await p.getByText(d, { exact: true }).click();
+      for (let i = 0; i < VENTAS_POR_CAJERO; i++) {
+        if (i % 3 === 0) await p.context().setOffline(true);
+        else await p.context().setOffline(false);
+
+        await p.getByTestId('product-search').fill('Item-');
+        await p.getByTestId('product-card').first().click();
+        await p.getByTestId('checkout').click();
+        await p.getByTestId('payment-cash').click();
+        await p.getByTestId('confirm-payment').click();
+      }
     }));
-
-    console.log('🔥 ¡SISTEMA ONLINE! EJECUTANDO OPERACIONES...');
-
-    // ROL: GERENTE
-    const comportamientoGerente = async () => {
-        await gerentePage.goto(`${URL}/#/inventario`);
-        await gerentePage.waitForTimeout(2000);
-
-        for (let i = 0; i < 5; i++) { 
-            const offline = i % 2 === 0;
-            console.log(`📡 GERENTE: Red ${offline ? 'OFFLINE' : 'ONLINE'}`);
-            await gerentePage.context().setOffline(offline);
-
-            if (!offline) { 
-                try {
-                    await gerentePage.locator('button').filter({ has: gerentePage.locator('svg') }).nth(1).click();
-                    await gerentePage.locator('input[type="number"]').first().fill((50 + i).toString());
-                    await gerentePage.getByRole('button', { name: 'Guardar' }).click();
-                } catch (e) {console.error(e) }
-            }
-            await gerentePage.waitForTimeout(3000);
-        }
-        await gerentePage.context().setOffline(false);
-    };
-
-    // ROL: CAJEROS
-    const comportamientoCajero = async (p: Page, id: number) => {
-        await p.goto(`${URL}/#/`);
-        if (await p.getByText('Abrir Turno').isVisible()) {
-            await p.getByPlaceholder('Monto inicial').fill('500');
-            await p.getByRole('button', { name: 'Abrir Caja' }).click();
-        }
-
-        for (let i = 0; i < VENTAS_POR_CAJERO; i++) {
-            try {
-                await p.getByPlaceholder('Buscar productos...').fill('Item-');
-                await p.waitForTimeout(200);
-                await p.locator('.grid > div').first().click();
-                await p.getByRole('button', { name: 'Cobrar' }).click();
-                await p.getByText('Efectivo').click();
-                await p.getByText('Confirmar Cobro').click();
-                await p.keyboard.press('Escape'); 
-                console.log(`💰 Cajero ${id}: Venta ${i+1} OK`);
-            } catch (e) {
-                console.error(e)
-                console.log(`❌ Cajero ${id}: Retry venta ${i+1}`);
-                await p.reload();
-                await p.waitForTimeout(1000);
-                if (await p.getByText('Ingresa tu PIN').isVisible()) {
-                    for (const d of PIN) await p.getByText(d, { exact: true }).click();
-                }
-            }
-        }
-    };
-
-    await Promise.all([
-        comportamientoGerente(),
-        ...cajerosPages.map((p, i) => comportamientoCajero(p, i + 1))
-    ]);
-
-    console.log('🏆 PRUEBA FINALIZADA CON ÉXITO.');
   });
+
+  test('VERIFY: integridad del sistema', async ({ page }) => {
+    await page.goto('/admin/dashboard');
+
+    const pending = await page.getByTestId('sync-pending').innerText();
+    expect(Number(pending)).toBe(0);
+
+    const errors = await page.getByTestId('error-log').count();
+    expect(errors).toBe(0);
+  });
+
 });

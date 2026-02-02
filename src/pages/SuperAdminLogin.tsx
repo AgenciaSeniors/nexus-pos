@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { Store, Mail, Lock, Loader2, ArrowRight, User, Phone, Shield, CheckCircle2 } from 'lucide-react';
+import { Store, Mail, Lock, Loader2, ArrowRight, User, Phone, Shield, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function SuperAdminLogin() {
@@ -10,7 +10,7 @@ export function SuperAdminLogin() {
   // Estados
   const [isRegistering, setIsRegistering] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [successMode, setSuccessMode] = useState(false); // Nuevo estado de éxito visual
+  const [successMode, setSuccessMode] = useState(false);
   
   // Campos del formulario
   const [email, setEmail] = useState('');
@@ -25,6 +25,7 @@ export function SuperAdminLogin() {
     const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session && mounted) {
+        // Verificamos si es super admin antes de redirigir
         const { data: profile } = await supabase
             .from('profiles')
             .select('is_super_admin')
@@ -33,6 +34,9 @@ export function SuperAdminLogin() {
 
         if (profile?.is_super_admin) {
             navigate('/super-panel', { replace: true });
+        } else {
+            // Si existe sesión pero no es super admin, redirigir al POS normal
+            navigate('/', { replace: true });
         }
       }
     };
@@ -40,174 +44,256 @@ export function SuperAdminLogin() {
     return () => { mounted = false; };
   }, [navigate]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-        if (isRegistering) {
-            // REGISTRO
-            const { data: authData, error: authError } = await supabase.auth.signUp({ email, password });
-            if (authError) throw authError;
-            if (!authData.user) throw new Error("No se pudo crear el usuario");
+      if (isRegistering) {
+        // 1. Registro (Sign Up)
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              full_name: fullName,
+              phone: phone,
+            }
+          }
+        });
 
-            // Crear RPC para registro atómico (o llamada directa si prefieres como estaba)
-            // Aquí mantengo tu lógica original de inserción directa que funciona bien
-            const { data: businessData, error: businessError } = await supabase
-                .from('businesses')
-                .insert({ name: businessName, status: 'active', phone: phone })
-                .select().single();
+        if (authError) throw authError;
+        if (!authData.user) throw new Error("No se pudo crear el usuario");
 
-            if (businessError) throw businessError;
+        // Simulación de éxito para UX
+        setSuccessMode(true);
+        toast.success("Cuenta creada exitosamente");
 
-            const { error: profileError } = await supabase
-                .from('profiles')
-                .insert({
-                    id: authData.user.id,
-                    business_id: businessData.id,
-                    full_name: fullName,
-                    role: 'admin',
-                    status: 'active',
-                    email: email,
-                    is_super_admin: false
-                });
+      } else {
+        // Login Normal
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
 
-            if (profileError) throw profileError;
+        if (error) throw error;
 
-            // ✅ ÉXITO VISUAL (En lugar de alert)
-            setSuccessMode(true);
-            toast.success("Cuenta creada correctamente");
-
-        } else {
-            // LOGIN
-            const { data: { user }, error: authError } = await supabase.auth.signInWithPassword({ email, password });
-            if (authError) throw authError;
-            if (!user) throw new Error("Credenciales inválidas");
-
-            const { data: profile, error: profileError } = await supabase
+        // Verificar rol
+        if (data.user) {
+            // CORRECCIÓN 1: Eliminamos 'profileError' de la destructuración porque no se usaba
+            const { data: profile } = await supabase
                 .from('profiles')
                 .select('is_super_admin')
-                .eq('id', user.id)
+                .eq('id', data.user.id)
                 .single();
-
-            if (profileError) {
-                await supabase.auth.signOut();
-                throw new Error("Error verificando permisos.");
+            
+            if (profile?.is_super_admin) {
+                toast.success(`Bienvenido, Socio Experto`);
+                navigate('/super-panel');
+            } else {
+                toast.success(`Sesión iniciada`);
+                navigate('/');
             }
-
-            if (!profile?.is_super_admin) {
-                await supabase.auth.signOut();
-                throw new Error("⛔ ACCESO DENEGADO: Cuenta no autorizada.");
-            }
-
-            toast.success("Bienvenido al Panel Maestro");
-            navigate('/super-panel', { replace: true });
         }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (error: any) {
-        console.error(error);
-        toast.error(error.message || "Ocurrió un error inesperado.");
-        if (!isRegistering) await supabase.auth.signOut();
+      }
+    } catch (error) {
+      // CORRECCIÓN 2: Quitamos ': any' y manejamos el tipo de error de forma segura
+      console.error(error);
+      const errorMessage = error instanceof Error ? error.message : "Error en la autenticación";
+      toast.error(errorMessage);
     } finally {
-        setLoading(false);
+      setLoading(false);
     }
   };
 
-  // --- VISTA DE ÉXITO (POST-REGISTRO) ---
-  if (successMode) {
-      return (
-        <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-            <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md text-center animate-in zoom-in duration-300">
-                <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                    <CheckCircle2 className="w-10 h-10 text-green-600" />
-                </div>
-                <h2 className="text-2xl font-black text-slate-800 mb-2">¡Solicitud Enviada!</h2>
-                <p className="text-slate-500 mb-8 leading-relaxed">
-                    Tu cuenta para <strong>{businessName}</strong> ha sido creada. 
-                    <br/><br/>
-                    Por favor, contacta al administrador para que active tu licencia y te proporcione tu <strong>PIN Maestro</strong>.
-                </p>
-                <button 
-                    onClick={() => window.location.href = '/'} // Recarga limpia
-                    className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-black transition-colors"
-                >
-                    Volver al Inicio
-                </button>
-            </div>
-        </div>
-      );
-  }
-
-  // --- VISTA FORMULARIO ---
+  // --- RENDERIZADO VISUAL (IDENTIDAD BISNE CON TALLA) ---
   return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-      <div className="bg-slate-800 p-8 rounded-2xl shadow-2xl w-full max-w-md border border-slate-700 animate-in fade-in duration-300">
+    <div className="min-h-screen bg-bisne-navy flex flex-col items-center justify-center p-4 relative overflow-hidden">
+      
+      {/* Elementos de fondo decorativos */}
+      <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none opacity-10">
+          <div className="absolute -top-[20%] -left-[10%] w-[50%] h-[50%] bg-talla-growth rounded-full blur-[120px]"></div>
+          <div className="absolute top-[60%] -right-[10%] w-[40%] h-[60%] bg-blue-400 rounded-full blur-[100px]"></div>
+      </div>
+
+      <div className="w-full max-w-md z-10">
         
-        <div className="flex flex-col items-center mb-8">
-          <div className="bg-indigo-600 p-4 rounded-full mb-4 shadow-lg shadow-indigo-500/20">
-            {isRegistering ? <Store className="w-8 h-8 text-white" /> : <Shield className="w-8 h-8 text-white" />}
+        {/* Header de Marca */}
+        <div className="text-center mb-8 animate-in slide-in-from-top-5 duration-700">
+          <div className="inline-flex items-center justify-center p-3 bg-white/10 rounded-2xl mb-4 backdrop-blur-sm shadow-lg border border-white/10">
+            <Store className="w-8 h-8 text-talla-growth" />
           </div>
-          <h1 className="text-2xl font-bold text-white">
-            {isRegistering ? 'Crear Negocio' : 'Acceso Super Admin'}
+          <h1 className="text-4xl md:text-5xl font-heading font-extrabold text-white tracking-tight">
+            Bisne<span className="text-talla-growth">ConTalla</span>
           </h1>
-          <p className="text-slate-400 text-sm mt-2 text-center">
-            {isRegistering 
-              ? 'Registra tu empresa para empezar a vender' 
-              : 'Gestión de licencias y clientes'}
+          <p className="text-gray-300 mt-2 font-body font-medium">
+            {isRegistering ? "Comienza a crecer hoy mismo" : "Tu Socio Experto en Gestión"}
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Tarjeta Principal */}
+        <div className="bg-surface rounded-2xl shadow-2xl p-6 md:p-8 border border-white/20 backdrop-blur-sm animate-in fade-in zoom-in-95 duration-500">
           
-          {isRegistering && (
-            <div className="space-y-4 animate-in slide-in-from-bottom-2 duration-300">
-              <div className="grid grid-cols-2 gap-4">
-                  <div className="relative">
-                    <User className="absolute left-3 top-3 text-slate-500 w-5 h-5" />
-                    <input type="text" required className="w-full pl-10 pr-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white focus:border-indigo-500 outline-none text-sm placeholder:text-slate-600" placeholder="Nombre" value={fullName} onChange={e => setFullName(e.target.value)} />
-                  </div>
-                  <div className="relative">
-                    <Phone className="absolute left-3 top-3 text-slate-500 w-5 h-5" />
-                    <input type="tel" required className="w-full pl-10 pr-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white focus:border-indigo-500 outline-none text-sm placeholder:text-slate-600" placeholder="Teléfono" value={phone} onChange={e => setPhone(e.target.value)} />
-                  </div>
-              </div>
-              <div className="relative">
-                  <Store className="absolute left-3 top-3 text-slate-500 w-5 h-5" />
-                  <input type="text" required className="w-full pl-10 pr-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white focus:border-indigo-500 outline-none text-sm placeholder:text-slate-600" placeholder="Nombre del Negocio" value={businessName} onChange={e => setBusinessName(e.target.value)} />
-              </div>
-            </div>
+          {successMode ? (
+             // --- ESTADO DE ÉXITO ---
+             <div className="text-center py-8">
+                <div className="w-20 h-20 bg-talla-growth/20 rounded-full flex items-center justify-center mx-auto mb-4 animate-bounce">
+                    <CheckCircle2 className="w-10 h-10 text-talla-growth" />
+                </div>
+                <h2 className="text-2xl font-heading font-bold text-bisne-navy mb-2">¡Cuenta Creada!</h2>
+                <p className="text-text-secondary mb-6 font-body">
+                    Tu registro ha sido exitoso. Por favor revisa tu correo para verificar tu cuenta o inicia sesión.
+                </p>
+                <button 
+                    onClick={() => { setSuccessMode(false); setIsRegistering(false); }}
+                    className="btn-primary w-full justify-center"
+                >
+                    Ir al Inicio de Sesión
+                </button>
+             </div>
+          ) : (
+            // --- FORMULARIO ---
+            <>
+                <div className="flex items-center gap-3 mb-6 pb-4 border-b border-gray-100">
+                    <div className={`p-2 rounded-lg ${isRegistering ? 'bg-talla-growth/10' : 'bg-bisne-navy/10'}`}>
+                        {isRegistering ? <User className="w-6 h-6 text-talla-growth"/> : <Lock className="w-6 h-6 text-bisne-navy"/>}
+                    </div>
+                    <div>
+                        <h2 className="text-xl font-heading font-bold text-bisne-navy">
+                            {isRegistering ? "Crear Cuenta Nueva" : "Acceso al Sistema"}
+                        </h2>
+                        <p className="text-xs text-text-secondary font-body">
+                            {isRegistering ? "Completa tus datos" : "Ingresa tus credenciales"}
+                        </p>
+                    </div>
+                </div>
+
+                <form onSubmit={handleAuth} className="space-y-4">
+                    
+                    {/* Campos extra para Registro */}
+                    {isRegistering && (
+                        <div className="space-y-4 animate-in slide-in-from-left-4 duration-300">
+                            <div className="space-y-1">
+                                <label className="text-xs font-bold text-bisne-navy uppercase tracking-wider ml-1">Nombre Completo</label>
+                                <div className="relative group">
+                                    <User className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5 group-focus-within:text-talla-growth transition-colors" />
+                                    <input 
+                                        type="text" 
+                                        required 
+                                        className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-text-main focus:ring-2 focus:ring-talla-growth focus:border-transparent outline-none transition-all font-body placeholder:text-gray-400" 
+                                        placeholder="Ej. Juan Pérez" 
+                                        value={fullName} 
+                                        onChange={e => setFullName(e.target.value)} 
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                    <label className="text-xs font-bold text-bisne-navy uppercase tracking-wider ml-1">Teléfono</label>
+                                    <div className="relative group">
+                                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5 group-focus-within:text-talla-growth transition-colors" />
+                                        <input 
+                                            type="tel" 
+                                            required 
+                                            className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-text-main focus:ring-2 focus:ring-talla-growth focus:border-transparent outline-none transition-all font-body placeholder:text-gray-400" 
+                                            placeholder="53 55555555" 
+                                            value={phone} 
+                                            onChange={e => setPhone(e.target.value)} 
+                                        />
+                                    </div>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-xs font-bold text-bisne-navy uppercase tracking-wider ml-1">Negocio</label>
+                                    <div className="relative group">
+                                        <Store className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5 group-focus-within:text-talla-growth transition-colors" />
+                                        <input 
+                                            type="text" 
+                                            required 
+                                            className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-text-main focus:ring-2 focus:ring-talla-growth focus:border-transparent outline-none transition-all font-body placeholder:text-gray-400" 
+                                            placeholder="Ej. Cafetería" 
+                                            value={businessName} 
+                                            onChange={e => setBusinessName(e.target.value)} 
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Campos Comunes: Email y Password */}
+                    <div className="space-y-1">
+                        <label className="text-xs font-bold text-bisne-navy uppercase tracking-wider ml-1">Correo Electrónico</label>
+                        <div className="relative group">
+                            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5 group-focus-within:text-bisne-navy transition-colors" />
+                            <input 
+                                type="email" 
+                                required 
+                                className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-text-main focus:ring-2 focus:ring-bisne-navy focus:border-transparent outline-none transition-all font-body placeholder:text-gray-400" 
+                                placeholder="usuario@bisne.com" 
+                                value={email} 
+                                onChange={e => setEmail(e.target.value)} 
+                            />
+                        </div>
+                    </div>
+
+                    <div className="space-y-1">
+                        <label className="text-xs font-bold text-bisne-navy uppercase tracking-wider ml-1">Contraseña</label>
+                        <div className="relative group">
+                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5 group-focus-within:text-bisne-navy transition-colors" />
+                            <input 
+                                type="password" 
+                                required 
+                                className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-text-main focus:ring-2 focus:ring-bisne-navy focus:border-transparent outline-none transition-all font-body placeholder:text-gray-400" 
+                                placeholder="••••••••" 
+                                value={password} 
+                                onChange={e => setPassword(e.target.value)} 
+                            />
+                        </div>
+                    </div>
+
+                    <button 
+                        type="submit" 
+                        disabled={loading}
+                        className={`w-full font-heading font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg hover:shadow-xl active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed mt-6 text-white
+                            ${isRegistering 
+                                ? 'bg-talla-growth hover:bg-talla-dark shadow-talla-growth/20' 
+                                : 'bg-bisne-navy hover:bg-[#092b4d] shadow-bisne-navy/20'
+                            }`}
+                    >
+                        {loading ? <Loader2 className="animate-spin" /> : (isRegistering ? "Registrar Negocio" : "Iniciar Sesión")}
+                        {!loading && <ArrowRight size={20} />}
+                    </button>
+                </form>
+
+                {/* Footer del Formulario */}
+                <div className="mt-8 pt-6 border-t border-gray-100 text-center">
+                    <p className="text-sm text-text-secondary mb-3 font-body">
+                        {isRegistering ? "¿Ya tienes una cuenta?" : "¿Nuevo en Bisne con Talla?"}
+                    </p>
+                    <button
+                        onClick={() => { setIsRegistering(!isRegistering); setEmail(''); setPassword(''); }}
+                        className="text-bisne-navy hover:text-talla-growth font-bold transition-colors flex items-center justify-center gap-2 mx-auto font-heading"
+                    >
+                        {isRegistering ? "Volver al Login" : "Crear una Cuenta Gratis"}
+                    </button>
+                </div>
+            </>
           )}
-
-          <div className="relative">
-            <Mail className="absolute left-3 top-3 text-slate-500 w-5 h-5" />
-            <input type="email" required className="w-full pl-10 pr-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white focus:border-indigo-500 outline-none text-sm placeholder:text-slate-600" placeholder="correo@ejemplo.com" value={email} onChange={e => setEmail(e.target.value)} />
-          </div>
-
-          <div className="relative">
-            <Lock className="absolute left-3 top-3 text-slate-500 w-5 h-5" />
-            <input type="password" required className="w-full pl-10 pr-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white focus:border-indigo-500 outline-none text-sm placeholder:text-slate-600" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
-          </div>
-
-          <button 
-            type="submit" 
-            disabled={loading}
-            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-900/20 disabled:opacity-50 mt-6"
-          >
-            {loading ? <Loader2 className="animate-spin" /> : (isRegistering ? "Enviar Solicitud" : "Entrar al Panel")}
-            {!loading && <ArrowRight size={20} />}
-          </button>
-        </form>
-
-        <div className="mt-8 pt-6 border-t border-slate-700 text-center">
-            <button
-              onClick={() => { setIsRegistering(!isRegistering); setEmail(''); setPassword(''); }}
-              className="text-indigo-400 hover:text-indigo-300 text-sm font-semibold transition-colors"
-              disabled={loading}
-            >
-              {isRegistering ? '¿Ya tienes cuenta? Inicia sesión' : '¿Nuevo cliente? Registra tu negocio'}
-            </button>
         </div>
+        
+        {/* Footer de Página */}
+        <div className="mt-8 text-center space-y-2 opacity-60">
+            <div className="flex justify-center gap-4 text-white/80 text-xs">
+                <span className="flex items-center gap-1"><Shield size={12}/> Seguro y Encriptado</span>
+                <span>•</span>
+                <span className="flex items-center gap-1"><AlertTriangle size={12}/> Versión Beta</span>
+            </div>
+            <p className="text-white/40 text-[10px] font-mono">
+                Bisne con Talla v1.2 • Sancti Spíritus, Cuba
+            </p>
+        </div>
+
       </div>
     </div>
   );
