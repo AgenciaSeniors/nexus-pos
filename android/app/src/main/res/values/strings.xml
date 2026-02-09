@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
     <string name="app_name">Bisne con Talla</string>
-    <string name="title_activity_main">nexus-pos</string>
-    <string name="package_name">com.nexus.pos</string>
-    <string name="custom_url_scheme">com.nexus.pos</string>
+    <string name="title_activity_main">Bisne con Talla</string>
+    <string name="package_name">com.bisne.contalla</string>
+    <string name="custom_url_scheme">com.bisne.contalla</string>
 </resources>
