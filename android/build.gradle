@@ -21,7 +21,6 @@ allprojects {
         mavenCentral()
     }
     
-    // ESTE ES EL BLOQUE MÁGICO QUE TE FALTABA
     tasks.withType(JavaCompile).configureEach {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
