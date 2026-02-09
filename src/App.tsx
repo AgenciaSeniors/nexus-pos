@@ -1,11 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useState, useRef } from 'react';
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+// ✅ CAMBIO 1: Agregamos useNavigate para poder redirigir
+import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import { type Staff, db } from './lib/db'; 
 import { type Session } from '@supabase/supabase-js';
 import { Toaster, toast } from 'sonner';
-// ✅ CAMBIO 1: Importamos las funciones separadas en lugar de syncBusinessProfile
 import { syncCriticalData, syncHeavyData } from './lib/sync';
 
 // --- IMPORTACIONES DE PÁGINAS Y COMPONENTES ---
@@ -18,8 +18,8 @@ import { SuperAdminPage } from './pages/SuperAdminPage';
 import { SuperAdminLogin } from './pages/SuperAdminLogin';
 import { CustomersPage } from './components/CustomersPage';
 
-// Iconos
-import { Loader2, Store, User, Lock, Mail, Phone, ArrowRight, CheckCircle, WifiOff, RefreshCcw, LogOut } from 'lucide-react';
+// ✅ CAMBIO 2: Agregamos el icono Shield para el botón de admin
+import { Loader2, Store, User, Lock, Mail, Phone, ArrowRight, CheckCircle, WifiOff, RefreshCcw, LogOut, Shield } from 'lucide-react';
 
 // =============================================================================
 // 1. COMPONENTE LOGIN SCREEN
@@ -27,6 +27,9 @@ import { Loader2, Store, User, Lock, Mail, Phone, ArrowRight, CheckCircle, WifiO
 function LoginScreen() {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   
+  // ✅ CAMBIO 3: Inicializamos el hook de navegación
+  const navigate = useNavigate();
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   
@@ -244,6 +247,17 @@ function LoginScreen() {
                   {mode === 'login' ? 'Regístrate' : 'Inicia Sesión'}
                 </button>
               </p>
+            </div>
+
+            {/* ✅ CAMBIO 4: Botón de acceso a Super Admin al final */}
+            <div className="mt-8 pt-6 border-t border-slate-100 flex justify-center">
+                <button
+                    onClick={() => navigate('/admin-login')}
+                    className="flex items-center gap-2 text-slate-400 hover:text-slate-600 transition-colors text-xs font-semibold uppercase tracking-wider"
+                >
+                    <Shield size={14} />
+                    Acceso Super Admin
+                </button>
             </div>
 
           </div>

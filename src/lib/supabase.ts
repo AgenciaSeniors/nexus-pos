@@ -12,4 +12,4 @@ export const supabase = createClient(supabaseUrl, supabaseKey);
 
 // 👇 ESTA LÍNEA ES LA CLAVE (Asegúrate de que esté aquí)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-(window as any).supabase = supabase;
+//(window as any).supabase = supabase;

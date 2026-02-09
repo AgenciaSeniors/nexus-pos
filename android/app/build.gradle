@@ -1,25 +1,37 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "com.nexus.pos"
-    compileSdk = rootProject.ext.compileSdkVersion
+    namespace "com.bisne.contalla" // Asegúrate que este sea el ID que quieres
+    compileSdkVersion rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.nexus.pos"
+        applicationId "com.bisne.contalla"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
-             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
-             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
-            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+             // Files and dirs to omit from the packaged assets
+             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    
+    // --- AQUÍ ESTÁ LA CONFIGURACIÓN DE TU LLAVE ---
+    signingConfigs {
+        release {
+            storeFile file("bisne-key.jks")
+            storePassword "123456" // <--- SI PUSISTE OTRA CONTRASEÑA, CÁMBIALA AQUÍ
+            keyAlias "bisne-alias"
+            keyPassword "123456" // <--- SI PUSISTE OTRA CONTRASEÑA, CÁMBIALA AQUÍ
+        }
+    }
+
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
         }
     }
 }
