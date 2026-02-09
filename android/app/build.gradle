@@ -1,7 +1,7 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace "com.bisne.contalla" // Asegúrate que este sea el ID que quieres
+    namespace "com.bisne.contalla"
     compileSdkVersion rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "com.bisne.contalla"
@@ -11,22 +11,22 @@ android {
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
-             // Files and dirs to omit from the packaged assets
              ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+
+    // ESTO TAMBIÉN FALTABA: Forzar Java 17 en la app
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
-        }
-    
-    // --- AQUÍ ESTÁ LA CONFIGURACIÓN DE TU LLAVE ---
+    }
+
     signingConfigs {
         release {
             storeFile file("bisne-key.jks")
-            storePassword "123456" // <--- SI PUSISTE OTRA CONTRASEÑA, CÁMBIALA AQUÍ
+            storePassword "123456" 
             keyAlias "bisne-alias"
-            keyPassword "123456" // <--- SI PUSISTE OTRA CONTRASEÑA, CÁMBIALA AQUÍ
+            keyPassword "123456" 
         }
     }
 
