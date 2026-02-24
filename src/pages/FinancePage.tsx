@@ -51,15 +51,12 @@ export function FinancePage() {
   const activeShift = useLiveQuery(async () => {
     if (!businessId) return null;
     const shift = await db.cash_shifts.where({ business_id: businessId, status: 'open' }).first();
-    console.log('🔄 ActiveShift cargado:', shift?.id || 'ninguno');
     return shift;
   }, [businessId]);
 
   const shiftData = useLiveQuery(async () => {
     if (!activeShift || !businessId) return null;
-    
-    console.log('📊 Cargando datos del turno:', activeShift.id);
-    
+
     // Obtenemos ventas y movimientos asociados a ESTE turno específico
     const [sales, movements] = await Promise.all([
       db.sales
@@ -74,7 +71,6 @@ export function FinancePage() {
         .toArray()
     ]);
 
-    console.log('📦 Datos cargados - Ventas:', sales.length, 'Movimientos:', movements.length);
     return { sales, movements };
   }, [activeShift, businessId]);
 
