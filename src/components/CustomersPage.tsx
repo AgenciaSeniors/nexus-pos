@@ -23,6 +23,8 @@ export function CustomersPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const deleteConfirmCustomer = customers.find(c => c.id === deleteConfirmId) ?? null;
 
   const [formData, setFormData] = useState({ name: '', phone: '', email: '', address: '' });
   const [pointsAdjustment, setPointsAdjustment] = useState({ amount: 0, reason: '' });
@@ -149,8 +151,14 @@ export function CustomersPage() {
   };
 
   // --- ELIMINAR CLIENTE ---
-  const handleDelete = async (id: string) => {
-    if (!confirm('¿Eliminar cliente?')) return;
+  const handleDelete = (id: string) => {
+    setDeleteConfirmId(id);
+  };
+
+  const confirmDeleteCustomer = async () => {
+    const id = deleteConfirmId;
+    if (!id) return;
+    setDeleteConfirmId(null);
     try {
         const customer = await db.customers.get(id);
         if (!customer) return;
@@ -525,6 +533,35 @@ export function CustomersPage() {
                 </form>
             </div>
         </div>
+      )}
+
+      {/* --- MODAL CONFIRMACIÓN ELIMINAR CLIENTE --- */}
+      {deleteConfirmId && deleteConfirmCustomer && (
+          <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4 animate-in fade-in duration-200">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-6 text-center animate-in zoom-in-95 duration-200">
+                  <div className="w-14 h-14 bg-[#EF4444]/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Trash2 size={28} className="text-[#EF4444]" />
+                  </div>
+                  <h3 className="font-bold text-lg text-[#1F2937] mb-1">¿Eliminar cliente?</h3>
+                  <p className="text-sm text-[#6B7280] mb-6">
+                      Se eliminará a <span className="font-bold text-[#1F2937]">"{deleteConfirmCustomer.name}"</span> del registro.
+                  </p>
+                  <div className="flex gap-3">
+                      <button
+                          onClick={() => setDeleteConfirmId(null)}
+                          className="flex-1 py-2.5 border border-gray-200 text-[#6B7280] font-bold rounded-xl hover:bg-gray-50 transition-colors"
+                      >
+                          Cancelar
+                      </button>
+                      <button
+                          onClick={confirmDeleteCustomer}
+                          className="flex-1 py-2.5 bg-[#EF4444] text-white font-bold rounded-xl hover:bg-[#EF4444]/90 transition-colors"
+                      >
+                          Eliminar
+                      </button>
+                  </div>
+              </div>
+          </div>
       )}
     </div>
   );

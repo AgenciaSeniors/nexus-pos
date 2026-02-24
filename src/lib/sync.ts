@@ -23,7 +23,6 @@ export function isOnline() {
 export async function resetProcessingItems() {
     const stuckItems = await db.action_queue.where('status').equals('processing').toArray();
     if (stuckItems.length > 0) {
-        console.warn(`⚠️ Recuperando ${stuckItems.length} ítems interrumpidos...`);
         await db.action_queue.where('status').equals('processing').modify({ status: 'pending' });
     }
 }
@@ -81,7 +80,6 @@ async function processItem(item: QueueItem) {
       }
       
       await db.sales.update(sale.id, { sync_status: 'synced' });
-      console.log(`✅ Venta ${sale.id} sincronizada.`);
       break;
     }
 
@@ -251,9 +249,6 @@ async function safeBulkPut<T extends { id: string; sync_status?: string }>(
 
   if (safeItems.length > 0) {
     await table.bulkPut(safeItems);
-    console.log(`✅ ${safeItems.length} registros actualizados desde la nube`);
-  } else {
-    console.log(`🛡️ Se omitieron ${items.length} ítems para proteger cambios locales.`);
   }
 }
 
@@ -265,7 +260,7 @@ async function fetchAll(table: string, businessId: string) {
     let page = 0;
     const size = 1000;
     
-    console.log(`📥 Descargando ${table}...`);
+;
     
     // eslint-disable-next-line no-constant-condition
     while(true) {
@@ -278,8 +273,6 @@ async function fetchAll(table: string, businessId: string) {
         if (!data || data.length === 0) break;
         
         allData.push(...data);
-        console.log(`  ↳ Página ${page + 1}: ${data.length} registros`);
-        
         if (data.length < size) break; // Si bajamos menos del límite, es la última página
         page++;
     }
@@ -291,13 +284,8 @@ async function fetchAll(table: string, businessId: string) {
 // --- FUNCIONES DE SINCRONIZACIÓN (PULL) ---
 
 export async function syncCriticalData(businessId: string) {
-  if (!isOnline()) {
-    console.warn('⚠️ Sin conexión - saltando sync crítico');
-    return;
-  }
-  
-  console.log('🔄 Sincronizando datos críticos...');
-  
+  if (!isOnline()) return;
+
   try {
     const [businessResult, staffResult, registersResult, shiftsResult] = await Promise.all([
       supabase.from('businesses').select('*').eq('id', businessId).single(),
@@ -308,154 +296,122 @@ export async function syncCriticalData(businessId: string) {
 
     if (businessResult.data) {
       await db.settings.put({
-        id: businessResult.data.id, 
+        id: businessResult.data.id,
         name: businessResult.data.name,
         address: businessResult.data.address,
         phone: businessResult.data.phone,
         receipt_message: businessResult.data.receipt_message,
         subscription_expires_at: businessResult.data.subscription_expires_at,
-        status: businessResult.data.status as 'active' | 'suspended' | 'pending', 
-        last_check: new Date().toISOString(), 
+        status: businessResult.data.status as 'active' | 'suspended' | 'pending',
+        last_check: new Date().toISOString(),
         sync_status: 'synced'
       });
-      console.log('✅ Configuración del negocio actualizada');
     }
-    
+
     if (staffResult.data) {
-      // Staff no suele cambiar mucho, reemplazamos
-      await db.staff.clear(); 
+      await db.staff.clear();
       await db.staff.bulkPut(staffResult.data);
-      console.log(`✅ ${staffResult.data.length} empleados cargados`);
     }
-    
+
     if (registersResult.data) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const cleanRegisters = registersResult.data.map(r => ({ ...r, sync_status: 'synced' }));
       await db.cash_registers.bulkPut(cleanRegisters as never);
-      console.log(`✅ ${cleanRegisters.length} cajas registradoras cargadas`);
-    }
-    
-    if (shiftsResult.data && shiftsResult.data.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const shifts = shiftsResult.data.map(s => ({ ...s, sync_status: 'synced' }));
-        await safeBulkPut(db.cash_shifts as never, shifts);
-        console.log(`✅ ${shifts.length} turnos abiertos sincronizados`);
     }
 
-    console.log('✅ Datos críticos sincronizados');
+    if (shiftsResult.data && shiftsResult.data.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const shifts = shiftsResult.data.map(s => ({ ...s, sync_status: 'synced' }));
+      await safeBulkPut(db.cash_shifts as never, shifts);
+    }
   } catch (error) {
-    console.error('❌ Error carga crítica:', error);
+    console.error('Error en syncCriticalData:', error);
   }
 }
 
 // 🚀 OPTIMIZACIÓN: Carga en background sin bloquear la UI
-export async function syncHeavyData(businessId: string) {
-  if (!isOnline()) {
-    console.warn('⚠️ Sin conexión - saltando sync pesado');
-    return;
-  }
-  
-  console.log('📦 Iniciando carga de inventario en segundo plano...');
-  
-  // Usar setTimeout para no bloquear el hilo principal
-  setTimeout(async () => {
-    try {
-      console.log('📥 Descargando productos...');
-      const productsData = await fetchAll('products', businessId);
-      
-      if (productsData.length > 0) {
+// Retorna una Promise que se resuelve cuando ambas cargas terminan
+export function syncHeavyData(businessId: string): Promise<void> {
+  if (!isOnline()) return Promise.resolve();
+
+  const syncProducts = new Promise<void>(resolve => {
+    setTimeout(async () => {
+      try {
+        const productsData = await fetchAll('products', businessId);
+        if (productsData.length > 0) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const cleanProducts = productsData.map(p => ({ ...p, sync_status: 'synced' }));
+          const cleanProducts = productsData.map((p: any) => ({ ...p, sync_status: 'synced' }));
           await safeBulkPut(db.products as never, cleanProducts);
-          console.log(`✅ ${cleanProducts.length} productos sincronizados`);
+        }
+      } catch (error) {
+        console.error('Error descargando productos:', error);
+      } finally {
+        resolve();
       }
-    } catch (error) { 
-        console.error('❌ Error descargando productos:', error); 
-    }
-  }, 200); // 200ms de delay para no bloquear
+    }, 200);
+  });
 
-  // Clientes con más delay (menos críticos)
-  setTimeout(async () => {
-    try {
-      console.log('📥 Descargando clientes...');
-      const customersData = await fetchAll('customers', businessId);
-      
-      if (customersData.length > 0) {
+  const syncCustomers = new Promise<void>(resolve => {
+    setTimeout(async () => {
+      try {
+        const customersData = await fetchAll('customers', businessId);
+        if (customersData.length > 0) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const cleanCustomers = customersData.map(c => ({ ...c, sync_status: 'synced' }));
+          const cleanCustomers = customersData.map((c: any) => ({ ...c, sync_status: 'synced' }));
           await safeBulkPut(db.customers as never, cleanCustomers);
-          console.log(`✅ ${cleanCustomers.length} clientes sincronizados`);
+        }
+      } catch (error) {
+        console.error('Error descargando clientes:', error);
+      } finally {
+        resolve();
       }
-    } catch (error) { 
-        console.error('❌ Error descargando clientes:', error); 
-    }
-  }, 1000); // 1 segundo de delay
+    }, 1000);
+  });
 
-  console.log('📦 Sincronización en segundo plano iniciada (productos y clientes)');
+  return Promise.all([syncProducts, syncCustomers]).then(() => undefined);
 }
 
 // Coordinador principal
 export async function syncBusinessProfile(businessId: string) {
-  console.log('🔄 Sincronización completa iniciada...');
   await syncCriticalData(businessId);
   await syncHeavyData(businessId);
-  console.log('✅ Sincronización completa finalizada');
 }
 
 // --- COMANDOS MANUALES ---
 
 export async function syncPush() {
-    console.log("⬆️ Iniciando Push...");
-    await resetProcessingItems(); 
+    await resetProcessingItems();
     await processQueue();
 }
 
 export async function syncPull() {
-    if (!isOnline()) {
-      console.warn('⚠️ Sin conexión a internet');
-      return;
-    }
-    
-    console.log("⬇️ Iniciando Pull...");
+    if (!isOnline()) return;
+
     const settings = await db.settings.toArray();
-    
     if (settings.length > 0) {
         const businessId = settings[0].id;
-        // Priorizamos la crítica, luego la pesada (en background)
         await syncCriticalData(businessId);
         await syncHeavyData(businessId);
-        console.log("✨ Pull completado.");
-    } else {
-        console.warn('⚠️ No hay configuración de negocio');
     }
 }
 
 export async function syncManualFull() {
     if (!isOnline()) throw new Error("Sin conexión a internet");
-    console.log("🔄 Iniciando Sync Manual...");
-    await syncPush(); // Primero subimos lo nuestro
-    await syncPull(); // Luego bajamos lo nuevo (sin pisar lo pendiente)
-    console.log("✅ Sync Manual Finalizado.");
+    await syncPush();
+    await syncPull();
 }
 
 // Watcher automático
 if (typeof window !== 'undefined') {
     window.addEventListener('online', () => {
-        console.log("🌐 Conexión detectada. Reanudando cola...");
         resetProcessingItems().then(() => processQueue());
     });
-    
-    window.addEventListener('offline', () => {
-        console.log("📴 Sin conexión. Las operaciones se guardarán localmente.");
-    });
-    
+
     // Limpieza inicial
     resetProcessingItems();
-    
-    // Intervalo de seguridad (30s) - solo si hay conexión
-    setInterval(() => { 
-      if (isOnline()) {
-        processQueue();
-      }
+
+    // Intervalo de seguridad cada 30s
+    setInterval(() => {
+      if (isOnline()) processQueue();
     }, 30000);
 }

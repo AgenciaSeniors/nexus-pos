@@ -1,33 +1,34 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Banknote, CreditCard, ArrowRight, X } from 'lucide-react';
+import { Banknote, CreditCard, ArrowRight, X, Smartphone } from 'lucide-react';
+
+type PaymentMethod = 'efectivo' | 'transferencia' | 'tarjeta';
 
 interface PaymentModalProps {
   total: number;
-  onConfirm: (method: 'efectivo' | 'transferencia', tendered: number, change: number) => void;
+  onConfirm: (method: PaymentMethod, tendered: number, change: number) => void;
   onCancel: () => void;
 }
 
 export function PaymentModal({ total, onConfirm, onCancel }: PaymentModalProps) {
-  const [method, setMethod] = useState<'efectivo' | 'transferencia'>('efectivo');
+  const [method, setMethod] = useState<PaymentMethod>('efectivo');
   const [tendered, setTendered] = useState<string>('');
-  
+
   const suggestions = [50, 100, 200, 500, 1000].filter(amount => amount >= total);
 
   const tenderedValue = parseFloat(tendered) || 0;
   const change = tenderedValue - total;
-  const isValid = method === 'transferencia' || (method === 'efectivo' && tenderedValue >= total);
+  const isCashless = method === 'transferencia' || method === 'tarjeta';
+  const isValid = isCashless || (method === 'efectivo' && tenderedValue >= total);
 
-  // CORRECCIÓN 1: Usamos useCallback para "congelar" la función y que no cambie en cada render innecesariamente
   const handleConfirm = useCallback(() => {
     if (!isValid) return;
     onConfirm(
-      method, 
-      method === 'efectivo' ? tenderedValue : total, 
-      method === 'efectivo' ? change : 0
+      method,
+      isCashless ? total : tenderedValue,
+      isCashless ? 0 : change
     );
-  }, [isValid, onConfirm, method, tenderedValue, total, change]);
+  }, [isValid, onConfirm, method, isCashless, tenderedValue, total, change]);
 
-  // CORRECCIÓN 2: Ahora handleConfirm es estable y podemos ponerlo en las dependencias sin miedo
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onCancel();
@@ -54,28 +55,39 @@ export function PaymentModal({ total, onConfirm, onCancel }: PaymentModalProps) 
 
         <div className="p-6 flex-1 overflow-y-auto">
           {/* Selector de Método */}
-          <div className="grid grid-cols-2 gap-3 mb-6">
+          <div className="grid grid-cols-3 gap-2 mb-6">
             <button
-              onClick={() => setMethod('efectivo')}
-              className={`p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${
-                method === 'efectivo' 
-                ? 'border-indigo-600 bg-indigo-50 text-indigo-700' 
+              onClick={() => { setMethod('efectivo'); setTendered(''); }}
+              className={`p-3 rounded-xl border-2 flex flex-col items-center gap-1.5 transition-all ${
+                method === 'efectivo'
+                ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
                 : 'border-slate-100 text-slate-400 hover:bg-slate-50'
               }`}
             >
-              <Banknote size={28} />
-              <span className="font-bold text-sm">Efectivo</span>
+              <Banknote size={24} />
+              <span className="font-bold text-xs">Efectivo</span>
+            </button>
+            <button
+              onClick={() => { setMethod('tarjeta'); setTendered(total.toString()); }}
+              className={`p-3 rounded-xl border-2 flex flex-col items-center gap-1.5 transition-all ${
+                method === 'tarjeta'
+                ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
+                : 'border-slate-100 text-slate-400 hover:bg-slate-50'
+              }`}
+            >
+              <CreditCard size={24} />
+              <span className="font-bold text-xs">Tarjeta</span>
             </button>
             <button
               onClick={() => { setMethod('transferencia'); setTendered(total.toString()); }}
-              className={`p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${
-                method === 'transferencia' 
-                ? 'border-indigo-600 bg-indigo-50 text-indigo-700' 
+              className={`p-3 rounded-xl border-2 flex flex-col items-center gap-1.5 transition-all ${
+                method === 'transferencia'
+                ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
                 : 'border-slate-100 text-slate-400 hover:bg-slate-50'
               }`}
             >
-              <CreditCard size={28} />
-              <span className="font-bold text-sm">Transferencia</span>
+              <Smartphone size={24} />
+              <span className="font-bold text-xs">Transferencia</span>
             </button>
           </div>
 
@@ -124,9 +136,9 @@ export function PaymentModal({ total, onConfirm, onCancel }: PaymentModalProps) 
             </div>
           )}
 
-          {method === 'transferencia' && (
+          {isCashless && (
              <div className="p-4 bg-blue-50 text-blue-800 rounded-xl text-sm">
-                <p>Confirma que has recibido la transferencia por <strong>${total.toFixed(2)}</strong>.</p>
+                <p>Confirma que has recibido el pago de <strong>${total.toFixed(2)}</strong> por {method === 'tarjeta' ? 'tarjeta' : 'transferencia'}.</p>
              </div>
           )}
         </div>

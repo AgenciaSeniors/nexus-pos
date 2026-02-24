@@ -84,9 +84,8 @@ function LoginScreen() {
 
       await supabase.auth.signOut();
       
-      toast.success("Solicitud enviada correctamente.");
-      alert("✅ REGISTRO EXITOSO\n\nTu cuenta ha sido creada y está PENDIENTE de aprobación.\nContacta al administrador para que la active.");
-      
+      toast.success("Solicitud enviada. Tu cuenta está pendiente de aprobación — contacta al administrador para activarla.", { duration: 8000 });
+
       setMode('login');
       setEmail('');
       setPassword('');
@@ -336,9 +335,7 @@ function BusinessApp() {
         await syncCriticalData(data.business_id);
         
         // Paso 2: Carga pesada (Productos, Clientes) -> SEGUNDO PLANO (NO BLOQUEA)
-        syncHeavyData(data.business_id).then(() => {
-            console.log("🔄 Inventario sincronizado en segundo plano");
-        }).catch(err => console.warn("Sync background warning:", err));
+        syncHeavyData(data.business_id).catch(err => console.warn("Sync background warning:", err));
         
         // Entramos rápido a la app
         await db.staff.filter(s => s.business_id !== data.business_id).delete();

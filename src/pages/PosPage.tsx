@@ -38,6 +38,7 @@ export function PosPage() {
 
   // --- ESTADO VISUAL MÓVIL ---
   const [mobileView, setMobileView] = useState<'catalog' | 'cart'>('catalog');
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   const businessId = localStorage.getItem('nexus_business_id');
 
@@ -110,7 +111,7 @@ export function PosPage() {
   };
 
   const clearCart = () => {
-    if(confirm('¿Vaciar carrito?')) setCart([]);
+    setShowClearConfirm(true);
   };
 
   // --- LÓGICA DE ÓRDENES GUARDADAS ---
@@ -125,7 +126,7 @@ export function PosPage() {
                   product_id: i.id, name: i.name, price: i.price, 
                   quantity: i.quantity, cost: i.cost, unit: i.unit 
               })),
-              total: cart.reduce((sum, i) => sum + (i.price * i.quantity), 0),
+              total: currency.calculateTotal(cart),
               customer_id: selectedCustomer?.id,
               customer_name: selectedCustomer?.name
           };
@@ -185,7 +186,7 @@ export function PosPage() {
         else normalizedMethod = 'efectivo';
 
         const saleId = crypto.randomUUID();
-        const total = cart.reduce((sum, i) => sum + (i.price * i.quantity), 0);
+        const total = currency.calculateTotal(cart);
         
         // Preparamos los items de venta
         const saleItems: SaleItem[] = cart.map(i => ({
@@ -276,7 +277,7 @@ export function PosPage() {
     }
   };
 
-  const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const totalAmount = currency.calculateTotal(cart);
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   // --- UI RENDER ---
@@ -542,6 +543,32 @@ export function PosPage() {
       {showPaymentModal && <PaymentModal total={totalAmount} onCancel={() => setShowPaymentModal(false)} onConfirm={handleCheckout} />}
       {showParkedModal && <ParkedOrdersModal onClose={() => setShowParkedModal(false)} onRestore={handleRestoreOrder} />}
       {lastSale && <TicketModal sale={lastSale} onClose={() => { setLastSale(null); setTimeout(() => searchInputRef.current?.focus(), 100); }} />}
+
+      {showClearConfirm && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-xs w-full text-center animate-in zoom-in-95 duration-200">
+            <div className="w-14 h-14 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Trash2 size={28} className="text-state-error" />
+            </div>
+            <h3 className="font-bold text-lg text-text-main mb-1">¿Vaciar carrito?</h3>
+            <p className="text-sm text-text-secondary mb-6">Se eliminarán los {cartCount} artículos seleccionados.</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                className="flex-1 py-2.5 border border-gray-200 text-text-main font-bold rounded-xl hover:bg-gray-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => { setCart([]); setShowClearConfirm(false); }}
+                className="flex-1 py-2.5 bg-state-error text-white font-bold rounded-xl hover:bg-state-error/90 transition-colors"
+              >
+                Vaciar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

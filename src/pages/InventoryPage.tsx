@@ -23,6 +23,7 @@ export function InventoryPage() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [deleteConfirmProduct, setDeleteConfirmProduct] = useState<Product | null>(null);
 
   const [isLoading, setIsLoading] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -128,6 +129,13 @@ export function InventoryPage() {
       try {
           const currentStock = editingProduct.stock;
           const newStock = parseFloat(stockAdjustment.newStock.toString());
+
+          if (isNaN(newStock) || newStock < 0) {
+              toast.error("El stock no puede ser negativo");
+              setIsLoading(false);
+              return;
+          }
+
           const difference = newStock - currentStock;
 
           if (difference === 0) {
@@ -179,8 +187,14 @@ export function InventoryPage() {
       }
   };
 
-  const handleDelete = async (product: Product) => {
-      if (!confirm(`¿Eliminar "${product.name}"?`)) return;
+  const handleDelete = (product: Product) => {
+      setDeleteConfirmProduct(product);
+  };
+
+  const confirmDelete = async () => {
+      if (!deleteConfirmProduct) return;
+      const product = deleteConfirmProduct;
+      setDeleteConfirmProduct(null);
       try {
           const deleted = { ...product, deleted_at: new Date().toISOString(), sync_status: 'pending_update' as const };
           await db.products.put(deleted);
@@ -482,6 +496,35 @@ export function InventoryPage() {
                   </div>
                   <div className="flex-1 overflow-hidden p-0 bg-gray-50">
                       <InventoryHistory productId={editingProduct.id} />
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* --- MODAL 4: CONFIRMACIÓN DE ELIMINACIÓN --- */}
+      {deleteConfirmProduct && (
+          <div className="fixed inset-0 bg-[#0B3B68]/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-6 text-center animate-in zoom-in-95 duration-200">
+                  <div className="w-14 h-14 bg-[#EF4444]/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Trash2 size={28} className="text-[#EF4444]" />
+                  </div>
+                  <h3 className="font-bold text-lg text-[#1F2937] mb-1">¿Eliminar producto?</h3>
+                  <p className="text-sm text-[#6B7280] mb-6">
+                      Se eliminará <span className="font-bold text-[#1F2937]">"{deleteConfirmProduct.name}"</span>. Esta acción se puede revertir contactando soporte.
+                  </p>
+                  <div className="flex gap-3">
+                      <button
+                          onClick={() => setDeleteConfirmProduct(null)}
+                          className="flex-1 py-2.5 border border-gray-200 text-[#6B7280] font-bold rounded-xl hover:bg-gray-50 transition-colors"
+                      >
+                          Cancelar
+                      </button>
+                      <button
+                          onClick={confirmDelete}
+                          className="flex-1 py-2.5 bg-[#EF4444] text-white font-bold rounded-xl hover:bg-[#EF4444]/90 transition-colors"
+                      >
+                          Eliminar
+                      </button>
                   </div>
               </div>
           </div>
