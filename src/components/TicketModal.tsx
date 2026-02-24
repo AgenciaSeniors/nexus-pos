@@ -27,8 +27,15 @@ export function TicketModal({ sale, onClose }: TicketModalProps) {
   // Nota: Esto es visual. La lógica real de guardado ya ocurrió en PosPage.
   const pointsEarned = sale.customer_id ? Math.floor(sale.total / 10) : 0;
 
-  const handlePrint = () => {
-    window.print();
+ const handlePrint = () => {
+    if (window.electronAPI) {
+      // ✅ MODO ELECTRON: Le pedimos al proceso principal que imprima
+      // (Esto permitirá impresión silenciosa y sin diálogos molestos)
+      window.electronAPI.printTicket();
+    } else {
+      // 🌐 MODO WEB: Usamos el diálogo normal del navegador
+      window.print();
+    }
   };
 
   return (
