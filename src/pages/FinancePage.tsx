@@ -95,7 +95,6 @@ export function FinancePage() {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const cutoffDate = thirtyDaysAgo.toISOString();
     
-    console.log('📅 Cargando ventas desde:', cutoffDate);
     return await db.sales
         .where('business_id').equals(businessId)
         .filter(s => s.date >= cutoffDate)
@@ -103,8 +102,9 @@ export function FinancePage() {
   }, [businessId, viewMode]) || EMPTY_ARRAY;
 
   // Detectar cuando los datos críticos están listos
+  // shiftData se queda undefined si no hay turno abierto, así que basta con que activeShift ya no sea undefined
   useEffect(() => {
-    if (activeShift !== undefined && shiftData !== undefined) {
+    if (activeShift !== undefined) {
       setIsInitialLoad(false);
     }
   }, [activeShift, shiftData]);
