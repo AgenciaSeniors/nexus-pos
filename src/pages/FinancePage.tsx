@@ -6,6 +6,7 @@ import { addToQueue, syncPull, syncPush } from '../lib/sync';
 import { logAuditAction } from '../lib/audit';
 import { currency } from '../lib/currency';
 import { TicketModal } from '../components/TicketModal';
+import { CashShiftModal } from '../components/CashShiftModal';
 import { toast } from 'sonner';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -41,6 +42,7 @@ export function FinancePage() {
   const [isClosing, setIsClosing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [cashShiftModal, setCashShiftModal] = useState<'open' | 'close' | 'movement' | null>(null);
 
   const today = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState(today);
@@ -51,15 +53,12 @@ export function FinancePage() {
   const activeShift = useLiveQuery(async () => {
     if (!businessId) return null;
     const shift = await db.cash_shifts.where({ business_id: businessId, status: 'open' }).first();
-    console.log('🔄 ActiveShift cargado:', shift?.id || 'ninguno');
     return shift;
   }, [businessId]);
 
   const shiftData = useLiveQuery(async () => {
     if (!activeShift || !businessId) return null;
-    
-    console.log('📊 Cargando datos del turno:', activeShift.id);
-    
+
     // Obtenemos ventas y movimientos asociados a ESTE turno específico
     const [sales, movements] = await Promise.all([
       db.sales
@@ -74,7 +73,6 @@ export function FinancePage() {
         .toArray()
     ]);
 
-    console.log('📦 Datos cargados - Ventas:', sales.length, 'Movimientos:', movements.length);
     return { sales, movements };
   }, [activeShift, businessId]);
 
@@ -111,83 +109,32 @@ export function FinancePage() {
     }
   }, [activeShift, shiftData]);
 
-  // --- CÁLCULOS (BLINDADOS CON LOGS DE DEPURACIÓN) ---
+  // --- CÁLCULOS ---
   const shiftStats = useMemo(() => {
-    console.log('🔢 Calculando shiftStats...');
-    
-    // VALIDACIÓN ROBUSTA
-    if (!activeShift) {
-        console.warn('⚠️ No hay turno activo');
-        return null;
-    }
-    
-    if (!shiftData) {
-        console.warn('⚠️ shiftData es null');
-        return null;
-    }
-    
-    if (!shiftData.sales || !shiftData.movements) {
-        console.warn('⚠️ Datos incompletos:', shiftData);
-        return null;
-    }
-    
-    // Logs de depuración
-    console.log('✅ Datos válidos para cálculo');
-    console.log('- Turno ID:', activeShift.id);
-    console.log('- Ventas:', shiftData.sales.length);
-    console.log('- Movimientos:', shiftData.movements.length);
-    
-    // 1. Base Inicial (Forzamos número)
-    const startAmount = safeFloat(activeShift.start_amount);
-    console.log('💵 Base Inicial:', startAmount, '(tipo:', typeof activeShift.start_amount, ')');
-    
-    // 2. Total Global de Ventas (Suma de todo, sin importar método)
-    const totalSales = shiftData.sales.reduce((sum, s) => {
-        const val = safeFloat(s.total);
-        if (val > 0) console.log('  📝 Venta:', s.id.slice(0, 8), '→', val, '(método:', s.payment_method, ')');
-        return sum + val;
-    }, 0);
-    console.log('💰 Total Ventas (todos los métodos):', totalSales);
+    if (!activeShift || !shiftData?.sales || !shiftData?.movements) return null;
 
-    // 3. Ventas SOLO en Efectivo (Para el arqueo de caja física)
-    // Filtramos por método 'efectivo' o 'mixto' (asumiendo que mixto toca caja)
+    // 1. Base Inicial
+    const startAmount = safeFloat(activeShift.start_amount);
+
+    // 2. Total Global de Ventas (todos los métodos)
+    const totalSales = shiftData.sales.reduce((sum, s) => sum + safeFloat(s.total), 0);
+
+    // 3. Ventas en Efectivo (solo 'efectivo'; mixto se contabiliza aparte)
     const cashSales = shiftData.sales
-      .filter(s => {
-          const method = s.payment_method?.toLowerCase() || 'efectivo'; // Default a efectivo si es nulo
-          const isCash = method === 'efectivo' || method === 'mixto';
-          if (isCash) console.log('  💵 Venta en efectivo:', s.id.slice(0, 8), '→', safeFloat(s.total));
-          return isCash;
-      })
-      .reduce((sum, s) => sum + safeFloat(s.total), 0); 
-    
-    console.log('🟢 Ventas en Efectivo:', cashSales);
-    
+      .filter(s => s.payment_method === 'efectivo')
+      .reduce((sum, s) => sum + safeFloat(s.total), 0);
+
     // 4. Movimientos manuales
     const cashIn = shiftData.movements
         .filter(m => m.type === 'in')
-        .reduce((sum, m) => {
-            const val = safeFloat(m.amount);
-            if (val > 0) console.log('  ➕ Ingreso:', m.reason, '→', val);
-            return sum + val;
-        }, 0);
-        
+        .reduce((sum, m) => sum + safeFloat(m.amount), 0);
+
     const cashOut = shiftData.movements
         .filter(m => m.type === 'out')
-        .reduce((sum, m) => {
-            const val = safeFloat(m.amount);
-            if (val > 0) console.log('  ➖ Retiro:', m.reason, '→', val);
-            return sum + val;
-        }, 0);
+        .reduce((sum, m) => sum + safeFloat(m.amount), 0);
 
-    console.log('🔼 Ingresos manuales:', cashIn);
-    console.log('🔽 Retiros manuales:', cashOut);
-
-    // 5. Cálculo final: Base + Ventas(Efectivo) + Entradas - Salidas
+    // 5. Efectivo esperado: Base + Ventas efectivo + Ingresos - Retiros
     const expectedCash = (startAmount + cashSales + cashIn) - cashOut;
-    
-    console.log('🧮 Fórmula: ', startAmount, '+', cashSales, '+', cashIn, '-', cashOut);
-    console.log('💰💰💰 EFECTIVO ESPERADO:', expectedCash);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     return { startAmount, cashSales, totalSales, cashIn, cashOut, expectedCash };
   }, [activeShift, shiftData]);
@@ -859,6 +806,20 @@ export function FinancePage() {
       )}
 
       {selectedTicket && <TicketModal sale={selectedTicket} onClose={() => setSelectedTicket(null)} />}
+
+      {cashShiftModal && (
+        <CashShiftModal
+          mode={cashShiftModal}
+          activeShift={activeShift ?? undefined}
+          currentStaff={currentStaff}
+          expectedCash={shiftStats?.expectedCash ?? 0}
+          onClose={() => setCashShiftModal(null)}
+          onSuccess={() => {
+            setCashShiftModal(null);
+            setIsClosing(false);
+          }}
+        />
+      )}
     </div>
   );
 }
