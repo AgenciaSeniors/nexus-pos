@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useOutletContext, useNavigate } from 'react-router-dom'; // ✅ Hook useNavigate agregado
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Product, type Sale, type ParkedOrder, type SaleItem, type Staff, type Customer } from '../lib/db';
 import { addToQueue, syncPush } from '../lib/sync';
@@ -21,6 +21,7 @@ interface CartItem extends Product {
 
 export function PosPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
+  const navigate = useNavigate(); // ✅ Inicializamos el hook de navegación
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // --- ESTADOS DE LA VENTA ---
@@ -175,7 +176,6 @@ export function PosPage() {
 
     try {
         // 2. PREPARACIÓN DE DATOS (Síncrono - Fuera de la transacción)
-        // Normalizamos el método de pago antes de entrar a la lógica crítica
         let normalizedMethod: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto' = 'efectivo';
         const m = methodInput.toLowerCase().trim();
         
@@ -216,14 +216,12 @@ export function PosPage() {
         };
 
         // 3. TRANSACCIÓN ATÓMICA (Dexie)
-        // Usamos 'rw' (lectura/escritura) en todas las tablas involucradas
         await db.transaction('rw', [db.sales, db.products, db.movements, db.action_queue, db.audit_logs, db.customers], async () => {
             
             // A. Guardar la Venta
             await db.sales.add(sale);
             
-            // B. Actualizar Stock (PARALELIZADO CON PROMISE.ALL)
-            // Esto evita que la transacción se "duerma" esperando iteración por iteración
+            // B. Actualizar Stock
             const updateStockPromises = cart.map(async (item) => {
                 const product = await db.products.get(item.id);
                 if (product) {
@@ -235,10 +233,9 @@ export function PosPage() {
             });
             await Promise.all(updateStockPromises);
 
-            // C. Puntos de fidelidad (Si aplica)
+            // C. Puntos de fidelidad
             if (selectedCustomer?.id) {
                 const pointsEarned = Math.floor(total / 10);
-                // Leemos el cliente fresco dentro de la transacción para evitar condiciones de carrera
                 const freshCustomer = await db.customers.get(selectedCustomer.id);
                 
                 if (freshCustomer) {
@@ -250,36 +247,30 @@ export function PosPage() {
             }
 
             // D. Cola de Sincronización y Auditoría
-            // Ambas operaciones son locales en Dexie y deben ser parte de la atomicidad
             await addToQueue('SALE', { sale, items: saleItems });
             await logAuditAction('SALE', { total: sale.total, method: sale.payment_method }, currentStaff);
         });
 
-        // 4. ACTUALIZACIÓN DE ESTADO Y UI (Fuera de la transacción)
-        // Si llegamos aquí, la transacción fue exitosa (Commit implícito)
+        // 4. ACTUALIZACIÓN DE ESTADO Y UI
         setLastSale(sale);
         setCart([]);
         setSelectedCustomer(null);
         setMobileView('catalog');
         toast.success(`Venta completada. Cambio: ${currency.format(sale.change || 0)}`);
         
-        // 5. SINCRONIZACIÓN DE RED (Background)
-        // Disparamos el push sin 'await' para no bloquear la UI del usuario
+        // 5. SINCRONIZACIÓN DE RED
         syncPush().catch(error => {
             console.error("⚠️ La venta se guardó localmente, pero falló el sync inmediato:", error);
-            // No mostramos error al usuario porque la venta YA es válida localmente ("Offline-First")
         });
 
     } catch (error) {
         console.error("❌ Error crítico en transacción de venta:", error);
         
-        // Manejo específico de errores de Dexie
         if (error instanceof Error && (error.name === 'TransactionInactiveError' || error.name === 'AbortError')) {
              toast.error("Error de concurrencia en base de datos. Por favor intente de nuevo.");
         } else {
              toast.error("Error al procesar la venta. Verifique el stock.");
         }
-        // Nota: Como la transacción falló, Dexie hace rollback automático de todos los cambios (stock, venta, puntos)
     } finally {
         setIsCheckout(false);
     }
@@ -334,10 +325,24 @@ export function PosPage() {
 
         {/* Rejilla de Productos */}
         <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-background scroll-smooth">
+            {/* ✅ ALERTA DE CAJA CERRADA MEJORADA CON BOTÓN */}
             {!activeShift && (
-                <div className="mb-6 p-4 bg-state-warning/10 border border-state-warning rounded-xl flex flex-col md:flex-row items-center justify-center gap-2 text-state-warning font-bold animate-pulse text-center font-heading">
-                    <Lock size={20}/>
-                    <span>ATENCIÓN: La caja está cerrada. Debes abrir un turno para vender.</span>
+                <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm animate-in slide-in-from-top-2">
+                    <div className="flex items-center gap-3 text-amber-700">
+                        <div className="p-2 bg-amber-100 rounded-full">
+                            <Lock size={20} />
+                        </div>
+                        <div>
+                            <p className="font-bold font-heading">La caja está cerrada</p>
+                            <p className="text-xs font-body opacity-90">Debes abrir un turno para comenzar a vender.</p>
+                        </div>
+                    </div>
+                    <button 
+                        onClick={() => navigate('/finance')}
+                        className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold rounded-lg transition-colors shadow-md active:scale-95 whitespace-nowrap"
+                    >
+                        ABRIR CAJA AHORA
+                    </button>
                 </div>
             )}
 
