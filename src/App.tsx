@@ -341,11 +341,13 @@ function BusinessApp() {
         await db.staff.filter(s => s.business_id !== data.business_id).delete();
         await db.staff.put(adminStaff);
 
-        lastLoadedUserId.current = userId; 
-        setCurrentStaff(adminStaff); 
+        lastLoadedUserId.current = userId;
+        setCurrentStaff(adminStaff);
       }
     } catch (error: unknown) {
       console.error("Error perfil:", error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -362,35 +364,42 @@ function BusinessApp() {
   useEffect(() => {
     const initSession = async () => {
       try {
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Tiempo de espera de red agotado')), 30000)
+        // Timeout solo para obtener la sesión (5s es suficiente, Supabase responde rápido)
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Tiempo de espera de red agotado')), 5000)
         );
 
-        const { data, error } = await Promise.race([
-          supabase.auth.getSession(),
-          timeoutPromise
-        ]) as any;
+        let session = null;
+        try {
+          const { data, error } = await Promise.race([
+            supabase.auth.getSession(),
+            timeoutPromise
+          ]) as any;
+          if (!error) session = data?.session ?? null;
+        } catch {
+          // getSession tardó o falló — intentar con sesión local cacheada
+          const localBiz = localStorage.getItem('nexus_business_id');
+          if (localBiz) {
+            toast.info("Conexión lenta, entrando con sesión guardada...");
+          }
+        }
 
-        if (error) throw error;
-
-        if (data?.session) {
-          setSession(data.session);
-          await fetchProfile(data.session.user.id).catch(err => {
-             console.error("No se pudo cargar perfil (posible modo offline):", err);
+        if (session) {
+          setSession(session);
+          // fetchProfile tiene su propio manejo de errores, no bloqueamos el loading
+          fetchProfile(session.user.id).catch(err => {
+            console.error("No se pudo cargar perfil (posible modo offline):", err);
           });
         } else {
           setSession(null);
           setCurrentStaff(null);
           localStorage.removeItem('nexus_business_id');
+          setLoading(false);
         }
 
       } catch (error) {
-        console.error("🔴 Error crítico o Timeout al iniciar:", error);
+        console.error("🔴 Error crítico al iniciar:", error);
         setSession(null);
-        // Intentar recuperar sesión local si falla red
-        const localBiz = localStorage.getItem('nexus_business_id');
-        if(localBiz) toast.error("Modo Offline: Verifica tu conexión");
-      } finally {
         setLoading(false);
       }
     };
