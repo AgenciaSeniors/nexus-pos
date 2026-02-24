@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { useOutletContext, useNavigate } from 'react-router-dom'; // ✅ Hook useNavigate agregado
+import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Product, type Sale, type ParkedOrder, type SaleItem, type Staff, type Customer } from '../lib/db';
 import { addToQueue, syncPush } from '../lib/sync';
@@ -21,7 +21,6 @@ interface CartItem extends Product {
 
 export function PosPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
-  const navigate = useNavigate(); // ✅ Inicializamos el hook de navegación
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // --- ESTADOS DE LA VENTA ---
@@ -40,30 +39,42 @@ export function PosPage() {
   const [mobileView, setMobileView] = useState<'catalog' | 'cart'>('catalog');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
-  const businessId = localStorage.getItem('nexus_business_id');
+  // --- FUNCIÓN DE RECUPERACIÓN DE ID ROBUSTA ---
+  const getTargetId = async () => {
+    let bId = localStorage.getItem('nexus_business_id');
+    if (!bId) {
+        const settings = await db.settings.toArray();
+        if (settings.length > 0) {
+            bId = settings[0].id;
+            localStorage.setItem('nexus_business_id', bId);
+        }
+    }
+    return bId;
+  };
 
   // --- CARGA DE DATOS ---
   const products = useLiveQuery(async () => {
-    if (!businessId) return [];
+    const bId = await getTargetId();
+    if (!bId) return [];
     return await db.products
-        .where('business_id').equals(businessId)
+        .where('business_id').equals(bId)
         .filter(p => !p.deleted_at && p.stock > 0)
         .reverse()
         .sortBy('name');
-  }, [businessId]) || [];
+  }, []) || [];
 
   const activeShift = useLiveQuery(async () => {
-    if (!businessId) return null;
-    // Aseguramos obtener el turno abierto correcto
-    return await db.cash_shifts
-        .where({ business_id: businessId, status: 'open' })
-        .first();
-  }, [businessId]);
+    const bId = await getTargetId();
+    if (!bId) return null;
+    const shift = await db.cash_shifts.where({ business_id: bId, status: 'open' }).first();
+    return shift || null;
+  }, []);
 
   const parkedCount = useLiveQuery(async () => {
-      if (!businessId) return 0;
-      return await db.parked_orders.where('business_id').equals(businessId).count();
-  }, [businessId]) || 0;
+      const bId = await getTargetId();
+      if (!bId) return 0;
+      return await db.parked_orders.where('business_id').equals(bId).count();
+  }, []) || 0;
 
   // --- FILTROS ---
   const categories = ['Todo', ...new Set(products.map(p => p.category || 'General'))];
@@ -116,11 +127,12 @@ export function PosPage() {
 
   // --- LÓGICA DE ÓRDENES GUARDADAS ---
   const handleParkOrder = async () => {
-      if (cart.length === 0 || !businessId) return;
+      const bId = await getTargetId();
+      if (cart.length === 0 || !bId) return;
       try {
           const parked: ParkedOrder = {
               id: crypto.randomUUID(),
-              business_id: businessId,
+              business_id: bId,
               date: new Date().toISOString(),
               items: cart.map(i => ({ 
                   product_id: i.id, name: i.name, price: i.price, 
@@ -135,8 +147,10 @@ export function PosPage() {
           setSelectedCustomer(null);
           setMobileView('catalog');
           toast.success("Orden guardada en pendientes");
-      } catch (e) {console.error(e);
-        toast.error("Error al guardar orden"); }
+      } catch (e) {
+          console.error(e);
+          toast.error("Error al guardar orden"); 
+      }
   };
 
   const handleRestoreOrder = async (order: ParkedOrder) => {
@@ -167,16 +181,17 @@ export function PosPage() {
       }
   };
 
-  // --- PROCESAMIENTO DE VENTA (CORE FIX) ---
+  // --- PROCESAMIENTO DE VENTA ---
  const handleCheckout = async (methodInput: string, tendered: number, change: number) => {
-    // 1. VALIDACIÓN PREVIA (Rápida, sin tocar DB)
     if (!activeShift || !activeShift.id) return toast.error("Caja cerrada o turno inválido");
     
     setIsCheckout(true);
     setShowPaymentModal(false);
 
     try {
-        // 2. PREPARACIÓN DE DATOS (Síncrono - Fuera de la transacción)
+        const bId = await getTargetId();
+        if (!bId) throw new Error("Falta ID de negocio");
+
         let normalizedMethod: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto' = 'efectivo';
         const m = methodInput.toLowerCase().trim();
         
@@ -188,7 +203,6 @@ export function PosPage() {
         const saleId = crypto.randomUUID();
         const total = currency.calculateTotal(cart);
         
-        // Preparamos los items de venta
         const saleItems: SaleItem[] = cart.map(i => ({
             product_id: i.id,
             name: i.name,
@@ -198,14 +212,13 @@ export function PosPage() {
             unit: i.unit
         }));
 
-        // Construimos el objeto de venta completo
         const sale: Sale = {
             id: saleId,
-            business_id: businessId!,
+            business_id: bId,
             date: new Date().toISOString(),
-            shift_id: activeShift.id, // Vinculación crítica al turno
-            staff_id: currentStaff.id,
-            staff_name: currentStaff.name,
+            shift_id: activeShift.id, 
+            staff_id: currentStaff?.id || 'admin',
+            staff_name: currentStaff?.name || 'Cajero',
             total: total,
             payment_method: normalizedMethod,
             amount_tendered: tendered,
@@ -216,13 +229,11 @@ export function PosPage() {
             sync_status: 'pending_create'
         };
 
-        // 3. TRANSACCIÓN ATÓMICA (Dexie)
+        const staffPayload = { id: sale.staff_id, name: sale.staff_name, business_id: bId };
+
         await db.transaction('rw', [db.sales, db.products, db.movements, db.action_queue, db.audit_logs, db.customers], async () => {
-            
-            // A. Guardar la Venta
             await db.sales.add(sale);
             
-            // B. Actualizar Stock
             const updateStockPromises = cart.map(async (item) => {
                 const product = await db.products.get(item.id);
                 if (product) {
@@ -234,7 +245,6 @@ export function PosPage() {
             });
             await Promise.all(updateStockPromises);
 
-            // C. Puntos de fidelidad
             if (selectedCustomer?.id) {
                 const pointsEarned = Math.floor(total / 10);
                 const freshCustomer = await db.customers.get(selectedCustomer.id);
@@ -247,21 +257,18 @@ export function PosPage() {
                 }
             }
 
-            // D. Cola de Sincronización y Auditoría
             await addToQueue('SALE', { sale, items: saleItems });
-            await logAuditAction('SALE', { total: sale.total, method: sale.payment_method }, currentStaff);
+            await logAuditAction('SALE', { total: sale.total, method: sale.payment_method }, staffPayload as any);
         });
 
-        // 4. ACTUALIZACIÓN DE ESTADO Y UI
         setLastSale(sale);
         setCart([]);
         setSelectedCustomer(null);
         setMobileView('catalog');
         toast.success(`Venta completada. Cambio: ${currency.format(sale.change || 0)}`);
         
-        // 5. SINCRONIZACIÓN DE RED
         syncPush().catch(error => {
-            console.error("⚠️ La venta se guardó localmente, pero falló el sync inmediato:", error);
+            console.error("⚠️ Sync background falló:", error);
         });
 
     } catch (error) {
@@ -326,27 +333,6 @@ export function PosPage() {
 
         {/* Rejilla de Productos */}
         <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-background scroll-smooth">
-            {/* ✅ ALERTA DE CAJA CERRADA MEJORADA CON BOTÓN */}
-            {!activeShift && (
-                <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm animate-in slide-in-from-top-2">
-                    <div className="flex items-center gap-3 text-amber-700">
-                        <div className="p-2 bg-amber-100 rounded-full">
-                            <Lock size={20} />
-                        </div>
-                        <div>
-                            <p className="font-bold font-heading">La caja está cerrada</p>
-                            <p className="text-xs font-body opacity-90">Debes abrir un turno para comenzar a vender.</p>
-                        </div>
-                    </div>
-                    <button 
-                        onClick={() => navigate('/finance')}
-                        className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold rounded-lg transition-colors shadow-md active:scale-95 whitespace-nowrap"
-                    >
-                        ABRIR CAJA AHORA
-                    </button>
-                </div>
-            )}
-
             {filteredProducts.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-text-secondary opacity-50 py-10">
                     <Package size={64} className="mb-4 stroke-1"/>

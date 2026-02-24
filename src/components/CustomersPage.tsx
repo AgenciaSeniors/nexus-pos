@@ -24,12 +24,11 @@ export function CustomersPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-  const deleteConfirmCustomer = customers.find(c => c.id === deleteConfirmId) ?? null;
 
   const [formData, setFormData] = useState({ name: '', phone: '', email: '', address: '' });
   const [pointsAdjustment, setPointsAdjustment] = useState({ amount: 0, reason: '' });
 
-  // Carga de clientes (Optimizado para no traer borrados)
+  // 1. PRIMERO cargamos los clientes
   const customers = useLiveQuery(async () => {
     if (!businessId) return [];
     return await db.customers
@@ -39,7 +38,10 @@ export function CustomersPage() {
       .sortBy('created_at');
   }, [businessId]) || [];
 
-  // Historial del cliente seleccionado (Cálculo en memoria para evitar índices complejos)
+  // 2. DESPUÉS buscamos el cliente a eliminar (ahora sí existe "customers")
+  const deleteConfirmCustomer = customers.find(c => c.id === deleteConfirmId) ?? null;
+
+  // Historial del cliente seleccionado
   const customerHistory = useLiveQuery(async () => {
       if (!selectedCustomer || !businessId) return { sales: [], totalSpent: 0, lastVisit: null };
       
@@ -57,7 +59,7 @@ export function CustomersPage() {
       return { sales, totalSpent, lastVisit };
   }, [selectedCustomer, businessId]);
 
-  // Filtrado en cliente (Rápido para listas < 1000 items)
+  // Filtrado en cliente
   const filteredCustomers = customers.filter(c => 
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (c.phone && c.phone.includes(searchTerm))

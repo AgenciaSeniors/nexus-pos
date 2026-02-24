@@ -78,9 +78,8 @@ export function SuperAdminLogin() {
 
         if (error) throw error;
 
-        // Verificar rol
+        // Verificar rol y forzar redirección
         if (data.user) {
-            // CORRECCIÓN 1: Eliminamos 'profileError' de la destructuración porque no se usaba
             const { data: profile } = await supabase
                 .from('profiles')
                 .select('is_super_admin')
@@ -89,20 +88,24 @@ export function SuperAdminLogin() {
             
             if (profile?.is_super_admin) {
                 toast.success(`Bienvenido, Socio Experto`);
-                navigate('/super-panel');
+                // Esperamos medio segundo para asegurar que la sesión se guardó localmente
+                setTimeout(() => {
+                    window.location.replace('/super-panel');
+                }, 500);
             } else {
                 toast.success(`Sesión iniciada`);
-                navigate('/');
+                // Esperamos medio segundo para asegurar que la sesión se guardó localmente
+                setTimeout(() => {
+                    window.location.replace('/');
+                }, 500);
             }
         }
       }
     } catch (error) {
-      // CORRECCIÓN 2: Quitamos ': any' y manejamos el tipo de error de forma segura
       console.error(error);
       const errorMessage = error instanceof Error ? error.message : "Error en la autenticación";
       toast.error(errorMessage);
-    } finally {
-      setLoading(false);
+      setLoading(false); // Solo quitamos el loading si hay error
     }
   };
 

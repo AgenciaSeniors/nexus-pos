@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff } from '../lib/db';
@@ -6,7 +6,6 @@ import { addToQueue, syncPull, syncPush } from '../lib/sync';
 import { logAuditAction } from '../lib/audit';
 import { currency } from '../lib/currency';
 import { TicketModal } from '../components/TicketModal';
-import { CashShiftModal } from '../components/CashShiftModal';
 import { toast } from 'sonner';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -22,9 +21,6 @@ import {
 const EMPTY_ARRAY: never[] = [];
 
 // --- HELPER PARA BLINDAR NÚMEROS ---
-// Convierte cualquier valor (string, null, undefined) a un número flotante válido.
-// Si falla, devuelve 0 para no romper las sumas.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const safeFloat = (val: any): number => {
   const num = parseFloat(val);
   return isNaN(num) ? 0 : num;
@@ -32,108 +28,78 @@ const safeFloat = (val: any): number => {
 
 export function FinancePage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
-  const businessId = localStorage.getItem('nexus_business_id');
 
-  // --- ESTADOS ---
   const [viewMode, setViewMode] = useState<'control' | 'daily' | 'trends' | 'closing'>('control');
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
   const [movementType, setMovementType] = useState<'in' | 'out' | null>(null);
   const [isClosing, setIsClosing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [isInitialLoad, setIsInitialLoad] = useState(true);
-  const [cashShiftModal, setCashShiftModal] = useState<'open' | 'close' | 'movement' | null>(null);
 
   const today = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState(today);
   const [selectedTicket, setSelectedTicket] = useState<Sale | null>(null);
   const [trendFilter, setTrendFilter] = useState<'week' | 'month'>('week');
 
-  // --- DATOS ---
+  // 1. CARGA DE TURNO (CORREGIDA PARA NO QUEDARSE EN INFINITO)
   const activeShift = useLiveQuery(async () => {
-    if (!businessId) return null;
-    const shift = await db.cash_shifts.where({ business_id: businessId, status: 'open' }).first();
-    return shift;
-  }, [businessId]);
+    let bId = localStorage.getItem('nexus_business_id');
+    if (!bId) {
+        const settings = await db.settings.toArray();
+        if (settings.length > 0) bId = settings[0].id;
+    }
+    if (!bId) return null; // Retorna null explícito si no hay ID
+    
+    // El || null fuerza a Dexie a no devolver 'undefined' si está vacío
+    const shift = await db.cash_shifts.where({ business_id: bId, status: 'open' }).first();
+    return shift || null; 
+  }, []);
 
+  // 2. CARGA DE DATOS DEL TURNO
   const shiftData = useLiveQuery(async () => {
-    if (!activeShift || !businessId) return null;
+    if (activeShift === undefined) return undefined; // Espera a que termine la query 1
+    if (activeShift === null) return null; // No hay turno
 
-    // Obtenemos ventas y movimientos asociados a ESTE turno específico
+    const bId = activeShift.business_id;
     const [sales, movements] = await Promise.all([
-      db.sales
-        .where('shift_id')
-        .equals(activeShift.id)
-        .filter(s => s.business_id === businessId)
-        .toArray(),
-      db.cash_movements
-        .where('shift_id')
-        .equals(activeShift.id)
-        .filter(m => m.business_id === businessId)
-        .toArray()
+      db.sales.where('shift_id').equals(activeShift.id).filter(s => s.business_id === bId).toArray(),
+      db.cash_movements.where('shift_id').equals(activeShift.id).filter(m => m.business_id === bId).toArray()
     ]);
-
     return { sales, movements };
-  }, [activeShift, businessId]);
+  }, [activeShift]);
 
   const products = useLiveQuery<Product[]>(async () => {
-    if (!businessId) return [];
-    return await db.products.where('business_id').equals(businessId).toArray();
-  }, [businessId]) || EMPTY_ARRAY;
+    let bId = localStorage.getItem('nexus_business_id');
+    if (!bId) return [];
+    return await db.products.where('business_id').equals(bId).toArray();
+  }, []) || EMPTY_ARRAY;
 
-  // OPTIMIZACIÓN: Solo cargar ventas de los últimos 30 días para no sobrecargar
   const allSales = useLiveQuery<Sale[]>(async () => {
-    if (!businessId) return [];
+    let bId = localStorage.getItem('nexus_business_id');
+    if (!bId) return [];
+    if (viewMode !== 'daily' && viewMode !== 'trends' && viewMode !== 'closing') return [];
     
-    // Solo cargar si estamos en vista daily o trends
-    if (viewMode !== 'daily' && viewMode !== 'trends' && viewMode !== 'closing') {
-      return [];
-    }
-    
-    // Cargar solo últimos 30 días
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const cutoffDate = thirtyDaysAgo.toISOString();
     
-    return await db.sales
-        .where('business_id').equals(businessId)
-        .filter(s => s.date >= cutoffDate)
-        .toArray();
-  }, [businessId, viewMode]) || EMPTY_ARRAY;
+    return await db.sales.where('business_id').equals(bId).filter(s => s.date >= cutoffDate).toArray();
+  }, [viewMode]) || EMPTY_ARRAY;
 
-  // Detectar cuando los datos críticos están listos
-  // shiftData se queda undefined si no hay turno abierto, así que basta con que activeShift ya no sea undefined
-  useEffect(() => {
-    if (activeShift !== undefined) {
-      setIsInitialLoad(false);
-    }
-  }, [activeShift, shiftData]);
-
-  // --- CÁLCULOS ---
   const shiftStats = useMemo(() => {
-    if (!activeShift || !shiftData?.sales || !shiftData?.movements) return null;
-
-    // 1. Base Inicial
+    if (!activeShift || !shiftData || !shiftData.sales || !shiftData.movements) return null;
+    
     const startAmount = safeFloat(activeShift.start_amount);
-
-    // 2. Total Global de Ventas (todos los métodos)
     const totalSales = shiftData.sales.reduce((sum, s) => sum + safeFloat(s.total), 0);
-
-    // 3. Ventas en Efectivo (solo 'efectivo'; mixto se contabiliza aparte)
     const cashSales = shiftData.sales
-      .filter(s => s.payment_method === 'efectivo')
-      .reduce((sum, s) => sum + safeFloat(s.total), 0);
-
-    // 4. Movimientos manuales
-    const cashIn = shiftData.movements
-        .filter(m => m.type === 'in')
-        .reduce((sum, m) => sum + safeFloat(m.amount), 0);
-
-    const cashOut = shiftData.movements
-        .filter(m => m.type === 'out')
-        .reduce((sum, m) => sum + safeFloat(m.amount), 0);
-
-    // 5. Efectivo esperado: Base + Ventas efectivo + Ingresos - Retiros
+      .filter(s => {
+          const method = s.payment_method?.toLowerCase() || 'efectivo';
+          return method === 'efectivo' || method === 'mixto';
+      })
+      .reduce((sum, s) => sum + safeFloat(s.total), 0); 
+    
+    const cashIn = shiftData.movements.filter(m => m.type === 'in').reduce((sum, m) => sum + safeFloat(m.amount), 0);
+    const cashOut = shiftData.movements.filter(m => m.type === 'out').reduce((sum, m) => sum + safeFloat(m.amount), 0);
     const expectedCash = (startAmount + cashSales + cashIn) - cashOut;
 
     return { startAmount, cashSales, totalSales, cashIn, cashOut, expectedCash };
@@ -161,21 +127,16 @@ export function FinancePage() {
     salesForDay.forEach((sale) => {
       const saleTotal = safeFloat(sale.total);
       revenue += saleTotal;
-      
       const saleDate = new Date(sale.date);
       if (!isNaN(saleDate.getTime())) {
           const h = saleDate.getHours().toString().padStart(2, '0') + ":00";
           if (hourlyCounts[h] !== undefined) hourlyCounts[h] += saleTotal;
       }
-
       sale.items.forEach((item) => {
         const itemQty = safeFloat(item.quantity);
         const itemPrice = safeFloat(item.price);
-        // Costo histórico si existe, sino costo actual del producto
         const historicalCost = item.cost !== undefined ? safeFloat(item.cost) : (productMeta.costs.get(item.product_id) || 0);
-        
         cost += historicalCost * itemQty;
-        
         const cat = productMeta.cats.get(item.product_id) || 'General';
         categoryCounts[cat] = (categoryCounts[cat] || 0) + (itemPrice * itemQty);
         productCounts[item.name] = (productCounts[item.name] || 0) + itemQty;
@@ -201,7 +162,6 @@ export function FinancePage() {
     sales.forEach((sale) => {
       const saleTotal = safeFloat(sale.total);
       const method = sale.payment_method?.toLowerCase() || 'efectivo';
-
       if (method === 'efectivo') cashTotal += saleTotal;
       else if (method === 'tarjeta') cardTotal += saleTotal;
       else transferTotal += saleTotal;
@@ -247,61 +207,80 @@ export function FinancePage() {
     return { totalRevenue, totalCost, totalProfit, totalMargin, chartData, count: filteredSales.length };
   }, [allSales, trendFilter, productMeta]);
 
-  // --- HELPER PARA FORMATO MONEDA SEGURO ---
   const formatMoney = (val: number) => {
-  if (val === undefined || val === null || isNaN(val)) return '$0.00';
-  try {
-    return currency.format(val);
-  } catch (err) {
-    console.warn("Error formateando moneda:", err);
-    return `$${val.toFixed(2)}`;
-  }
-};
+    if (val === undefined || val === null || isNaN(val)) return '$0.00';
+    try { return currency.format(val); } catch (err) { return `$${val.toFixed(2)}`; }
+  };
 
-  // --- HANDLERS TRANSACCIONALES ---
+  const getActiveCredentials = async () => {
+      let bId = localStorage.getItem('nexus_business_id');
+      if (!bId) {
+          const settings = await db.settings.toArray();
+          if (settings.length > 0) {
+              bId = settings[0].id;
+              localStorage.setItem('nexus_business_id', bId);
+          }
+      }
+      
+      let sId = currentStaff?.id || localStorage.getItem('nexus_staff_id');
+      if (!sId) {
+          const staffs = await db.staff.toArray();
+          if (staffs.length > 0) {
+              sId = staffs[0].id;
+              localStorage.setItem('nexus_staff_id', sId);
+          } else {
+              sId = 'admin';
+          }
+      }
+      return { bId, sId };
+  };
 
-  // 1. ABRIR CAJA
-  const handleOpenShift = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!businessId) return;
+  // --- HANDLERS (A PRUEBA DE RECARGAS) ---
+  const handleOpenShift = async () => {
     const startAmount = safeFloat(amount);
     if (isNaN(startAmount) || startAmount < 0) return toast.error('Monto inicial inválido');
     
     setIsLoading(true);
     try {
+        const { bId, sId } = await getActiveCredentials();
+        if (!bId) {
+            toast.error("Error crítico: Negocio no configurado.");
+            setIsLoading(false);
+            return;
+        }
+
         const shiftId = crypto.randomUUID();
         const newShift: CashShift = {
             id: shiftId, 
-            business_id: businessId, 
-            staff_id: currentStaff.id, 
+            business_id: bId, 
+            staff_id: sId, 
             start_amount: startAmount,
             opened_at: new Date().toISOString(), 
             status: 'open', 
             sync_status: 'pending_create'
         };
 
+        const staffPayload = { id: sId, name: currentStaff?.name || 'Cajero', business_id: bId };
+
         await db.transaction('rw', [db.cash_shifts, db.action_queue, db.audit_logs], async () => {
             await db.cash_shifts.add(newShift);
             await addToQueue('SHIFT', newShift);
-            await logAuditAction('OPEN_SHIFT', { amount: startAmount }, currentStaff);
+            await logAuditAction('OPEN_SHIFT', { amount: startAmount }, staffPayload as any);
         });
 
-        console.log('✅ Caja abierta - ID:', shiftId, 'Base:', startAmount);
         toast.success('¡Caja Abierta!');
         setAmount('');
-        syncPush().catch(console.error);
+        syncPush().catch(() => {});
     } catch (error) {
-        console.error('❌ Error al abrir caja:', error);
+        console.error(error);
         toast.error("Error al abrir caja");
     } finally {
         setIsLoading(false);
     }
   };
 
-  // 2. MOVIMIENTO DE CAJA
-  const handleMovement = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeShift || !movementType || !businessId) return;
+  const handleMovement = async () => {
+    if (!activeShift || !movementType) return;
     const val = safeFloat(amount);
     
     if (val <= 0) return toast.error('Monto inválido');
@@ -309,46 +288,52 @@ export function FinancePage() {
 
     setIsLoading(true);
     try {
+        const { bId, sId } = await getActiveCredentials();
+        const safeBid = bId || activeShift.business_id;
+
         const movement: CashMovement = {
             id: crypto.randomUUID(), 
             shift_id: activeShift.id, 
-            business_id: businessId, 
+            business_id: safeBid, 
             type: movementType,
             amount: val, 
             reason: reason, 
-            staff_id: currentStaff.id, 
+            staff_id: sId, 
             created_at: new Date().toISOString(), 
             sync_status: 'pending_create'
         };
 
+        const staffPayload = { id: sId, name: currentStaff?.name || 'Cajero', business_id: safeBid };
+
         await db.transaction('rw', [db.cash_movements, db.action_queue, db.audit_logs], async () => {
             await db.cash_movements.add(movement);
             await addToQueue('CASH_MOVEMENT', movement);
-            await logAuditAction(movementType === 'in' ? 'CASH_IN' : 'CASH_OUT', { amount: val, reason }, currentStaff);
+            await logAuditAction(movementType === 'in' ? 'CASH_IN' : 'CASH_OUT', { amount: val, reason }, staffPayload as any);
         });
 
-        console.log(`✅ Movimiento registrado - ${movementType === 'in' ? 'Ingreso' : 'Retiro'}:`, val);
         toast.success('Movimiento registrado');
         setAmount(''); setReason(''); setMovementType(null);
-        syncPush().catch(console.error);
+        syncPush().catch(() => {});
     } catch (error) {
-        console.error('❌ Error al registrar movimiento:', error);
+        console.error(error);
         toast.error("Error al registrar movimiento");
     } finally {
         setIsLoading(false);
     }
   };
 
-  // 3. CERRAR CAJA
-  const handleCloseShift = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCloseShift = async () => {
     if (!activeShift || !shiftStats) return;
     const finalCount = safeFloat(amount);
     
     setIsLoading(true);
     try {
+        const { bId, sId } = await getActiveCredentials();
+        const safeBid = bId || activeShift.business_id;
         const difference = finalCount - shiftStats.expectedCash;
         const closedAt = new Date().toISOString();
+
+        const staffPayload = { id: sId, name: currentStaff?.name || 'Cajero', business_id: safeBid };
 
         await db.transaction('rw', [db.cash_shifts, db.action_queue, db.audit_logs], async () => {
             await db.cash_shifts.update(activeShift.id, {
@@ -363,19 +348,14 @@ export function FinancePage() {
             const closedShift = await db.cash_shifts.get(activeShift.id);
             if(closedShift) await addToQueue('SHIFT', closedShift);
             
-            await logAuditAction('CLOSE_SHIFT', { 
-                expected: shiftStats.expectedCash, 
-                real: finalCount, 
-                diff: difference 
-            }, currentStaff);
+            await logAuditAction('CLOSE_SHIFT', { expected: shiftStats.expectedCash, real: finalCount, diff: difference }, staffPayload as any);
         });
 
-        console.log('✅ Caja cerrada - Diferencia:', difference);
         toast.success(`Caja cerrada. Diferencia: ${formatMoney(difference)}`);
         setIsClosing(false); setAmount('');
-        syncPush().catch(console.error);
+        syncPush().catch(() => {});
     } catch (error) {
-        console.error('❌ Error al cerrar caja:', error);
+        console.error(error);
         toast.error("Error al cerrar caja");
     } finally {
         setIsLoading(false);
@@ -389,21 +369,20 @@ export function FinancePage() {
   const handlePrint = () => window.print();
   const COLORS = ['#0B3B68', '#7AC142', '#F59E0B', '#EF4444', '#6B7280'];
 
-  // --- PANTALLA DE CARGA INICIAL ---
-  if (isInitialLoad) {
+  // PANTALLA DE CARGA (Arreglada)
+  if (activeShift === undefined) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-[#F3F4F6]">
         <div className="text-center">
           <Loader2 className="w-12 h-12 animate-spin text-[#0B3B68] mx-auto mb-4" />
           <p className="text-[#6B7280] font-semibold">Cargando datos del turno...</p>
-          <p className="text-xs text-[#9CA3AF] mt-2">Por favor espera</p>
         </div>
       </div>
     );
   }
 
-  // --- UI: APERTURA DE CAJA ---
-  if (!activeShift) {
+  // UI: APERTURA DE CAJA (SIN FORMULARIO)
+  if (activeShift === null) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-[#F3F4F6]">
         <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border border-gray-100 text-center animate-in fade-in zoom-in duration-300">
@@ -412,34 +391,42 @@ export function FinancePage() {
           </div>
           <h1 className="text-2xl font-black text-[#0B3B68] mb-2">Apertura de Caja</h1>
           <p className="text-[#6B7280] mb-6 text-sm">Inicia el turno para habilitar el punto de venta.</p>
-          <form onSubmit={handleOpenShift}>
+          
+          <div className="w-full text-left">
             <div className="mb-6 text-left">
               <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2 ml-1">Monto Inicial (Efectivo)</label>
               <div className="relative group">
                 <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5 group-focus-within:text-[#0B3B68] transition-colors"/>
                 <input 
-                    type="number" step="0.01" autoFocus required 
+                    type="number" step="0.01" autoFocus
                     className="w-full pl-10 pr-4 py-3 text-lg font-bold text-[#1F2937] border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none transition-all" 
                     placeholder="0.00" 
                     value={amount} 
                     onChange={e => setAmount(e.target.value)} 
+                    onKeyDown={(e) => { 
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if(!isLoading && amount !== '') handleOpenShift(); 
+                        }
+                    }}
                 />
               </div>
             </div>
             <button 
-                type="submit" 
-                disabled={isLoading}
+                type="button" 
+                onClick={(e) => { e.preventDefault(); handleOpenShift(); }}
+                disabled={isLoading || amount === ''}
                 className="w-full bg-[#7AC142] hover:bg-[#7AC142]/90 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-[#7AC142]/20 flex justify-center items-center gap-2 active:scale-[0.98]"
             >
                 {isLoading ? <Loader2 className="animate-spin"/> : 'ABRIR TURNO'}
             </button>
-          </form>
+          </div>
         </div>
       </div>
     );
   }
 
-  // --- UI: DASHBOARD FINANCIERO ---
+  // UI: DASHBOARD FINANCIERO
   return (
     <div className="p-4 md:p-6 pb-24 md:pb-6 min-h-screen bg-[#F3F4F6] print:bg-white print:p-0">
       
@@ -472,43 +459,31 @@ export function FinancePage() {
         </div>
       </div>
 
-      {/* VISTA 1: CONTROL DE CAJA (Operativa) */}
+      {/* VISTA 1: CONTROL DE CAJA */}
       {viewMode === 'control' && shiftStats && (
         <div className="animate-in slide-in-from-bottom-4 duration-300 space-y-6">
-          
-          {/* Tarjetas de Resumen */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
                <p className="text-[#6B7280] text-[10px] font-bold uppercase tracking-wider mb-1 flex items-center gap-1"><ShoppingBag size={12}/> Total Ventas</p>
                <h3 className="text-2xl font-black text-[#1F2937]">{formatMoney(shiftStats.totalSales)}</h3>
                <p className="text-[10px] text-[#6B7280] mt-1">Todos los métodos</p>
             </div>
-
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
                <p className="text-[#6B7280] text-[10px] font-bold uppercase tracking-wider mb-1">Base Inicial</p>
                <h3 className="text-2xl font-black text-[#0B3B68]">{formatMoney(shiftStats.startAmount)}</h3>
             </div>
-            
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
                <p className="text-[#7AC142] text-[10px] font-bold uppercase tracking-wider mb-1">Ventas Efectivo</p>
                <h3 className="text-2xl font-black text-[#7AC142]">+{formatMoney(shiftStats.cashSales)}</h3>
             </div>
-            
-            {/* CAJA EN TIEMPO REAL - CORREGIDO CON VALIDACIÓN */}
             <div className="bg-[#0B3B68] p-5 rounded-2xl shadow-lg shadow-[#0B3B68]/30 text-white relative overflow-hidden">
                <div className="absolute top-0 right-0 w-20 h-20 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
                <p className="text-gray-300 text-[10px] font-bold uppercase tracking-wider mb-1">Efectivo en Caja</p>
-               <h3 className="text-3xl font-black text-white"> {/* Forzamos color blanco */}
-                {shiftStats && typeof shiftStats.expectedCash === 'number'
-                  ? formatMoney(shiftStats.expectedCash)
-                  : <span className="text-yellow-400 text-lg">Cargando...</span>
-                }
-              </h3>
+               <h3 className="text-3xl font-black text-white">{formatMoney(shiftStats.expectedCash)}</h3>
                <p className="text-[10px] text-gray-400 mt-1">Calculado automáticamente</p>
             </div>
           </div>
 
-          {/* Botones de Acción */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
              <button onClick={() => { setMovementType('in'); setAmount(''); }} className="group flex items-center justify-center gap-3 p-4 bg-[#7AC142]/10 text-[#7AC142] rounded-2xl border border-[#7AC142]/20 hover:bg-[#7AC142]/20 font-bold transition-all active:scale-[0.98]">
                 <div className="bg-[#7AC142]/20 text-[#7AC142] p-2 rounded-lg group-hover:bg-[#7AC142]/30 transition-colors"><PlusCircle size={20}/></div>
@@ -525,7 +500,6 @@ export function FinancePage() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* TABLA MOVIMIENTOS */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
                     <h3 className="font-bold text-[#1F2937] text-sm flex items-center gap-2"><ArrowRightLeft className="text-[#6B7280]" size={16}/> Movimientos de Caja</h3>
@@ -550,7 +524,6 @@ export function FinancePage() {
                 </div>
             </div>
 
-            {/* TABLA VENTAS RECIENTES */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
                     <h3 className="font-bold text-[#1F2937] text-sm flex items-center gap-2"><ShoppingBag className="text-[#6B7280]" size={16}/> Ventas Recientes</h3>
@@ -656,7 +629,7 @@ export function FinancePage() {
         </div>
       )}
 
-      {/* VISTA 4: REPORTE Z (CIERRE HISTÓRICO) */}
+      {/* VISTA 4: REPORTE Z */}
       {viewMode === 'closing' && (
         <div className="animate-in slide-in-from-bottom-4 duration-300 max-w-3xl mx-auto">
           <div className="flex justify-between items-center mb-6 print:hidden">
@@ -695,14 +668,11 @@ export function FinancePage() {
                  </table>
                ) : <p className="text-center text-[#6B7280] italic text-xs">Sin movimientos.</p>}
              </div>
-             <div className="mt-12 text-center text-[10px] text-gray-300 font-mono print:block hidden">
-                *** FIN DEL REPORTE ***
-             </div>
           </div>
         </div>
       )}
 
-      {/* --- MODAL MOVIMIENTOS --- */}
+      {/* MODAL MOVIMIENTOS (SIN FORM) */}
       {movementType && (
         <div className="fixed inset-0 bg-[#0B3B68]/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
@@ -714,16 +684,16 @@ export function FinancePage() {
                   <button onClick={() => { setMovementType(null); setAmount(''); setReason(''); }}><X className="text-[#6B7280] hover:text-[#1F2937]"/></button>
               </div>
               
-              <form onSubmit={handleMovement} className="space-y-4">
+              <div className="space-y-4">
                  <div>
                     <label className="block text-[10px] font-bold text-[#6B7280] uppercase mb-1">Monto</label>
                     <div className="relative">
                         <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-4 h-4"/>
                         <input 
-                            type="number" step="0.01" required autoFocus 
+                            type="number" step="0.01" autoFocus 
                             value={amount} onChange={e => setAmount(e.target.value)} 
-                            className="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-xl font-bold text-lg outline-none focus:ring-2 focus:ring-[#0B3B68] transition-all text-[#1F2937]" 
-                            placeholder="0.00"
+                            onKeyDown={(e) => { if(e.key === 'Enter') { e.preventDefault(); handleMovement(); } }}
+                            className="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-xl font-bold text-lg outline-none focus:ring-2 focus:ring-[#0B3B68]" 
                         />
                     </div>
                  </div>
@@ -732,23 +702,24 @@ export function FinancePage() {
                     <input 
                         type="text" required 
                         value={reason} onChange={e => setReason(e.target.value)} 
-                        className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-[#0B3B68] text-sm transition-all text-[#1F2937]" 
-                        placeholder="Ej: Cambio, Pago proveedor..."
+                        onKeyDown={(e) => { if(e.key === 'Enter') { e.preventDefault(); handleMovement(); } }}
+                        className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-[#0B3B68]" 
                     />
                  </div>
                  <button 
-                    type="submit" 
-                    disabled={isLoading}
-                    className={`w-full py-3.5 font-bold text-white rounded-xl shadow-lg transition-all active:scale-[0.98] flex justify-center items-center gap-2 ${movementType === 'in' ? 'bg-[#7AC142] hover:bg-[#7AC142]/90 shadow-[#7AC142]/20' : 'bg-[#EF4444] hover:bg-[#EF4444]/90 shadow-[#EF4444]/20'}`}
+                    type="button" 
+                    onClick={(e) => { e.preventDefault(); handleMovement(); }}
+                    disabled={isLoading || amount === '' || reason === ''}
+                    className={`w-full py-3.5 font-bold text-white rounded-xl shadow-lg transition-all active:scale-[0.98] flex justify-center items-center gap-2 ${movementType === 'in' ? 'bg-[#7AC142]' : 'bg-[#EF4444]'}`}
                  >
                     {isLoading ? <Loader2 className="animate-spin"/> : 'CONFIRMAR'}
                  </button>
-              </form>
+              </div>
            </div>
         </div>
       )}
 
-      {/* --- MODAL CIERRE DE CAJA --- */}
+      {/* MODAL CIERRE (SIN FORM) */}
       {isClosing && shiftStats && (
         <div className="fixed inset-0 bg-[#0B3B68]/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
            <div className="bg-white rounded-2xl p-0 max-w-md w-full shadow-2xl overflow-hidden animate-in slide-in-from-bottom-8 duration-300">
@@ -763,63 +734,35 @@ export function FinancePage() {
                         <span className="text-xs font-bold text-[#6B7280] uppercase">Efectivo Esperado</span>
                         <span className="text-lg font-black text-[#1F2937]">{formatMoney(shiftStats.expectedCash)}</span>
                     </div>
-                    <div className="h-px bg-gray-200 my-2"></div>
-                    <p className="text-[10px] text-[#6B7280] leading-tight">
-                        Calculado: Base Inicial + Ventas Efectivo + Ingresos - Retiros
-                    </p>
                 </div>
 
-                <form onSubmit={handleCloseShift}>
-                    <div className="mb-6">
-                        <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Dinero en Caja (Conteo Real)</label>
-                        <div className="relative">
-                            <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6B7280] w-6 h-6"/>
-                            <input 
-                                type="number" step="0.01" required autoFocus 
-                                value={amount} onChange={e => setAmount(e.target.value)} 
-                                className="w-full pl-12 pr-4 py-4 text-3xl font-black text-[#1F2937] border-2 border-gray-200 rounded-xl focus:border-[#0B3B68] outline-none transition-all bg-gray-50 focus:bg-white" 
-                                placeholder="0.00"
-                            />
-                        </div>
-                        {amount && (
-                            <div className={`mt-2 text-center text-xs font-bold px-2 py-1 rounded ${
-                                (safeFloat(amount) - shiftStats.expectedCash) === 0 ? 'text-[#7AC142] bg-[#7AC142]/10' : 
-                                (safeFloat(amount) - shiftStats.expectedCash) > 0 ? 'text-blue-600 bg-blue-50' : 'text-[#EF4444] bg-[#EF4444]/10'
-                            }`}>
-                                Diferencia: {((safeFloat(amount) || 0) - (shiftStats.expectedCash || 0)) > 0 ? '+' : ''}
-                                {formatMoney((safeFloat(amount) || 0) - (shiftStats.expectedCash || 0))}
-                            </div>
-                        )}
+                <div className="mb-6">
+                    <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Dinero en Caja (Conteo Real)</label>
+                    <div className="relative">
+                        <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6B7280] w-6 h-6"/>
+                        <input 
+                            type="number" step="0.01" autoFocus 
+                            value={amount} onChange={e => setAmount(e.target.value)} 
+                            onKeyDown={(e) => { if(e.key === 'Enter') { e.preventDefault(); handleCloseShift(); } }}
+                            className="w-full pl-12 pr-4 py-4 text-3xl font-black text-[#1F2937] border-2 border-gray-200 rounded-xl focus:border-[#0B3B68]" 
+                        />
                     </div>
+                </div>
 
-                    <button 
-                        type="submit" 
-                        disabled={isLoading}
-                        className="w-full py-4 bg-[#0B3B68] text-white font-bold rounded-xl hover:bg-[#0B3B68]/90 shadow-xl shadow-[#0B3B68]/20 transition-all flex justify-center items-center gap-2 active:scale-[0.98]"
-                    >
-                        {isLoading ? <Loader2 className="animate-spin"/> : 'FINALIZAR TURNO'}
-                    </button>
-                </form>
+                <button 
+                    type="button" 
+                    onClick={(e) => { e.preventDefault(); handleCloseShift(); }}
+                    disabled={isLoading || amount === ''}
+                    className="w-full py-4 bg-[#0B3B68] text-white font-bold rounded-xl hover:bg-[#0B3B68]/90 shadow-xl shadow-[#0B3B68]/20 transition-all flex justify-center items-center gap-2 active:scale-[0.98]"
+                >
+                    {isLoading ? <Loader2 className="animate-spin"/> : 'FINALIZAR TURNO'}
+                </button>
               </div>
            </div>
         </div>
       )}
 
       {selectedTicket && <TicketModal sale={selectedTicket} onClose={() => setSelectedTicket(null)} />}
-
-      {cashShiftModal && (
-        <CashShiftModal
-          mode={cashShiftModal}
-          activeShift={activeShift ?? undefined}
-          currentStaff={currentStaff}
-          expectedCash={shiftStats?.expectedCash ?? 0}
-          onClose={() => setCashShiftModal(null)}
-          onSuccess={() => {
-            setCashShiftModal(null);
-            setIsClosing(false);
-          }}
-        />
-      )}
     </div>
   );
 }
