@@ -32,18 +32,21 @@ export function SettingsPage() {
   // 2. Staff (Modal y Edición)
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
+  const [deactivateConfirmStaff, setDeactivateConfirmStaff] = useState<Staff | null>(null);
+  const [showResetDbConfirm, setShowResetDbConfirm] = useState(false);
   const [staffForm, setStaffForm] = useState({
     name: '',
     pin: '',
     role: 'vendedor' as 'admin' | 'vendedor'
   });
 
-  // 3. Impresora (Estado Local)
-  const [printerConfig, setPrinterConfig] = useState({
-    name: 'Impresora Térmica',
-    ip: '192.168.1.200',
-    width: '80mm',
-    autoPrint: true
+  // 3. Impresora (Estado Local persistido en localStorage)
+  const [printerConfig, setPrinterConfig] = useState(() => {
+    try {
+      const saved = localStorage.getItem('nexus_printer_config');
+      if (saved) return JSON.parse(saved);
+    } catch { /* ignore */ }
+    return { name: 'Impresora Térmica', ip: '192.168.1.200', width: '80mm', autoPrint: true };
   });
 
   // --- CARGA DE DATOS ---
@@ -126,6 +129,7 @@ export function SettingsPage() {
       e.preventDefault();
       if (!businessId) return;
       if (staffForm.pin.length < 4) return toast.error('El PIN debe tener al menos 4 dígitos');
+      if (!/^\d+$/.test(staffForm.pin)) return toast.error('El PIN solo puede contener números');
 
       setIsLoading(true);
       try {
@@ -157,13 +161,18 @@ export function SettingsPage() {
       }
   };
 
-  const handleDeleteStaff = async (id: string) => {
-      if (!confirm('¿Desactivar este usuario? Ya no podrá acceder.')) return;
+  const handleDeleteStaff = (staff: Staff) => {
+      setDeactivateConfirmStaff(staff);
+  };
+
+  const confirmDeactivateStaff = async () => {
+      if (!deactivateConfirmStaff) return;
+      const id = deactivateConfirmStaff.id;
+      setDeactivateConfirmStaff(null);
       try {
-          // Soft delete usando 'active: false'
           await db.staff.update(id, { active: false });
           toast.success('Usuario desactivado');
-      } catch (e) { console.error(e); toast.error('Error al eliminar'); }
+      } catch (e) { console.error(e); toast.error('Error al desactivar'); }
   };
 
   // --- HANDLERS: SISTEMA ---
@@ -313,7 +322,7 @@ export function SettingsPage() {
                                             <div className="flex justify-end gap-2">
                                                 <button onClick={() => handleOpenStaffModal(staff)} className="p-2 text-[#6B7280] hover:text-[#0B3B68] bg-gray-50 hover:bg-[#0B3B68]/10 rounded-lg transition-colors"><Edit2 size={18}/></button>
                                                 {staff.id !== currentStaff.id && (
-                                                    <button onClick={() => handleDeleteStaff(staff.id)} className="p-2 text-[#6B7280] hover:text-[#EF4444] bg-gray-50 hover:bg-[#EF4444]/10 rounded-lg transition-colors"><Trash2 size={18}/></button>
+                                                    <button onClick={() => handleDeleteStaff(staff)} className="p-2 text-[#6B7280] hover:text-[#EF4444] bg-gray-50 hover:bg-[#EF4444]/10 rounded-lg transition-colors"><Trash2 size={18}/></button>
                                                 )}
                                             </div>
                                         </td>
@@ -370,7 +379,13 @@ export function SettingsPage() {
                             <button onClick={handleTestPrint} className="px-6 py-3 border border-[#0B3B68] text-[#0B3B68] font-bold rounded-xl hover:bg-[#0B3B68]/5 transition-colors">
                                 Probar Conexión
                             </button>
-                            <button className="bg-[#0B3B68] text-white font-bold py-3 px-8 rounded-xl shadow-lg hover:bg-[#0B3B68]/90 transition-all">
+                            <button
+                                onClick={() => {
+                                    localStorage.setItem('nexus_printer_config', JSON.stringify(printerConfig));
+                                    toast.success('Configuración de impresora guardada');
+                                }}
+                                className="bg-[#0B3B68] text-white font-bold py-3 px-8 rounded-xl shadow-lg hover:bg-[#0B3B68]/90 transition-all"
+                            >
                                 Guardar Configuración
                             </button>
                         </div>
@@ -415,7 +430,7 @@ export function SettingsPage() {
 
                         <div className="border-t border-gray-100 my-4 pt-4">
                             <h4 className="text-[#EF4444] font-bold text-sm mb-2 uppercase flex items-center gap-2"><AlertTriangle size={16}/> Zona de Peligro</h4>
-                            <button onClick={() => confirm('¿Seguro que deseas borrar la base de datos local? Esto requiere volver a iniciar sesión.') && db.delete().then(() => window.location.reload())}
+                            <button onClick={() => setShowResetDbConfirm(true)}
                                 className="w-full p-4 flex items-center justify-between bg-[#EF4444]/5 border border-[#EF4444]/20 rounded-xl hover:bg-[#EF4444]/10 transition-colors text-[#EF4444]">
                                 <span className="font-bold">Restablecer Base de Datos Local</span>
                                 <Trash2 size={20}/>
@@ -465,6 +480,64 @@ export function SettingsPage() {
                           </button>
                       </div>
                   </form>
+              </div>
+          </div>
+      )}
+
+      {/* --- MODAL CONFIRMACIÓN RESET DB --- */}
+      {showResetDbConfirm && (
+          <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center animate-in zoom-in-95 duration-200">
+                  <div className="w-14 h-14 bg-[#EF4444]/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <AlertTriangle size={28} className="text-[#EF4444]" />
+                  </div>
+                  <h3 className="font-bold text-lg text-[#1F2937] mb-1">¿Restablecer base de datos?</h3>
+                  <p className="text-sm text-[#6B7280] mb-6">
+                      Esto borrará todos los datos locales. Los datos ya sincronizados con la nube se recuperarán al volver a iniciar sesión.
+                  </p>
+                  <div className="flex gap-3">
+                      <button
+                          onClick={() => setShowResetDbConfirm(false)}
+                          className="flex-1 py-2.5 border border-gray-200 text-[#6B7280] font-bold rounded-xl hover:bg-gray-50 transition-colors"
+                      >
+                          Cancelar
+                      </button>
+                      <button
+                          onClick={() => db.delete().then(() => window.location.reload())}
+                          className="flex-1 py-2.5 bg-[#EF4444] text-white font-bold rounded-xl hover:bg-[#EF4444]/90 transition-colors"
+                      >
+                          Restablecer
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* --- MODAL CONFIRMACIÓN DESACTIVAR USUARIO --- */}
+      {deactivateConfirmStaff && (
+          <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-6 text-center animate-in zoom-in-95 duration-200">
+                  <div className="w-14 h-14 bg-[#EF4444]/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Trash2 size={28} className="text-[#EF4444]" />
+                  </div>
+                  <h3 className="font-bold text-lg text-[#1F2937] mb-1">¿Desactivar usuario?</h3>
+                  <p className="text-sm text-[#6B7280] mb-6">
+                      <span className="font-bold text-[#1F2937]">{deactivateConfirmStaff.name}</span> ya no podrá acceder al sistema.
+                  </p>
+                  <div className="flex gap-3">
+                      <button
+                          onClick={() => setDeactivateConfirmStaff(null)}
+                          className="flex-1 py-2.5 border border-gray-200 text-[#6B7280] font-bold rounded-xl hover:bg-gray-50 transition-colors"
+                      >
+                          Cancelar
+                      </button>
+                      <button
+                          onClick={confirmDeactivateStaff}
+                          className="flex-1 py-2.5 bg-[#EF4444] text-white font-bold rounded-xl hover:bg-[#EF4444]/90 transition-colors"
+                      >
+                          Desactivar
+                      </button>
+                  </div>
               </div>
           </div>
       )}
