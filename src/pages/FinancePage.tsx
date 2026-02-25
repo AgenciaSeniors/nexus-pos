@@ -238,7 +238,10 @@ export function FinancePage() {
   // --- HANDLERS (A PRUEBA DE RECARGAS) ---
   const handleOpenShift = async () => {
     const startAmount = safeFloat(amount);
-    if (isNaN(startAmount) || startAmount < 0) return toast.error('Monto inicial inválido');
+    if (isNaN(startAmount) || startAmount < 0) {
+        toast.error('Monto inicial inválido');
+        return;
+    }
     
     setIsLoading(true);
     try {
@@ -420,6 +423,7 @@ export function FinancePage() {
             >
                 {isLoading ? <Loader2 className="animate-spin"/> : 'ABRIR TURNO'}
             </button>
+          </div>
           </div>
         </div>
       </div>
