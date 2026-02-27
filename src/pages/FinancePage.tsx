@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff } from '../lib/db';
@@ -21,6 +21,7 @@ import {
 const EMPTY_ARRAY: never[] = [];
 
 // --- HELPER PARA BLINDAR NÚMEROS ---
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const safeFloat = (val: any): number => {
   const num = parseFloat(val);
   return isNaN(num) ? 0 : num;
@@ -35,30 +36,30 @@ export function FinancePage() {
   const [movementType, setMovementType] = useState<'in' | 'out' | null>(null);
   const [isClosing, setIsClosing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
 
   const today = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState(today);
   const [selectedTicket, setSelectedTicket] = useState<Sale | null>(null);
   const [trendFilter, setTrendFilter] = useState<'week' | 'month'>('week');
 
-  // 1. CARGA DE TURNO (CORREGIDA PARA NO QUEDARSE EN INFINITO)
+  // 1. CARGA DE TURNO
   const activeShift = useLiveQuery(async () => {
     let bId = localStorage.getItem('nexus_business_id');
     if (!bId) {
         const settings = await db.settings.toArray();
         if (settings.length > 0) bId = settings[0].id;
     }
-    if (!bId) return null; // Retorna null explícito si no hay ID
+    if (!bId) return null;
     
-    // El || null fuerza a Dexie a no devolver 'undefined' si está vacío
     const shift = await db.cash_shifts.where({ business_id: bId, status: 'open' }).first();
     return shift || null; 
   }, []);
 
   // 2. CARGA DE DATOS DEL TURNO
   const shiftData = useLiveQuery(async () => {
-    if (activeShift === undefined) return undefined; // Espera a que termine la query 1
-    if (activeShift === null) return null; // No hay turno
+    if (activeShift === undefined) return undefined;
+    if (activeShift === null) return null;
 
     const bId = activeShift.business_id;
     const [sales, movements] = await Promise.all([
@@ -85,6 +86,12 @@ export function FinancePage() {
     
     return await db.sales.where('business_id').equals(bId).filter(s => s.date >= cutoffDate).toArray();
   }, [viewMode]) || EMPTY_ARRAY;
+
+  useEffect(() => {
+    if (activeShift !== undefined) {
+      setIsInitialLoad(false);
+    }
+  }, [activeShift]);
 
   const shiftStats = useMemo(() => {
     if (!activeShift || !shiftData || !shiftData.sales || !shiftData.movements) return null;
@@ -209,7 +216,12 @@ export function FinancePage() {
 
   const formatMoney = (val: number) => {
     if (val === undefined || val === null || isNaN(val)) return '$0.00';
-    try { return currency.format(val); } catch (err) { return `$${val.toFixed(2)}`; }
+    try {
+      return currency.format(val);
+    } catch (err) {
+      console.warn("Error formateando moneda:", err);
+      return `$${val.toFixed(2)}`;
+    }
   };
 
   const getActiveCredentials = async () => {
@@ -235,7 +247,6 @@ export function FinancePage() {
       return { bId, sId };
   };
 
-  // --- HANDLERS (A PRUEBA DE RECARGAS) ---
   const handleOpenShift = async () => {
     const startAmount = safeFloat(amount);
     if (isNaN(startAmount) || startAmount < 0) {
@@ -273,17 +284,19 @@ export function FinancePage() {
 
         toast.success('¡Caja Abierta!');
         setAmount('');
-        syncPush().catch(() => {});
+        syncPush().catch(err => console.warn("Sync warning:", err));
+        
     } catch (error) {
-        console.error(error);
-        toast.error("Error al abrir caja");
+        console.error('❌ Error CRÍTICO al abrir caja:', error);
+        toast.error("Error al guardar en base de datos local");
     } finally {
         setIsLoading(false);
     }
   };
 
   const handleMovement = async () => {
-    if (!activeShift || !movementType) return;
+    const currentShift = activeShift; // Guardamos para TypeScript
+    if (!currentShift || !movementType) return;
     const val = safeFloat(amount);
     
     if (val <= 0) return toast.error('Monto inválido');
@@ -292,11 +305,11 @@ export function FinancePage() {
     setIsLoading(true);
     try {
         const { bId, sId } = await getActiveCredentials();
-        const safeBid = bId || activeShift.business_id;
+        const safeBid = bId || currentShift.business_id;
 
         const movement: CashMovement = {
             id: crypto.randomUUID(), 
-            shift_id: activeShift.id, 
+            shift_id: currentShift.id, 
             business_id: safeBid, 
             type: movementType,
             amount: val, 
@@ -326,20 +339,21 @@ export function FinancePage() {
   };
 
   const handleCloseShift = async () => {
-    if (!activeShift || !shiftStats) return;
+    const currentShift = activeShift; // Guardamos para TypeScript
+    if (!currentShift || !shiftStats) return;
     const finalCount = safeFloat(amount);
     
     setIsLoading(true);
     try {
         const { bId, sId } = await getActiveCredentials();
-        const safeBid = bId || activeShift.business_id;
+        const safeBid = bId || currentShift.business_id;
         const difference = finalCount - shiftStats.expectedCash;
         const closedAt = new Date().toISOString();
 
         const staffPayload = { id: sId, name: currentStaff?.name || 'Cajero', business_id: safeBid };
 
         await db.transaction('rw', [db.cash_shifts, db.action_queue, db.audit_logs], async () => {
-            await db.cash_shifts.update(activeShift.id, {
+            await db.cash_shifts.update(currentShift.id, {
                 end_amount: finalCount, 
                 difference: difference, 
                 expected_amount: shiftStats.expectedCash,
@@ -348,7 +362,7 @@ export function FinancePage() {
                 sync_status: 'pending_update'
             });
 
-            const closedShift = await db.cash_shifts.get(activeShift.id);
+            const closedShift = await db.cash_shifts.get(currentShift.id);
             if(closedShift) await addToQueue('SHIFT', closedShift);
             
             await logAuditAction('CLOSE_SHIFT', { expected: shiftStats.expectedCash, real: finalCount, diff: difference }, staffPayload as any);
@@ -372,8 +386,8 @@ export function FinancePage() {
   const handlePrint = () => window.print();
   const COLORS = ['#0B3B68', '#7AC142', '#F59E0B', '#EF4444', '#6B7280'];
 
-  // PANTALLA DE CARGA (Arreglada)
-  if (activeShift === undefined) {
+  // PANTALLAS DE CARGA Y APERTURA (Con verificación estricta para TypeScript)
+  if (activeShift === undefined || isInitialLoad) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-[#F3F4F6]">
         <div className="text-center">
@@ -384,7 +398,6 @@ export function FinancePage() {
     );
   }
 
-  // UI: APERTURA DE CAJA (SIN FORMULARIO)
   if (activeShift === null) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-[#F3F4F6]">
@@ -424,17 +437,15 @@ export function FinancePage() {
                 {isLoading ? <Loader2 className="animate-spin"/> : 'ABRIR TURNO'}
             </button>
           </div>
-          </div>
         </div>
       </div>
     );
   }
 
-  // UI: DASHBOARD FINANCIERO
+  // --- UI: DASHBOARD FINANCIERO (Aquí activeShift ya es un objeto seguro) ---
   return (
     <div className="p-4 md:p-6 pb-24 md:pb-6 min-h-screen bg-[#F3F4F6] print:bg-white print:p-0">
       
-      {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4 print:hidden">
         <div>
           <h1 className="text-2xl font-bold text-[#0B3B68] flex items-center gap-2">
@@ -463,7 +474,6 @@ export function FinancePage() {
         </div>
       </div>
 
-      {/* VISTA 1: CONTROL DE CAJA */}
       {viewMode === 'control' && shiftStats && (
         <div className="animate-in slide-in-from-bottom-4 duration-300 space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -480,10 +490,16 @@ export function FinancePage() {
                <p className="text-[#7AC142] text-[10px] font-bold uppercase tracking-wider mb-1">Ventas Efectivo</p>
                <h3 className="text-2xl font-black text-[#7AC142]">+{formatMoney(shiftStats.cashSales)}</h3>
             </div>
+            
             <div className="bg-[#0B3B68] p-5 rounded-2xl shadow-lg shadow-[#0B3B68]/30 text-white relative overflow-hidden">
                <div className="absolute top-0 right-0 w-20 h-20 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
                <p className="text-gray-300 text-[10px] font-bold uppercase tracking-wider mb-1">Efectivo en Caja</p>
-               <h3 className="text-3xl font-black text-white">{formatMoney(shiftStats.expectedCash)}</h3>
+               <h3 className="text-3xl font-black text-white">
+                {shiftStats && typeof shiftStats.expectedCash === 'number'
+                  ? formatMoney(shiftStats.expectedCash)
+                  : <span className="text-yellow-400 text-lg">Cargando...</span>
+                }
+              </h3>
                <p className="text-[10px] text-gray-400 mt-1">Calculado automáticamente</p>
             </div>
           </div>
@@ -555,7 +571,6 @@ export function FinancePage() {
         </div>
       )}
 
-      {/* VISTA 2: REPORTES DIARIOS */}
       {viewMode === 'daily' && (
         <div className="animate-in fade-in zoom-in-95 duration-300">
           <div className="flex justify-between items-center mb-6">
@@ -617,7 +632,6 @@ export function FinancePage() {
         </div>
       )}
 
-      {/* VISTA 3: TENDENCIAS */}
       {viewMode === 'trends' && (
         <div className="animate-in fade-in zoom-in-95 duration-300">
           <div className="flex gap-2 mb-6">
@@ -633,7 +647,6 @@ export function FinancePage() {
         </div>
       )}
 
-      {/* VISTA 4: REPORTE Z */}
       {viewMode === 'closing' && (
         <div className="animate-in slide-in-from-bottom-4 duration-300 max-w-3xl mx-auto">
           <div className="flex justify-between items-center mb-6 print:hidden">
@@ -676,7 +689,6 @@ export function FinancePage() {
         </div>
       )}
 
-      {/* MODAL MOVIMIENTOS (SIN FORM) */}
       {movementType && (
         <div className="fixed inset-0 bg-[#0B3B68]/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
@@ -723,7 +735,6 @@ export function FinancePage() {
         </div>
       )}
 
-      {/* MODAL CIERRE (SIN FORM) */}
       {isClosing && shiftStats && (
         <div className="fixed inset-0 bg-[#0B3B68]/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
            <div className="bg-white rounded-2xl p-0 max-w-md w-full shadow-2xl overflow-hidden animate-in slide-in-from-bottom-8 duration-300">

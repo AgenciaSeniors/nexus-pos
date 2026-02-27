@@ -9,17 +9,16 @@ import {
   type AuditLog, 
   type BusinessConfig,
   type CashShift,
-  type CashMovement
+  type CashMovement,
+  type Staff // ✅ Importamos Staff
 } from './db';
 import { supabase } from './supabase';
 import type { Table } from 'dexie';
 
-// Helper para verificar conexión real
 export function isOnline() {
   return typeof navigator !== 'undefined' && navigator.onLine;
 }
 
-// --- RECUPERACIÓN DE ZOMBIES ---
 export async function resetProcessingItems() {
     const stuckItems = await db.action_queue.where('status').equals('processing').toArray();
     if (stuckItems.length > 0) {
@@ -27,11 +26,8 @@ export async function resetProcessingItems() {
     }
 }
 
-// --- GESTIÓN DE COLA (Entrada) ---
-
 export async function addToQueue(type: QueueItem['type'], payload: QueuePayload) {
   try {
-    // 1. La operación de base de datos sigue siendo parte de la transacción (await)
     await db.action_queue.add({
       id: crypto.randomUUID(),
       type,
@@ -41,22 +37,16 @@ export async function addToQueue(type: QueueItem['type'], payload: QueuePayload)
       status: 'pending'
     });
     
-    // 2. CORRECCIÓN: Sacamos processQueue de la transacción actual.
-    // Usamos setTimeout para que se ejecute en el siguiente "tick", 
-    // permitiendo que la transacción de la Venta (Sale) se complete y cierre exitosamente primero.
     if (isOnline()) {
       setTimeout(() => {
         processQueue().catch(err => console.error("Error en sync background:", err));
-      }, 50); // Un pequeño delay de 50ms es suficiente y seguro
+      }, 50);
     }
   } catch (error) {
-    console.error("Error crítico al añadir a la cola de sincronización:", error);
-    // Es importante relanzar el error para que la transacción padre (ej. Venta) se entere y haga rollback si falla el guardado en cola
+    console.error("Error crítico al añadir a la cola:", error);
     throw error; 
   }
 }
-
-// --- PROCESAMIENTO ATÓMICO POR TIPO ---
 
 async function processItem(item: QueueItem) {
   const { type, payload } = item;
@@ -68,133 +58,94 @@ async function processItem(item: QueueItem) {
       const { sync_status, ...saleClean } = sale;
 
       const { error } = await supabase.rpc('process_sale_transaction', {
-        p_sale: saleClean,
-        p_items: items || []
+        p_sale: saleClean, p_items: items || []
       });
 
-      if (error) {
-        // Si el error es de duplicado, asumimos que ya subió
-        if (error.code !== '23505') { 
-            throw new Error(`Fallo transacción venta ${sale.id}: ${error.message}`);
-        }
-      }
-      
+      if (error && error.code !== '23505') throw new Error(`Fallo venta: ${error.message}`);
       await db.sales.update(sale.id, { sync_status: 'synced' });
       break;
     }
-
     case 'MOVEMENT': {
       const movement = payload as InventoryMovement;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanMov } = movement;
-      
       const { error } = await supabase.from('inventory_movements').insert(cleanMov);
-      if (error && error.code !== '23505') throw new Error(`Error subiendo movimiento: ${error.message}`);
-
+      if (error && error.code !== '23505') throw new Error(`Error movimiento: ${error.message}`);
       if (db.movements) await db.movements.update(movement.id, { sync_status: 'synced' });
       break;
     }
-
     case 'AUDIT': {
       const log = payload as AuditLog;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanLog } = log;
-      
       const { error } = await supabase.from('audit_logs').insert(cleanLog);
-      if (error && error.code !== '23505') throw new Error(`Error subiendo audit: ${error.message}`);
-
+      if (error && error.code !== '23505') throw new Error(`Error audit: ${error.message}`);
       await db.audit_logs.update(log.id, { sync_status: 'synced' });
       break;
     }
-
     case 'PRODUCT_SYNC': {
       const product = payload as Product;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanProduct } = product;
-      
       const { error } = await supabase.from('products').upsert(cleanProduct);
-      if (error) throw new Error(`Error sync producto: ${error.message}`);
-
-      // ✅ ACTUALIZACIÓN DE ESTADO LOCAL
+      if (error) throw new Error(`Error producto: ${error.message}`);
       await db.products.update(product.id, { sync_status: 'synced' });
       break;
     }
-
     case 'CUSTOMER_SYNC': {
       const customer = payload as Customer;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanCustomer } = customer;
-      
       const { error } = await supabase.from('customers').upsert(cleanCustomer);
-      if (error) throw new Error(`Error sync cliente: ${error.message}`);
-
-      // ✅ ACTUALIZACIÓN DE ESTADO LOCAL
+      if (error) throw new Error(`Error cliente: ${error.message}`);
       await db.customers.update(customer.id, { sync_status: 'synced' });
       break;
     }
-
     case 'SETTINGS_SYNC': {
       const config = payload as BusinessConfig;
-      const updateData = {
-        name: config.name,
-        address: config.address,
-        phone: config.phone,
-        receipt_message: config.receipt_message
-      };
-      
-      const { error } = await supabase
-        .from('businesses')
-        .update(updateData)
-        .eq('id', config.id);
-
-      if (error) throw new Error(`Error actualizando negocio: ${error.message}`);
-
-      // ✅ ACTUALIZACIÓN DE ESTADO LOCAL
+      const updateData = { name: config.name, address: config.address, phone: config.phone, receipt_message: config.receipt_message };
+      const { error } = await supabase.from('businesses').update(updateData).eq('id', config.id);
+      if (error) throw new Error(`Error negocio: ${error.message}`);
       await db.settings.update(config.id, { sync_status: 'synced' });
       break;
     }
-
     case 'SHIFT': {
         const shift = payload as CashShift;
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { sync_status, ...cleanShift } = shift;
-
         const { error } = await supabase.from('cash_shifts').upsert(cleanShift);
-        if (error) throw new Error(`Error sincronizando turno: ${error.message}`);
-
-        // ✅ ACTUALIZACIÓN DE ESTADO LOCAL
+        if (error) throw new Error(`Error turno: ${error.message}`);
         await db.cash_shifts.update(shift.id, { sync_status: 'synced' });
         break;
     }
-
     case 'CASH_MOVEMENT': {
         const mov = payload as CashMovement;
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { sync_status, ...cleanMov } = mov;
-
         const { error } = await supabase.from('cash_movements').insert(cleanMov);
-        if (error && error.code !== '23505') throw new Error(`Error sincronizando movimiento: ${error.message}`);
-
-        // ✅ ACTUALIZACIÓN DE ESTADO LOCAL
+        if (error && error.code !== '23505') throw new Error(`Error mov caja: ${error.message}`);
         await db.cash_movements.update(mov.id, { sync_status: 'synced' });
         break;
     }
-
+    // ✅ NUEVO: LÓGICA DE SINCRONIZACIÓN DE STAFF
+    case 'STAFF_SYNC': {
+        const staff = payload as Staff;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { sync_status, ...cleanStaff } = staff;
+        const { error } = await supabase.from('staff').upsert(cleanStaff);
+        if (error) throw new Error(`Error sincronizando usuario: ${error.message}`);
+        await db.staff.update(staff.id, { sync_status: 'synced' });
+        break;
+    }
     default:
-      throw new Error(`Tipo de acción desconocido en cola: ${type}`);
+      throw new Error(`Tipo de acción desconocido: ${type}`);
   }
 }
-
-// --- MOTOR DE PROCESAMIENTO ---
 
 export async function processQueue() {
   if (!isOnline()) return;
 
-  const pendingItems = await db.action_queue
-    .where('status').equals('pending')
-    .limit(5) 
-    .toArray();
-
+  const pendingItems = await db.action_queue.where('status').equals('pending').limit(5).toArray();
   if (pendingItems.length === 0) return;
 
   for (const item of pendingItems) {
@@ -209,17 +160,9 @@ export async function processQueue() {
       console.error(`❌ Fallo ítem ${item.type} (${item.id}):`, errorMessage);
 
       if (newRetries >= 5) {
-          console.error(`💀 Ítem ${item.id} marcado como FATAL.`);
-          await db.action_queue.update(item.id, { 
-              status: 'failed', 
-              error: `ABANDONADO tras 5 intentos: ${errorMessage}` 
-          });
+          await db.action_queue.update(item.id, { status: 'failed', error: `ABANDONADO: ${errorMessage}` });
       } else {
-          await db.action_queue.update(item.id, { 
-              status: 'pending', 
-              retries: newRetries, 
-              error: errorMessage 
-          });
+          await db.action_queue.update(item.id, { status: 'pending', retries: newRetries, error: errorMessage });
       }
     }
   }
@@ -229,22 +172,9 @@ export async function processQueue() {
   }
 }
 
-// --- UTILIDADES DE CARGA SEGURA ---
-
-// 🛡️ PROTECCIÓN CONTRA SOBRESCRITURA
-// Solo guarda datos de la nube si NO tenemos cambios locales pendientes.
-async function safeBulkPut<T extends { id: string; sync_status?: string }>(
-  table: Table<T, string>, 
-  items: T[]
-) {
-  // 1. Identificar ítems locales "sucios" (pendientes de subida)
-  const dirtyItems = await table
-    .filter(i => i.sync_status !== undefined && i.sync_status !== 'synced')
-    .primaryKeys();
-  
+async function safeBulkPut<T extends { id: string; sync_status?: string }>(table: Table<T, string>, items: T[]) {
+  const dirtyItems = await table.filter(i => i.sync_status !== undefined && i.sync_status !== 'synced').primaryKeys();
   const dirtySet = new Set(dirtyItems);
-
-  // 2. Filtrar lo que viene de la nube: Si tengo un cambio local, IGNORO la nube
   const safeItems = items.filter(i => !dirtySet.has(i.id));
 
   if (safeItems.length > 0) {
@@ -252,36 +182,24 @@ async function safeBulkPut<T extends { id: string; sync_status?: string }>(
   }
 }
 
-// 📥 PAGINACIÓN AUTOMÁTICA
-// Evita timeouts al bajar miles de registros
 async function fetchAll(table: string, businessId: string) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const allData: any[] = [];
     let page = 0;
     const size = 1000;
     
-;
-    
     // eslint-disable-next-line no-constant-condition
     while(true) {
-        const { data, error } = await supabase.from(table)
-            .select('*')
-            .eq('business_id', businessId)
-            .range(page * size, (page + 1) * size - 1);
-        
+        const { data, error } = await supabase.from(table).select('*').eq('business_id', businessId).range(page * size, (page + 1) * size - 1);
         if (error) throw error;
         if (!data || data.length === 0) break;
         
         allData.push(...data);
-        if (data.length < size) break; // Si bajamos menos del límite, es la última página
+        if (data.length < size) break;
         page++;
     }
-    
-    console.log(`✅ ${table}: ${allData.length} registros totales`);
     return allData;
 }
-
-// --- FUNCIONES DE SINCRONIZACIÓN (PULL) ---
 
 export async function syncCriticalData(businessId: string) {
   if (!isOnline()) return;
@@ -289,39 +207,36 @@ export async function syncCriticalData(businessId: string) {
   try {
     const [businessResult, staffResult, registersResult, shiftsResult] = await Promise.all([
       supabase.from('businesses').select('*').eq('id', businessId).single(),
-      supabase.from('staff').select('*').eq('business_id', businessId).eq('active', true),
+      supabase.from('staff').select('*').eq('business_id', businessId), // ✅ Ahora descarga todo el staff
       supabase.from('cash_registers').select('*').eq('business_id', businessId),
       supabase.from('cash_shifts').select('*').eq('business_id', businessId).eq('status', 'open')
     ]);
 
     if (businessResult.data) {
       await db.settings.put({
-        id: businessResult.data.id,
-        name: businessResult.data.name,
-        address: businessResult.data.address,
-        phone: businessResult.data.phone,
-        receipt_message: businessResult.data.receipt_message,
-        subscription_expires_at: businessResult.data.subscription_expires_at,
-        status: businessResult.data.status as 'active' | 'suspended' | 'pending',
-        last_check: new Date().toISOString(),
-        sync_status: 'synced'
+        id: businessResult.data.id, name: businessResult.data.name, address: businessResult.data.address,
+        phone: businessResult.data.phone, receipt_message: businessResult.data.receipt_message,
+        subscription_expires_at: businessResult.data.subscription_expires_at, status: businessResult.data.status as any,
+        last_check: new Date().toISOString(), sync_status: 'synced'
       });
     }
 
     if (staffResult.data) {
-      await db.staff.clear();
-      await db.staff.bulkPut(staffResult.data);
+      // ✅ Utilizamos safeBulkPut para no borrar al staff local si no se ha subido
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cleanStaff = staffResult.data.map((s: any) => ({ ...s, sync_status: 'synced' }));
+      await safeBulkPut(db.staff as never, cleanStaff);
     }
 
     if (registersResult.data) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cleanRegisters = registersResult.data.map(r => ({ ...r, sync_status: 'synced' }));
+      const cleanRegisters = registersResult.data.map((r: any) => ({ ...r, sync_status: 'synced' }));
       await db.cash_registers.bulkPut(cleanRegisters as never);
     }
 
     if (shiftsResult.data && shiftsResult.data.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const shifts = shiftsResult.data.map(s => ({ ...s, sync_status: 'synced' }));
+      const shifts = shiftsResult.data.map((s: any) => ({ ...s, sync_status: 'synced' }));
       await safeBulkPut(db.cash_shifts as never, shifts);
     }
   } catch (error) {
@@ -329,8 +244,6 @@ export async function syncCriticalData(businessId: string) {
   }
 }
 
-// 🚀 OPTIMIZACIÓN: Carga en background sin bloquear la UI
-// Retorna una Promise que se resuelve cuando ambas cargas terminan
 export function syncHeavyData(businessId: string): Promise<void> {
   if (!isOnline()) return Promise.resolve();
 
@@ -343,11 +256,7 @@ export function syncHeavyData(businessId: string): Promise<void> {
           const cleanProducts = productsData.map((p: any) => ({ ...p, sync_status: 'synced' }));
           await safeBulkPut(db.products as never, cleanProducts);
         }
-      } catch (error) {
-        console.error('Error descargando productos:', error);
-      } finally {
-        resolve();
-      }
+      } catch (error) { console.error(error); } finally { resolve(); }
     }, 200);
   });
 
@@ -360,24 +269,17 @@ export function syncHeavyData(businessId: string): Promise<void> {
           const cleanCustomers = customersData.map((c: any) => ({ ...c, sync_status: 'synced' }));
           await safeBulkPut(db.customers as never, cleanCustomers);
         }
-      } catch (error) {
-        console.error('Error descargando clientes:', error);
-      } finally {
-        resolve();
-      }
+      } catch (error) { console.error(error); } finally { resolve(); }
     }, 1000);
   });
 
   return Promise.all([syncProducts, syncCustomers]).then(() => undefined);
 }
 
-// Coordinador principal
 export async function syncBusinessProfile(businessId: string) {
   await syncCriticalData(businessId);
   await syncHeavyData(businessId);
 }
-
-// --- COMANDOS MANUALES ---
 
 export async function syncPush() {
     await resetProcessingItems();
@@ -386,7 +288,6 @@ export async function syncPush() {
 
 export async function syncPull() {
     if (!isOnline()) return;
-
     const settings = await db.settings.toArray();
     if (settings.length > 0) {
         const businessId = settings[0].id;
@@ -401,17 +302,8 @@ export async function syncManualFull() {
     await syncPull();
 }
 
-// Watcher automático
 if (typeof window !== 'undefined') {
-    window.addEventListener('online', () => {
-        resetProcessingItems().then(() => processQueue());
-    });
-
-    // Limpieza inicial
+    window.addEventListener('online', () => { resetProcessingItems().then(() => processQueue()); });
     resetProcessingItems();
-
-    // Intervalo de seguridad cada 30s
-    setInterval(() => {
-      if (isOnline()) processQueue();
-    }, 30000);
+    setInterval(() => { if (isOnline()) processQueue(); }, 30000);
 }
