@@ -187,6 +187,22 @@ export function SuperAdminPage() {
     navigate('/admin-login');
   };
 
+  // ✅ FUNCIONES PARA ALERTAS DE VENCIMIENTO
+  const getDaysUntilExpiry = (dateString?: string) => {
+      if (!dateString) return null;
+      const expiry = new Date(dateString);
+      const today = new Date();
+      expiry.setHours(0, 0, 0, 0);
+      today.setHours(0, 0, 0, 0);
+      return Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 3600 * 24));
+  };
+
+  const expiringCount = dataList.filter(item => {
+      if (item.status !== 'active') return false;
+      const days = getDaysUntilExpiry(item.license_expiry);
+      return days !== null && days <= 15;
+  }).length;
+
   const filteredList = dataList.filter(item => 
     item.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     item.email?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -226,9 +242,15 @@ export function SuperAdminPage() {
                 </button>
                 <button 
                     onClick={() => setActiveTab('active')}
-                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${activeTab === 'active' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                    className={`relative flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${activeTab === 'active' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
                 >
                     <UserCheck size={18} /> Clientes
+                    {/* ✅ GLOBO DE ALERTA DE VENCIMIENTOS */}
+                    {expiringCount > 0 && (
+                        <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full animate-pulse border-2 border-white shadow-sm">
+                            {expiringCount}
+                        </span>
+                    )}
                 </button>
             </div>
 
@@ -271,8 +293,13 @@ export function SuperAdminPage() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                            {filteredList.map((item) => (
-                                <tr key={item.id} className="hover:bg-slate-50/50 transition-colors group">
+                            {filteredList.map((item) => {
+                                const daysLeft = getDaysUntilExpiry(item.license_expiry);
+                                const isExpiringSoon = item.status === 'active' && daysLeft !== null && daysLeft <= 15 && daysLeft >= 0;
+                                const isExpired = item.status === 'active' && daysLeft !== null && daysLeft < 0;
+
+                                return (
+                                <tr key={item.id} className={`hover:bg-slate-50/50 transition-colors group ${isExpired ? 'bg-red-50/30' : isExpiringSoon ? 'bg-orange-50/30' : ''}`}>
                                     <td className="p-5">
                                         <div className="flex items-center gap-3">
                                             <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-sm ${item.business_id ? 'bg-indigo-600' : 'bg-slate-400'}`}>
@@ -315,11 +342,15 @@ export function SuperAdminPage() {
                                             <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
                                                 <Key size={12} className="text-slate-400"/> PIN Solicitud: <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 text-slate-700">{item.initial_pin}</span>
                                             </div>
-                                            <div className="text-xs text-slate-500 flex items-center gap-2">
-                                                <Calendar size={12}/> 
-                                                {item.license_expiry 
-                                                    ? `Vence: ${new Date(item.license_expiry).toLocaleDateString()}` 
-                                                    : `Solicita: ${item.months_requested} Mes(es)`}
+                                            
+                                            {/* ✅ TEXTO DINÁMICO DE VENCIMIENTO */}
+                                            <div className="text-xs flex items-center gap-2 mt-1">
+                                                <Calendar size={12} className={isExpired ? 'text-red-500' : isExpiringSoon ? 'text-orange-500' : 'text-slate-400'}/> 
+                                                <span className={isExpired ? 'text-red-600 font-bold' : isExpiringSoon ? 'text-orange-600 font-bold' : 'text-slate-500'}>
+                                                    {item.license_expiry 
+                                                        ? (isExpired ? `¡Venció hace ${Math.abs(daysLeft!)} días!` : isExpiringSoon ? `¡Vence en ${daysLeft} días!` : `Vence: ${new Date(item.license_expiry).toLocaleDateString()}`) 
+                                                        : `Solicita: ${item.months_requested} Mes(es)`}
+                                                </span>
                                             </div>
                                         </div>
                                     </td>
@@ -368,7 +399,7 @@ export function SuperAdminPage() {
                                         </div>
                                     </td>
                                 </tr>
-                            ))}
+                            )})}
                         </tbody>
                     </table>
                 </div>
@@ -409,7 +440,7 @@ export function SuperAdminPage() {
                             <Key className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
                             <input 
                                 type="text" maxLength={4}
-                                className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-lg font-bold text-slate-800 tracking-widest outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-center"
+                                className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-lg font-bold text-slate-800 tracking-widest outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-50 transition-all text-center"
                                 value={adminPin}
                                 onChange={(e) => setAdminPin(e.target.value.replace(/\D/g,''))}
                                 placeholder="0000"
