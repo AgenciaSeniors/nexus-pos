@@ -1,6 +1,6 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { 
-  Store, Package, PieChart, Settings, 
+  Package, PieChart, Settings, 
   Cloud, AlertCircle, RefreshCw, LogOut, Menu, X, Users as UsersIcon, CheckCircle2 
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
@@ -8,8 +8,10 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff } from '../lib/db';
 import { syncManualFull } from '../lib/sync'; 
 import { supabase } from '../lib/supabase';
-import logo from '../logo.png'; 
 import { toast } from 'sonner';
+
+// ✅ MÉTODO INFALIBLE: Importar desde la carpeta assets
+import logo from '../assets/logo.png'; 
 
 interface LayoutProps {
   currentStaff: Staff | null;
@@ -69,48 +71,32 @@ export function Layout({ currentStaff }: LayoutProps) {
     await supabase.auth.signOut();
     localStorage.removeItem('nexus_business_id');
     localStorage.removeItem('nexus_current_staff'); 
-    navigate('/login');
+    navigate('/');
   };
 
   const isAdmin = currentStaff?.role === 'admin';
   const isCashier = currentStaff?.role === 'vendedor';
 
   const menuItems = [
-    { path: '/', icon: <Store size={22} />, label: 'Punto de Venta', show: true }, 
+    // ✅ Usamos la variable {logo} generada por Vite
+    { path: '/', icon: <img src={logo} alt="POS" className="w-6 h-6 object-contain opacity-90 group-hover:opacity-100 transition-opacity" />, label: 'Punto de Venta', show: true }, 
     { path: '/clientes', icon: <UsersIcon size={22} />, label: 'Clientes', show: true }, 
     { path: '/inventario', icon: <Package size={22} />, label: 'Inventario', show: isAdmin },
     { path: '/finanzas', icon: <PieChart size={22} />, label: 'Finanzas', show: isAdmin },
     { path: '/configuracion', icon: <Settings size={22} />, label: 'Configuración', show: isAdmin }
   ];
 
-  // --- LÓGICA DE ESTADO DEL BOTÓN (Simplificada y corregida) ---
   const getButtonState = () => {
     if (isSyncing) {
-      return {
-        className: "bg-amber-50 text-amber-600 ring-1 ring-amber-200",
-        icon: <RefreshCw size={20} className="animate-spin"/>,
-        title: "Sincronizando..."
-      };
+      return { className: "bg-amber-50 text-amber-600 ring-1 ring-amber-200", icon: <RefreshCw size={20} className="animate-spin"/>, title: "Sincronizando..." };
     } 
     if (!isOnline && pendingCount > 0) {
-      return {
-        className: "bg-red-50 text-[#EF4444] ring-1 ring-red-200 animate-pulse",
-        icon: <AlertCircle size={20} />,
-        title: "¡ADVERTENCIA! Cambios sin guardar en la nube"
-      };
+      return { className: "bg-red-50 text-[#EF4444] ring-1 ring-red-200 animate-pulse", icon: <AlertCircle size={20} />, title: "¡ADVERTENCIA! Cambios sin guardar en la nube" };
     } 
     if (pendingCount > 0) {
-      return {
-        className: "bg-amber-50 text-[#F59E0B] ring-1 ring-amber-200",
-        icon: <RefreshCw size={20} />,
-        title: "Hay cambios pendientes de subir"
-      };
+      return { className: "bg-amber-50 text-[#F59E0B] ring-1 ring-amber-200", icon: <RefreshCw size={20} />, title: "Hay cambios pendientes de subir" };
     } 
-    return {
-      className: "bg-[#7AC142]/10 text-[#7AC142] ring-1 ring-[#7AC142]/30 hover:bg-[#7AC142]/20",
-      icon: <CheckCircle2 size={20} />,
-      title: "Sistema actualizado y seguro"
-    };
+    return { className: "bg-[#7AC142]/10 text-[#7AC142] ring-1 ring-[#7AC142]/30 hover:bg-[#7AC142]/20", icon: <CheckCircle2 size={20} />, title: "Sistema actualizado y seguro" };
   };
 
   const buttonState = getButtonState();
@@ -121,8 +107,13 @@ export function Layout({ currentStaff }: LayoutProps) {
       {/* SIDEBAR DESKTOP */}
       <aside className={`hidden md:flex flex-col items-center py-6 z-20 shadow-xl transition-all bg-[#0B3B68] text-white duration-300 ${isCashier ? 'w-20' : 'w-24'}`}>
         
-        <div className="mb-6 p-2 bg-white/10 rounded-2xl border border-white/10 shadow-inner">
-          <img src={logo} alt="Bisne" className="w-10 h-10 object-contain drop-shadow-md" />
+        {/* ✅ LOGO PRINCIPAL */}
+        <div className="mb-6 p-1.5 bg-white rounded-2xl shadow-lg flex items-center justify-center w-14 h-14 overflow-hidden border-2 border-[#7AC142]/30">
+          <img 
+              src={logo} 
+              alt="Logo" 
+              className="w-full h-full object-contain"
+          />
         </div>
         
         <div className="mb-8 text-center px-1 w-full group relative">
@@ -140,15 +131,7 @@ export function Layout({ currentStaff }: LayoutProps) {
           {menuItems.filter(i => i.show).map((item) => {
             const isActive = location.pathname === item.path;
             return (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={`flex flex-col items-center justify-center p-3 rounded-xl transition-all duration-200 group relative ${
-                  isActive
-                    ? 'bg-[#7AC142] text-[#0B3B68] shadow-lg shadow-[#7AC142]/20 font-bold translate-x-1'
-                    : 'text-gray-300 hover:text-white hover:bg-white/10'
-                }`}
-              >
+              <Link key={item.path} to={item.path} className={`flex flex-col items-center justify-center p-3 rounded-xl transition-all duration-200 group relative ${isActive ? 'bg-[#7AC142] text-[#0B3B68] shadow-lg shadow-[#7AC142]/20 font-bold translate-x-1' : 'text-gray-300 hover:text-white hover:bg-white/10'}`}>
                 {item.icon}
                 <span className="absolute left-full ml-4 px-3 py-2 bg-[#1F2937] text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 shadow-xl font-bold uppercase tracking-wide border border-gray-700">
                   {item.label}
@@ -159,12 +142,7 @@ export function Layout({ currentStaff }: LayoutProps) {
         </nav>
 
         <div className="flex flex-col gap-3 w-full px-3 mt-4 border-t border-white/10 pt-6">
-            <button 
-                onClick={handleManualSync}
-                disabled={!isOnline || isSyncing}
-                className={`p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group bg-white/5 hover:bg-white/10 border border-white/5 ${pendingCount > 0 ? 'text-[#F59E0B] border-[#F59E0B]/50' : 'text-[#7AC142]'}`}
-                title={buttonState.title}
-            >
+            <button onClick={handleManualSync} disabled={!isOnline || isSyncing} className={`p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group bg-white/5 hover:bg-white/10 border border-white/5 ${pendingCount > 0 ? 'text-[#F59E0B] border-[#F59E0B]/50' : 'text-[#7AC142]'}`} title={buttonState.title}>
                 {buttonState.icon}
                 {pendingCount > 0 && (
                     <span className="absolute top-2 right-2 flex h-2.5 w-2.5">
@@ -173,7 +151,6 @@ export function Layout({ currentStaff }: LayoutProps) {
                     </span>
                 )}
             </button>
-
             <button onClick={handleLogout} className="p-3 text-gray-400 hover:text-[#EF4444] hover:bg-[#EF4444]/10 rounded-xl transition-colors flex flex-col items-center justify-center" title="Cerrar Sesión">
                 <LogOut size={20}/>
             </button>
@@ -186,15 +163,17 @@ export function Layout({ currentStaff }: LayoutProps) {
             <button onClick={() => setIsMobileMenuOpen(true)} className="text-white hover:text-[#7AC142] transition-colors">
                 <Menu size={26} />
             </button>
-            <div className="font-bold text-lg flex items-center gap-2 tracking-tight">
-                <img src={logo} alt="" className="w-8 h-8 object-contain"/> 
+            
+            <div className="font-bold text-lg flex items-center gap-3 tracking-tight">
+                {/* ✅ LOGO EN HEADER MÓVIL */}
+                <div className="bg-white p-1 rounded-md shadow-sm w-8 h-8 flex items-center justify-center">
+                    <img src={logo} alt="Logo" className="w-full h-full object-contain" />
+                </div>
                 <span>Bisne con Talla</span>
             </div>
+
             <div className="flex items-center gap-3">
-                <button 
-                    onClick={handleManualSync}
-                    className={`flex items-center justify-center w-9 h-9 rounded-full transition-all ${isSyncing || pendingCount > 0 ? 'bg-[#F59E0B] text-[#0B3B68] animate-pulse' : 'bg-[#7AC142] text-[#0B3B68]'}`}
-                >
+                <button onClick={handleManualSync} className={`flex items-center justify-center w-9 h-9 rounded-full transition-all ${isSyncing || pendingCount > 0 ? 'bg-[#F59E0B] text-[#0B3B68] animate-pulse' : 'bg-[#7AC142] text-[#0B3B68]'}`}>
                     {isSyncing ? <RefreshCw size={18} className="animate-spin"/> : pendingCount > 0 ? <Cloud size={18}/> : <CheckCircle2 size={18}/>}
                 </button>
             </div>
@@ -223,7 +202,10 @@ export function Layout({ currentStaff }: LayoutProps) {
                 <div className="relative bg-[#F3F4F6] w-4/5 max-w-xs h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 border-l border-gray-200">
                     <div className="p-6 bg-[#0B3B68] text-white">
                         <div className="flex justify-between items-center mb-6">
-                           <img src={logo} alt="Logo" className="w-10 h-10 object-contain"/>
+                           {/* ✅ LOGO EN EL MENÚ MÓVIL DESPLEGABLE */}
+                           <div className="bg-white p-1.5 rounded-xl shadow-lg w-12 h-12 flex items-center justify-center">
+                             <img src={logo} alt="Logo" className="w-full h-full object-contain" />
+                           </div>
                            <button onClick={() => setIsMobileMenuOpen(false)} className="bg-white/10 p-2 rounded-full hover:bg-white/20 text-white"><X size={20}/></button>
                         </div>
                         <h2 className="text-xl font-bold text-white mb-1">Menú Principal</h2>
@@ -234,8 +216,7 @@ export function Layout({ currentStaff }: LayoutProps) {
                         {menuItems.filter(i => i.show).map(item => {
                              const isActive = location.pathname === item.path;
                              return (
-                                <Link key={item.path} to={item.path} onClick={() => setIsMobileMenuOpen(false)} 
-                                    className={`flex items-center gap-4 p-4 rounded-xl transition-all ${isActive ? 'bg-[#0B3B68] text-white shadow-md font-bold' : 'text-[#1F2937] hover:bg-gray-100'}`}>
+                                <Link key={item.path} to={item.path} onClick={() => setIsMobileMenuOpen(false)} className={`flex items-center gap-4 p-4 rounded-xl transition-all ${isActive ? 'bg-[#0B3B68] text-white shadow-md font-bold' : 'text-[#1F2937] hover:bg-gray-100'}`}>
                                     <span className={isActive ? 'text-[#7AC142]' : 'text-[#0B3B68]'}>{item.icon}</span>
                                     <span>{item.label}</span>
                                 </Link>
