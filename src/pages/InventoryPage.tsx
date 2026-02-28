@@ -4,7 +4,7 @@ import { db, type Product, type Staff, type InventoryMovement } from '../lib/db'
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
     Plus, Search, Edit2, Trash2, Package, Loader2, History as HistoryIcon, 
-    LayoutList, ClipboardEdit, AlertTriangle, ArrowRightLeft, X 
+    LayoutList, ClipboardEdit, AlertTriangle, ArrowRightLeft, X, Download 
 } from 'lucide-react';
 import { syncPush, addToQueue } from '../lib/sync';
 import { currency } from '../lib/currency';
@@ -207,6 +207,48 @@ export function InventoryPage() {
       }
   };
 
+  // ✅ NUEVA FUNCIÓN: EXPORTAR A EXCEL (CSV)
+  const handleExportCSV = () => {
+    if (products.length === 0) {
+        toast.error("No hay productos para exportar");
+        return;
+    }
+
+    // Cabeceras del Excel
+    const headers = ['Nombre del Producto', 'SKU', 'Categoría', 'Precio Venta', 'Costo', 'Stock Actual', 'Unidad de Medida'];
+    
+    // Convertir productos a formato de filas
+    const csvRows = products.map(p => {
+        return [
+            `"${p.name.replace(/"/g, '""')}"`, // Evita que comas en el nombre rompan el Excel
+            `"${p.sku || ''}"`,
+            `"${p.category || 'General'}"`,
+            p.price,
+            p.cost || 0,
+            p.stock,
+            `"${p.unit || 'un'}"`
+        ].join(',');
+    });
+
+    // Unir cabeceras y filas
+    const csvContent = [headers.join(','), ...csvRows].join('\n');
+    
+    // Crear el archivo con soporte para tildes y eñes (BOM UTF-8)
+    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    
+    // Forzar la descarga
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Inventario_Bisne_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    toast.success("Inventario exportado correctamente");
+  };
+
   const openEdit = (p: Product) => {
       setEditingProduct(p);
       setFormData({
@@ -260,8 +302,8 @@ export function InventoryPage() {
         </div>
 
         {activeTab === 'stock' && (
-            <div className="flex gap-2 w-full md:w-auto">
-                <div className="relative flex-1 md:w-64 group">
+            <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                <div className="relative flex-1 md:w-56 group">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-4 h-4 group-focus-within:text-[#0B3B68]" />
                     <input 
                         type="text" 
@@ -271,9 +313,19 @@ export function InventoryPage() {
                         className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0B3B68] outline-none shadow-sm transition-all text-[#1F2937]"
                     />
                 </div>
+                
+                {/* ✅ BOTÓN DE EXPORTAR A EXCEL */}
+                <button 
+                    onClick={handleExportCSV}
+                    className="bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50 hover:text-[#0B3B68] px-3 py-2.5 rounded-xl flex items-center gap-2 font-bold text-sm transition-colors shadow-sm"
+                    title="Exportar a Excel"
+                >
+                    <Download size={18}/> <span className="hidden sm:inline">Exportar</span>
+                </button>
+
                 <button 
                     onClick={() => { resetForm(); setIsFormOpen(true); }}
-                    className="bg-[#7AC142] hover:bg-[#7AC142]/90 text-white px-4 py-2 rounded-xl flex items-center gap-2 font-bold text-sm transition-colors shadow-lg shadow-[#7AC142]/20"
+                    className="bg-[#7AC142] hover:bg-[#7AC142]/90 text-white px-4 py-2.5 rounded-xl flex items-center gap-2 font-bold text-sm transition-colors shadow-lg shadow-[#7AC142]/20"
                 >
                     <Plus size={18}/> <span className="hidden sm:inline">Nuevo</span>
                 </button>

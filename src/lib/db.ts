@@ -40,6 +40,7 @@ export interface Sale {
   payment_method: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto';
   amount_tendered?: number;
   change?: number;
+  status?: 'completed' | 'voided'; // ✅ ESTADO DE LA VENTA
   sync_status: 'synced' | 'pending_create' | 'pending_update';
 }
 
@@ -60,6 +61,7 @@ export interface BusinessConfig {
   address?: string;
   phone?: string;
   receipt_message?: string;
+  master_pin?: string; // ✅ PIN MAESTRO AÑADIDO
   subscription_expires_at?: string;
   last_check?: string;
   status?: 'active' | 'suspended' | 'pending';
@@ -99,7 +101,7 @@ export interface Staff {
   pin: string;
   active: boolean;
   business_id: string;
-  sync_status?: 'synced' | 'pending_create' | 'pending_update'; // ✅ AÑADIDO PARA LA NUBE
+  sync_status?: 'synced' | 'pending_create' | 'pending_update';
 }
 
 export interface CashRegister {
@@ -150,6 +152,7 @@ export interface AuditLog {
 }
 
 export type SalePayload = { sale: Sale; items: SaleItem[] };
+export type VoidSalePayload = { saleId: string }; // ✅ PAYLOAD PARA ANULAR VENTA
 
 export type QueuePayload = 
     | SalePayload 
@@ -160,11 +163,12 @@ export type QueuePayload =
     | BusinessConfig
     | CashShift      
     | CashMovement
-    | Staff; // ✅ AÑADIDO STAFF
+    | Staff
+    | VoidSalePayload;
 
 export interface QueueItem {
   id: string;
-  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT' | 'STAFF_SYNC'; // ✅ AÑADIDO STAFF_SYNC
+  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT' | 'STAFF_SYNC' | 'VOID_SALE';
   payload: QueuePayload; 
   timestamp: number;
   retries: number;

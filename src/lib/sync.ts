@@ -10,7 +10,8 @@ import {
   type BusinessConfig,
   type CashShift,
   type CashMovement,
-  type Staff // ✅ Importamos Staff
+  type Staff,
+  type VoidSalePayload
 } from './db';
 import { supabase } from './supabase';
 import type { Table } from 'dexie';
@@ -103,7 +104,13 @@ async function processItem(item: QueueItem) {
     }
     case 'SETTINGS_SYNC': {
       const config = payload as BusinessConfig;
-      const updateData = { name: config.name, address: config.address, phone: config.phone, receipt_message: config.receipt_message };
+      const updateData = { 
+          name: config.name, 
+          address: config.address, 
+          phone: config.phone, 
+          receipt_message: config.receipt_message,
+          master_pin: config.master_pin
+      };
       const { error } = await supabase.from('businesses').update(updateData).eq('id', config.id);
       if (error) throw new Error(`Error negocio: ${error.message}`);
       await db.settings.update(config.id, { sync_status: 'synced' });
@@ -127,7 +134,6 @@ async function processItem(item: QueueItem) {
         await db.cash_movements.update(mov.id, { sync_status: 'synced' });
         break;
     }
-    // ✅ NUEVO: LÓGICA DE SINCRONIZACIÓN DE STAFF
     case 'STAFF_SYNC': {
         const staff = payload as Staff;
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -135,6 +141,13 @@ async function processItem(item: QueueItem) {
         const { error } = await supabase.from('staff').upsert(cleanStaff);
         if (error) throw new Error(`Error sincronizando usuario: ${error.message}`);
         await db.staff.update(staff.id, { sync_status: 'synced' });
+        break;
+    }
+    case 'VOID_SALE': {
+        const { saleId } = payload as VoidSalePayload;
+        const { error } = await supabase.from('sales').update({ status: 'voided' }).eq('id', saleId);
+        if (error) throw new Error(`Error anulando venta: ${error.message}`);
+        await db.sales.update(saleId, { sync_status: 'synced' });
         break;
     }
     default:
@@ -207,7 +220,7 @@ export async function syncCriticalData(businessId: string) {
   try {
     const [businessResult, staffResult, registersResult, shiftsResult] = await Promise.all([
       supabase.from('businesses').select('*').eq('id', businessId).single(),
-      supabase.from('staff').select('*').eq('business_id', businessId), // ✅ Ahora descarga todo el staff
+      supabase.from('staff').select('*').eq('business_id', businessId),
       supabase.from('cash_registers').select('*').eq('business_id', businessId),
       supabase.from('cash_shifts').select('*').eq('business_id', businessId).eq('status', 'open')
     ]);
@@ -216,13 +229,13 @@ export async function syncCriticalData(businessId: string) {
       await db.settings.put({
         id: businessResult.data.id, name: businessResult.data.name, address: businessResult.data.address,
         phone: businessResult.data.phone, receipt_message: businessResult.data.receipt_message,
+        master_pin: businessResult.data.master_pin, 
         subscription_expires_at: businessResult.data.subscription_expires_at, status: businessResult.data.status as any,
         last_check: new Date().toISOString(), sync_status: 'synced'
       });
     }
 
     if (staffResult.data) {
-      // ✅ Utilizamos safeBulkPut para no borrar al staff local si no se ha subido
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const cleanStaff = staffResult.data.map((s: any) => ({ ...s, sync_status: 'synced' }));
       await safeBulkPut(db.staff as never, cleanStaff);

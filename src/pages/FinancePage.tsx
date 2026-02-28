@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff } from '../lib/db';
+import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff, type InventoryMovement } from '../lib/db';
 import { addToQueue, syncPull, syncPush } from '../lib/sync';
 import { logAuditAction } from '../lib/audit';
 import { currency } from '../lib/currency';
@@ -15,12 +15,11 @@ import {
   Calendar, TrendingUp, ArrowLeft, ArrowRight, RefreshCw,
   BarChart3, DollarSign, Wallet, PieChart as PieChartIcon, ClipboardCheck,
   Printer, Trophy, Lock, Unlock, PlusCircle, MinusCircle, ShoppingBag, Loader2, X,
-  ArrowRightLeft
+  ArrowRightLeft, History, Ban
 } from 'lucide-react';
 
 const EMPTY_ARRAY: never[] = [];
 
-// --- HELPER PARA BLINDAR NÚMEROS ---
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const safeFloat = (val: any): number => {
   const num = parseFloat(val);
@@ -30,7 +29,7 @@ const safeFloat = (val: any): number => {
 export function FinancePage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
 
-  const [viewMode, setViewMode] = useState<'control' | 'daily' | 'trends' | 'closing'>('control');
+  const [viewMode, setViewMode] = useState<'control' | 'history' | 'daily' | 'trends' | 'closing'>('control');
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
   const [movementType, setMovementType] = useState<'in' | 'out' | null>(null);
@@ -38,12 +37,18 @@ export function FinancePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
+  // ESTADOS DEL PIN PAD (Incluye 'void_sale' para anular ventas)
+  const [pinModal, setPinModal] = useState<{isOpen: boolean, action: 'out' | 'close' | 'void_sale' | null, data?: any}>({isOpen: false, action: null});
+  const [pinInput, setPinInput] = useState('');
+
   const today = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState(today);
   const [selectedTicket, setSelectedTicket] = useState<Sale | null>(null);
   const [trendFilter, setTrendFilter] = useState<'week' | 'month'>('week');
 
-  // 1. CARGA DE TURNO
+  const businessSettings = useLiveQuery(() => db.settings.toArray());
+  const masterPin = businessSettings && businessSettings.length > 0 ? (businessSettings[0].master_pin || '1234') : '1234';
+
   const activeShift = useLiveQuery(async () => {
     let bId = localStorage.getItem('nexus_business_id');
     if (!bId) {
@@ -56,7 +61,6 @@ export function FinancePage() {
     return shift || null; 
   }, []);
 
-  // 2. CARGA DE DATOS DEL TURNO
   const shiftData = useLiveQuery(async () => {
     if (activeShift === undefined) return undefined;
     if (activeShift === null) return null;
@@ -78,13 +82,12 @@ export function FinancePage() {
   const allSales = useLiveQuery<Sale[]>(async () => {
     let bId = localStorage.getItem('nexus_business_id');
     if (!bId) return [];
-    if (viewMode !== 'daily' && viewMode !== 'trends' && viewMode !== 'closing') return [];
+    if (viewMode !== 'history' && viewMode !== 'daily' && viewMode !== 'trends' && viewMode !== 'closing') return [];
     
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const cutoffDate = thirtyDaysAgo.toISOString();
     
-    return await db.sales.where('business_id').equals(bId).filter(s => s.date >= cutoffDate).toArray();
+    return await db.sales.where('business_id').equals(bId).filter(s => s.date >= thirtyDaysAgo.toISOString()).reverse().sortBy('date');
   }, [viewMode]) || EMPTY_ARRAY;
 
   useEffect(() => {
@@ -97,13 +100,11 @@ export function FinancePage() {
     if (!activeShift || !shiftData || !shiftData.sales || !shiftData.movements) return null;
     
     const startAmount = safeFloat(activeShift.start_amount);
-    const totalSales = shiftData.sales.reduce((sum, s) => sum + safeFloat(s.total), 0);
-    const cashSales = shiftData.sales
-      .filter(s => {
-          const method = s.payment_method?.toLowerCase() || 'efectivo';
-          return method === 'efectivo' || method === 'mixto';
-      })
-      .reduce((sum, s) => sum + safeFloat(s.total), 0); 
+    // Ignoramos ventas anuladas para no contarlas como ganancia en caja
+    const validSales = shiftData.sales.filter(s => s.status !== 'voided');
+    
+    const totalSales = validSales.reduce((sum, s) => sum + safeFloat(s.total), 0);
+    const cashSales = validSales.filter(s => ['efectivo', 'mixto'].includes(s.payment_method?.toLowerCase() || 'efectivo')).reduce((sum, s) => sum + safeFloat(s.total), 0); 
     
     const cashIn = shiftData.movements.filter(m => m.type === 'in').reduce((sum, m) => sum + safeFloat(m.amount), 0);
     const cashOut = shiftData.movements.filter(m => m.type === 'out').reduce((sum, m) => sum + safeFloat(m.amount), 0);
@@ -123,7 +124,7 @@ export function FinancePage() {
   }, [products]);
 
   const dailyStats = useMemo(() => {
-    const salesForDay = allSales.filter((sale) => sale.date.startsWith(selectedDate));
+    const salesForDay = allSales.filter((sale) => sale.date.startsWith(selectedDate) && sale.status !== 'voided');
     let revenue = 0, cost = 0;
     const hourlyCounts: Record<string, number> = {};
     const categoryCounts: Record<string, number> = {};
@@ -158,15 +159,14 @@ export function FinancePage() {
     const chartData = Object.entries(hourlyCounts).map(([time, total]) => ({ time, total }));
     const pieData = Object.entries(categoryCounts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
 
-    return { sales: salesForDay.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()), revenue, profit, cost, margin, chartData, pieData, bestSeller };
+    return { sales: salesForDay, revenue, profit, cost, margin, chartData, pieData, bestSeller };
   }, [allSales, selectedDate, productMeta]);
 
   const closingStats = useMemo(() => {
-    const sales = dailyStats.sales;
     let cashTotal = 0, transferTotal = 0, cardTotal = 0;
     const productSummary: Record<string, { quantity: number, total: number }> = {};
 
-    sales.forEach((sale) => {
+    dailyStats.sales.forEach((sale) => {
       const saleTotal = safeFloat(sale.total);
       const method = sale.payment_method?.toLowerCase() || 'efectivo';
       if (method === 'efectivo') cashTotal += saleTotal;
@@ -181,15 +181,14 @@ export function FinancePage() {
     });
 
     const productsList = Object.entries(productSummary).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.quantity - a.quantity);
-    return { cashTotal, transferTotal, cardTotal, productsList, ticketCount: sales.length };
+    return { cashTotal, transferTotal, cardTotal, productsList, ticketCount: dailyStats.sales.length };
   }, [dailyStats.sales]);
 
   const trendStats = useMemo(() => {
-    const now = new Date();
     const daysToShow = trendFilter === 'week' ? 7 : 30;
     const cutoffDate = new Date();
-    cutoffDate.setDate(now.getDate() - daysToShow);
-    const filteredSales = allSales.filter((s) => new Date(s.date) >= cutoffDate);
+    cutoffDate.setDate(new Date().getDate() - daysToShow);
+    const filteredSales = allSales.filter((s) => new Date(s.date) >= cutoffDate && s.status !== 'voided');
 
     let totalRevenue = 0, totalCost = 0;
     const salesByDate: Record<string, number> = {};
@@ -295,7 +294,7 @@ export function FinancePage() {
   };
 
   const handleMovement = async () => {
-    const currentShift = activeShift; // Guardamos para TypeScript
+    const currentShift = activeShift;
     if (!currentShift || !movementType) return;
     const val = safeFloat(amount);
     
@@ -339,7 +338,7 @@ export function FinancePage() {
   };
 
   const handleCloseShift = async () => {
-    const currentShift = activeShift; // Guardamos para TypeScript
+    const currentShift = activeShift;
     if (!currentShift || !shiftStats) return;
     const finalCount = safeFloat(amount);
     
@@ -379,14 +378,68 @@ export function FinancePage() {
     }
   };
 
+  // ✅ NUEVA FUNCIÓN: ANULAR VENTA Y DEVOLVER INVENTARIO
+  const handleVoidSale = async (sale: Sale) => {
+      setIsLoading(true);
+      try {
+          const { bId, sId } = await getActiveCredentials();
+          const safeBid = bId || sale.business_id;
+
+          await db.transaction('rw', [db.sales, db.products, db.movements, db.cash_movements, db.action_queue, db.audit_logs], async () => {
+              // 1. Marcar venta como anulada
+              await db.sales.update(sale.id, { status: 'voided', sync_status: 'pending_update' });
+              await addToQueue('VOID_SALE', { saleId: sale.id });
+
+              // 2. Devolver stock de cada producto
+              for (const item of sale.items) {
+                  const product = await db.products.get(item.product_id);
+                  if (product) {
+                      const newStock = product.stock + item.quantity;
+                      await db.products.update(product.id, { stock: newStock, sync_status: 'pending_update' });
+                      await addToQueue('PRODUCT_SYNC', { ...product, stock: newStock, sync_status: 'pending_update' });
+                      
+                      const mov: InventoryMovement = {
+                          id: crypto.randomUUID(), business_id: safeBid, product_id: product.id,
+                          qty_change: item.quantity, reason: `Devolución - Venta #${sale.id.slice(0,6)}`,
+                          created_at: new Date().toISOString(), staff_id: sId, sync_status: 'pending_create'
+                      };
+                      await db.movements.add(mov);
+                      await addToQueue('MOVEMENT', mov);
+                  }
+              }
+
+              // 3. Si la venta es de un turno ANTERIOR, registrar retiro de caja en el turno actual
+              if (activeShift && sale.shift_id !== activeShift.id && ['efectivo', 'mixto'].includes(sale.payment_method)) {
+                  const cashMov: CashMovement = {
+                      id: crypto.randomUUID(), shift_id: activeShift.id, business_id: safeBid, type: 'out',
+                      amount: sale.total, reason: `Reembolso Venta Anterior #${sale.id.slice(0,6)}`,
+                      staff_id: sId, created_at: new Date().toISOString(), sync_status: 'pending_create'
+                  };
+                  await db.cash_movements.add(cashMov);
+                  await addToQueue('CASH_MOVEMENT', cashMov);
+              }
+
+              // 4. Log
+              await logAuditAction('VOID_SALE', { sale_id: sale.id, amount: sale.total }, { id: sId, name: currentStaff?.name || 'Admin', business_id: safeBid } as any);
+          });
+          toast.success("Venta anulada y stock restaurado");
+          syncPush().catch(()=>{});
+      } catch (error) {
+          console.error(error);
+          toast.error("Error al anular la venta");
+      } finally {
+          setIsLoading(false);
+      }
+  };
+
   const changeDate = (days: number) => {
     const d = new Date(selectedDate); d.setDate(d.getDate() + days);
     const newStr = d.toISOString().split('T')[0]; if (newStr <= today) setSelectedDate(newStr);
   };
+  
   const handlePrint = () => window.print();
   const COLORS = ['#0B3B68', '#7AC142', '#F59E0B', '#EF4444', '#6B7280'];
 
-  // PANTALLAS DE CARGA Y APERTURA (Con verificación estricta para TypeScript)
   if (activeShift === undefined || isInitialLoad) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-[#F3F4F6]">
@@ -442,7 +495,6 @@ export function FinancePage() {
     );
   }
 
-  // --- UI: DASHBOARD FINANCIERO (Aquí activeShift ya es un objeto seguro) ---
   return (
     <div className="p-4 md:p-6 pb-24 md:pb-6 min-h-screen bg-[#F3F4F6] print:bg-white print:p-0">
       
@@ -459,6 +511,10 @@ export function FinancePage() {
         <div className="flex bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm overflow-x-auto max-w-full scrollbar-hide">
           <button onClick={() => setViewMode('control')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${viewMode === 'control' ? 'bg-[#0B3B68] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}>
             <Wallet size={16} /> Control
+          </button>
+          <div className="w-px h-6 bg-gray-200 mx-1 self-center"></div>
+          <button onClick={() => setViewMode('history')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${viewMode === 'history' ? 'bg-[#0B3B68] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}>
+            <History size={16} /> Historial
           </button>
           <div className="w-px h-6 bg-gray-200 mx-1 self-center"></div>
           <button onClick={() => setViewMode('daily')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${viewMode === 'daily' ? 'bg-[#0B3B68] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}>
@@ -480,7 +536,7 @@ export function FinancePage() {
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
                <p className="text-[#6B7280] text-[10px] font-bold uppercase tracking-wider mb-1 flex items-center gap-1"><ShoppingBag size={12}/> Total Ventas</p>
                <h3 className="text-2xl font-black text-[#1F2937]">{formatMoney(shiftStats.totalSales)}</h3>
-               <p className="text-[10px] text-[#6B7280] mt-1">Todos los métodos</p>
+               <p className="text-[10px] text-[#6B7280] mt-1">Todas las confirmadas</p>
             </div>
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
                <p className="text-[#6B7280] text-[10px] font-bold uppercase tracking-wider mb-1">Base Inicial</p>
@@ -509,11 +565,11 @@ export function FinancePage() {
                 <div className="bg-[#7AC142]/20 text-[#7AC142] p-2 rounded-lg group-hover:bg-[#7AC142]/30 transition-colors"><PlusCircle size={20}/></div>
                 <span>Ingreso Dinero</span>
              </button>
-             <button onClick={() => { setMovementType('out'); setAmount(''); }} className="group flex items-center justify-center gap-3 p-4 bg-[#EF4444]/10 text-[#EF4444] rounded-2xl border border-[#EF4444]/20 hover:bg-[#EF4444]/20 font-bold transition-all active:scale-[0.98]">
+             <button onClick={() => setPinModal({isOpen: true, action: 'out'})} className="group flex items-center justify-center gap-3 p-4 bg-[#EF4444]/10 text-[#EF4444] rounded-2xl border border-[#EF4444]/20 hover:bg-[#EF4444]/20 font-bold transition-all active:scale-[0.98]">
                 <div className="bg-[#EF4444]/20 text-[#EF4444] p-2 rounded-lg group-hover:bg-[#EF4444]/30 transition-colors"><MinusCircle size={20}/></div>
                 <span>Retiro Dinero</span>
              </button>
-             <button onClick={() => { setIsClosing(true); setAmount(''); }} className="group flex items-center justify-center gap-3 p-4 bg-white text-[#1F2937] rounded-2xl border border-gray-200 hover:bg-gray-50 hover:border-gray-300 font-bold transition-all active:scale-[0.98]">
+             <button onClick={() => setPinModal({isOpen: true, action: 'close'})} className="group flex items-center justify-center gap-3 p-4 bg-white text-[#1F2937] rounded-2xl border border-gray-200 hover:bg-gray-50 hover:border-gray-300 font-bold transition-all active:scale-[0.98]">
                 <div className="bg-gray-100 text-[#6B7280] p-2 rounded-lg group-hover:bg-gray-200 transition-colors"><Lock size={20} /></div>
                 <span>Cerrar Turno</span>
              </button>
@@ -547,7 +603,9 @@ export function FinancePage() {
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
                     <h3 className="font-bold text-[#1F2937] text-sm flex items-center gap-2"><ShoppingBag className="text-[#6B7280]" size={16}/> Ventas Recientes</h3>
-                    <span className="text-[10px] bg-[#0B3B68]/10 text-[#0B3B68] px-2 py-0.5 rounded-full font-bold">{shiftData?.sales.length || 0}</span>
+                    <span className="text-[10px] bg-[#0B3B68]/10 text-[#0B3B68] px-2 py-0.5 rounded-full font-bold">
+                        {shiftData?.sales.filter(s => s.status !== 'voided').length || 0}
+                    </span>
                 </div>
                 <div className="overflow-x-auto max-h-60">
                     <table className="mobile-card-table w-full text-sm text-left">
@@ -555,19 +613,73 @@ export function FinancePage() {
                         <tr><th className="p-3">Hora</th><th className="p-3">Método</th><th className="p-3 text-right">Total</th></tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                        {shiftData?.sales.slice().reverse().map(s => (
+                        {shiftData?.sales.filter(s => s.status !== 'voided').slice().reverse().map(s => (
                             <tr key={s.id} onClick={() => setSelectedTicket(s)} className="cursor-pointer hover:bg-[#0B3B68]/5 transition-colors group">
                                 <td className="p-3 text-[#6B7280] text-xs font-mono group-hover:text-[#0B3B68]" data-label="Hora">{new Date(s.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
                                 <td className="p-3" data-label="Método"><span className="px-2 py-0.5 bg-gray-100 text-[#6B7280] rounded text-[10px] font-bold uppercase border border-gray-200">{s.payment_method}</span></td>
                                 <td className="p-3 text-right font-bold text-[#1F2937] text-xs" data-label="Total">{formatMoney(s.total)}</td>
                             </tr>
                         ))}
-                        {shiftData?.sales.length === 0 && <tr><td colSpan={3} className="p-8 text-center text-[#6B7280] italic text-xs">Sin ventas en este turno</td></tr>}
+                        {shiftData?.sales.filter(s => s.status !== 'voided').length === 0 && <tr><td colSpan={3} className="p-8 text-center text-[#6B7280] italic text-xs">Sin ventas en este turno</td></tr>}
                         </tbody>
                     </table>
                 </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ✅ VISTA: HISTORIAL Y DEVOLUCIONES */}
+      {viewMode === 'history' && (
+        <div className="animate-in fade-in zoom-in-95 duration-300">
+           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="p-5 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+                  <h2 className="text-lg font-bold text-[#1F2937] flex items-center gap-2">
+                      <History className="text-[#0B3B68]"/> Historial (Últimos 30 días)
+                  </h2>
+              </div>
+              <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                      <thead className="text-[#6B7280] font-bold uppercase text-xs bg-white border-b border-gray-200">
+                          <tr>
+                              <th className="p-4">Fecha y Hora</th>
+                              <th className="p-4">Método</th>
+                              <th className="p-4 text-center">Estado</th>
+                              <th className="p-4 text-right">Total</th>
+                              <th className="p-4 text-center">Acciones</th>
+                          </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                          {allSales.map(sale => (
+                              <tr key={sale.id} className={`transition-colors ${sale.status === 'voided' ? 'bg-red-50/50 opacity-60' : 'hover:bg-gray-50'}`}>
+                                  <td className="p-4 font-mono text-[#6B7280]">
+                                      {new Date(sale.date).toLocaleDateString()} <span className="ml-2">{new Date(sale.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                                  </td>
+                                  <td className="p-4 uppercase text-xs font-bold text-[#1F2937]">{sale.payment_method}</td>
+                                  <td className="p-4 text-center">
+                                      {sale.status === 'voided' 
+                                          ? <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full text-[10px] font-black uppercase">Anulada</span>
+                                          : <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-[10px] font-black uppercase">Completada</span>
+                                      }
+                                  </td>
+                                  <td className="p-4 text-right font-black text-[#1F2937]">{formatMoney(sale.total)}</td>
+                                  <td className="p-4">
+                                      <div className="flex justify-center gap-2">
+                                          <button onClick={() => setSelectedTicket(sale)} className="px-3 py-1.5 bg-gray-100 text-[#1F2937] rounded-lg font-bold text-xs hover:bg-gray-200 transition-colors">Ver</button>
+                                          {sale.status !== 'voided' && (
+                                              <button onClick={() => setPinModal({isOpen: true, action: 'void_sale', data: sale})} className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg font-bold text-xs hover:bg-red-100 transition-colors flex items-center gap-1">
+                                                  <Ban size={12}/> Anular
+                                              </button>
+                                          )}
+                                      </div>
+                                  </td>
+                              </tr>
+                          ))}
+                          {allSales.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-[#6B7280]">No hay ventas registradas.</td></tr>}
+                      </tbody>
+                  </table>
+              </div>
+           </div>
         </div>
       )}
 
@@ -587,7 +699,7 @@ export function FinancePage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 relative overflow-hidden group">
                <div className="relative">
-                  <p className="text-[#6B7280] text-xs font-bold uppercase mb-1 flex items-center gap-1"><DollarSign size={14} /> Ventas</p>
+                  <p className="text-[#6B7280] text-xs font-bold uppercase mb-1 flex items-center gap-1"><DollarSign size={14} /> Ventas (Neto)</p>
                   <h3 className="text-2xl font-bold text-[#1F2937]">{formatMoney(dailyStats.revenue)}</h3>
                </div>
             </div>
@@ -639,9 +751,9 @@ export function FinancePage() {
              <button onClick={() => setTrendFilter('month')} className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${trendFilter === 'month' ? 'bg-[#0B3B68] text-white shadow-md' : 'bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50'}`}>Últimos 30 días</button>
           </div>
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
-             <h4 className="font-bold text-[#1F2937] mb-4 text-sm">Evolución de Ingresos</h4>
+             <h4 className="font-bold text-[#1F2937] mb-4 text-sm">Evolución de Ingresos Netos</h4>
              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={trendStats.chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="date" fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} /><YAxis fontSize={10} axisLine={false} tickLine={false} tickFormatter={v => `$${v}`} tick={{fill: '#94a3b8'}} /><Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="total" fill="#7AC142" radius={[4,4,0,0]} barSize={40} /></BarChart>
+                 <BarChart data={trendStats.chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="date" fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} /><YAxis fontSize={10} axisLine={false} tickLine={false} tickFormatter={v => `$${v}`} tick={{fill: '#94a3b8'}} /><Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="total" fill="#7AC142" radius={[4,4,0,0]} barSize={40} /></BarChart>
              </ResponsiveContainer>
           </div>
         </div>
@@ -658,122 +770,147 @@ export function FinancePage() {
           </div>
           <div className="bg-white p-8 rounded-none md:rounded-3xl shadow-lg border border-gray-200 print:shadow-none print:border-none print:p-0">
              <div className="text-center mb-8 border-b border-dashed border-gray-300 pb-6">
-                <h1 className="text-2xl font-black text-[#0B3B68] uppercase tracking-widest mb-2">REPORTE Z</h1>
-                <p className="text-[#6B7280] font-mono text-xs">Bisne con Talla POS</p>
-                <p className="text-sm text-[#6B7280] mt-1">Fecha: {new Date(selectedDate).toLocaleDateString()}</p>
+                 <h1 className="text-2xl font-black text-[#0B3B68] uppercase tracking-widest mb-2">REPORTE Z</h1>
+                 <p className="text-[#6B7280] font-mono text-xs">Bisne con Talla POS</p>
+                 <p className="text-sm text-[#6B7280] mt-1">Fecha: {new Date(selectedDate).toLocaleDateString()}</p>
              </div>
              <div className="mb-8">
-               <div className="space-y-3 font-mono text-sm text-[#1F2937]">
-                 <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Efectivo</span><span className="font-bold">{formatMoney(closingStats.cashTotal)}</span></div>
-                 <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Tarjeta</span><span className="font-bold">{formatMoney(closingStats.cardTotal)}</span></div>
-                 <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Transferencia</span><span className="font-bold">{formatMoney(closingStats.transferTotal)}</span></div>
-                 <div className="border-t-2 border-[#0B3B68] pt-3 flex justify-between text-lg font-black mt-2"><span>TOTAL</span><span>{formatMoney(closingStats.cashTotal + closingStats.transferTotal + closingStats.cardTotal)}</span></div>
-               </div>
+                 <div className="space-y-3 font-mono text-sm text-[#1F2937]">
+                     <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Efectivo</span><span className="font-bold">{formatMoney(closingStats.cashTotal)}</span></div>
+                     <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Tarjeta</span><span className="font-bold">{formatMoney(closingStats.cardTotal)}</span></div>
+                     <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Transferencia</span><span className="font-bold">{formatMoney(closingStats.transferTotal)}</span></div>
+                     <div className="border-t-2 border-[#0B3B68] pt-3 flex justify-between text-lg font-black mt-2"><span>TOTAL NETO</span><span>{formatMoney(closingStats.cashTotal + closingStats.transferTotal + closingStats.cardTotal)}</span></div>
+                 </div>
              </div>
              <div>
-               <h3 className="text-xs font-bold text-[#6B7280] uppercase mb-4 tracking-wider">Desglose de Productos</h3>
-               {closingStats.productsList.length > 0 ? (
-                 <table className="w-full text-sm font-mono text-[#1F2937]">
-                    <thead className="text-[#6B7280] border-b border-gray-200 text-[10px] uppercase">
-                        <tr><th className="text-left py-2">Cant</th><th className="text-left py-2">Descripción</th><th className="text-right py-2">Total</th></tr>
-                    </thead>
-                    <tbody className="divide-y divide-dashed divide-gray-200">
-                        {closingStats.productsList.map((p, i) => (
-                            <tr key={i}><td className="py-2 w-12 font-bold">{p.quantity}</td><td className="py-2 text-xs">{p.name}</td><td className="py-2 text-right">{formatMoney(p.total)}</td></tr>
-                        ))}
-                    </tbody>
-                 </table>
-               ) : <p className="text-center text-[#6B7280] italic text-xs">Sin movimientos.</p>}
+                 <h3 className="text-xs font-bold text-[#6B7280] uppercase mb-4 tracking-wider">Desglose de Productos Vendidos</h3>
+                 {closingStats.productsList.length > 0 ? (
+                     <table className="w-full text-sm font-mono text-[#1F2937]">
+                         <thead className="text-[#6B7280] border-b border-gray-200 text-[10px] uppercase">
+                             <tr><th className="text-left py-2">Cant</th><th className="text-left py-2">Descripción</th><th className="text-right py-2">Total</th></tr>
+                         </thead>
+                         <tbody className="divide-y divide-dashed divide-gray-200">
+                             {closingStats.productsList.map((p, i) => (
+                                 <tr key={i}><td className="py-2 w-12 font-bold">{p.quantity}</td><td className="py-2 text-xs">{p.name}</td><td className="py-2 text-right">{formatMoney(p.total)}</td></tr>
+                             ))}
+                         </tbody>
+                     </table>
+                 ) : <p className="text-center text-[#6B7280] italic text-xs">Sin movimientos.</p>}
              </div>
           </div>
         </div>
       )}
 
-      {movementType && (
-        <div className="fixed inset-0 bg-[#0B3B68]/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
-              <div className="flex justify-between items-center mb-4">
-                  <h2 className={`text-xl font-black flex items-center gap-2 ${movementType === 'in' ? 'text-[#7AC142]' : 'text-[#EF4444]'}`}>
-                    {movementType === 'in' ? <PlusCircle className="fill-current"/> : <MinusCircle className="fill-current"/>} 
-                    {movementType === 'in' ? 'INGRESO' : 'RETIRO'}
-                  </h2>
-                  <button onClick={() => { setMovementType(null); setAmount(''); setReason(''); }}><X className="text-[#6B7280] hover:text-[#1F2937]"/></button>
+      {/* ✅ PIN PAD MODAL PARA RETIROS, CIERRES Y ANULACIONES */}
+      {pinModal.isOpen && (
+        <div className="fixed inset-0 bg-[#0B3B68]/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+           <div className="bg-white rounded-3xl p-6 max-w-xs w-full shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
+              <div className="text-center mb-6">
+                  <div className="w-16 h-16 bg-[#EF4444]/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Lock className="text-[#EF4444] w-8 h-8" />
+                  </div>
+                  <h2 className="text-xl font-black text-[#1F2937]">Acceso Restringido</h2>
+                  <p className="text-xs text-[#6B7280] mt-1">Ingresa el PIN Maestro para continuar</p>
               </div>
               
-              <div className="space-y-4">
-                 <div>
-                    <label className="block text-[10px] font-bold text-[#6B7280] uppercase mb-1">Monto</label>
-                    <div className="relative">
-                        <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-4 h-4"/>
-                        <input 
-                            type="number" step="0.01" autoFocus 
-                            value={amount} onChange={e => setAmount(e.target.value)} 
-                            onKeyDown={(e) => { if(e.key === 'Enter') { e.preventDefault(); handleMovement(); } }}
-                            className="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-xl font-bold text-lg outline-none focus:ring-2 focus:ring-[#0B3B68]" 
-                        />
-                    </div>
-                 </div>
-                 <div>
-                    <label className="block text-[10px] font-bold text-[#6B7280] uppercase mb-1">Motivo</label>
-                    <input 
-                        type="text" required 
-                        value={reason} onChange={e => setReason(e.target.value)} 
-                        onKeyDown={(e) => { if(e.key === 'Enter') { e.preventDefault(); handleMovement(); } }}
-                        className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-[#0B3B68]" 
-                    />
-                 </div>
-                 <button 
-                    type="button" 
-                    onClick={(e) => { e.preventDefault(); handleMovement(); }}
-                    disabled={isLoading || amount === '' || reason === ''}
-                    className={`w-full py-3.5 font-bold text-white rounded-xl shadow-lg transition-all active:scale-[0.98] flex justify-center items-center gap-2 ${movementType === 'in' ? 'bg-[#7AC142]' : 'bg-[#EF4444]'}`}
-                 >
-                    {isLoading ? <Loader2 className="animate-spin"/> : 'CONFIRMAR'}
-                 </button>
+              <div className="mb-6">
+                  <div className="flex justify-center gap-3 mb-2">
+                      {[0,1,2,3].map(i => (
+                          <div key={i} className={`w-4 h-4 rounded-full transition-all ${pinInput.length > i ? 'bg-[#0B3B68] scale-110' : 'bg-gray-200'}`}></div>
+                      ))}
+                  </div>
               </div>
+
+              <div className="grid grid-cols-3 gap-3 mb-6">
+                  {[1,2,3,4,5,6,7,8,9].map(num => (
+                      <button key={num} onClick={() => { if(pinInput.length < 4) setPinInput(pinInput + num) }} className="py-4 bg-gray-50 hover:bg-gray-100 rounded-xl text-xl font-black text-[#1F2937] transition-colors active:scale-95">
+                          {num}
+                      </button>
+                  ))}
+                  <button onClick={() => { setPinModal({isOpen: false, action: null}); setPinInput(''); }} className="py-4 bg-red-50 hover:bg-red-100 rounded-xl text-red-500 font-bold transition-colors flex items-center justify-center">
+                      <X size={24}/>
+                  </button>
+                  <button onClick={() => { if(pinInput.length < 4) setPinInput(pinInput + '0') }} className="py-4 bg-gray-50 hover:bg-gray-100 rounded-xl text-xl font-black text-[#1F2937] transition-colors active:scale-95">
+                      0
+                  </button>
+                  <button onClick={() => setPinInput(pinInput.slice(0, -1))} className="py-4 bg-gray-50 hover:bg-gray-100 rounded-xl text-[#6B7280] font-bold transition-colors flex items-center justify-center">
+                      <ArrowLeft size={24}/>
+                  </button>
+              </div>
+
+              <button 
+                  onClick={() => {
+                      if (pinInput === masterPin) {
+                          if (pinModal.action === 'out') { setMovementType('out'); setAmount(''); }
+                          if (pinModal.action === 'close') { setIsClosing(true); setAmount(''); }
+                          if (pinModal.action === 'void_sale' && pinModal.data) { handleVoidSale(pinModal.data); }
+                          setPinModal({isOpen: false, action: null, data: null}); 
+                          setPinInput('');
+                      } else {
+                          toast.error('PIN Incorrecto');
+                          setPinInput('');
+                      }
+                  }}
+                  disabled={pinInput.length < 4}
+                  className="w-full py-4 bg-[#0B3B68] text-white font-bold rounded-xl shadow-lg transition-all active:scale-[0.98] disabled:opacity-50"
+              >
+                  VERIFICAR
+              </button>
            </div>
         </div>
       )}
 
+      {/* MODAL MOVIMIENTOS */}
+      {movementType && (
+        <div className="fixed inset-0 bg-[#0B3B68]/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+                <div className="flex justify-between items-center mb-4">
+                    <h2 className={`text-xl font-black flex items-center gap-2 ${movementType === 'in' ? 'text-[#7AC142]' : 'text-[#EF4444]'}`}>
+                        {movementType === 'in' ? 'INGRESO' : 'RETIRO'}
+                    </h2>
+                    <button onClick={() => { setMovementType(null); setAmount(''); setReason(''); }}><X /></button>
+                </div>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-[10px] font-bold text-[#6B7280] uppercase mb-1">Monto</label>
+                        <input type="number" step="0.01" autoFocus value={amount} onChange={e => setAmount(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter') { e.preventDefault(); handleMovement(); } }} className="w-full p-3 border rounded-xl font-bold text-lg" />
+                    </div>
+                    <div>
+                        <label className="block text-[10px] font-bold text-[#6B7280] uppercase mb-1">Motivo</label>
+                        <input type="text" value={reason} onChange={e => setReason(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter') handleMovement(); }} className="w-full p-3 border rounded-xl" />
+                    </div>
+                    <button type="button" onClick={handleMovement} disabled={isLoading || amount === '' || reason === ''} className="w-full py-3.5 font-bold text-white rounded-xl bg-[#0B3B68]">
+                        CONFIRMAR
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* MODAL CIERRE */}
       {isClosing && shiftStats && (
-        <div className="fixed inset-0 bg-[#0B3B68]/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-           <div className="bg-white rounded-2xl p-0 max-w-md w-full shadow-2xl overflow-hidden animate-in slide-in-from-bottom-8 duration-300">
-              <div className="bg-[#0B3B68] p-6 text-white flex justify-between items-center">
-                  <h2 className="text-xl font-black flex items-center gap-2"><Lock className="text-[#7AC142]"/> CORTE DE CAJA</h2>
-                  <button onClick={() => setIsClosing(false)}><X className="text-gray-400 hover:text-white"/></button>
-              </div>
-              
-              <div className="p-6">
-                <div className="bg-gray-50 p-4 rounded-xl mb-6 border border-gray-100">
-                    <div className="flex justify-between items-center mb-1">
-                        <span className="text-xs font-bold text-[#6B7280] uppercase">Efectivo Esperado</span>
-                        <span className="text-lg font-black text-[#1F2937]">{formatMoney(shiftStats.expectedCash)}</span>
-                    </div>
+        <div className="fixed inset-0 bg-[#0B3B68]/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl p-0 max-w-md w-full shadow-2xl overflow-hidden">
+                <div className="bg-[#0B3B68] p-6 text-white flex justify-between items-center">
+                    <h2 className="text-xl font-black flex items-center gap-2"><Lock className="text-[#7AC142]"/> CORTE DE CAJA</h2>
+                    <button onClick={() => setIsClosing(false)}><X className="text-gray-400 hover:text-white"/></button>
                 </div>
-
-                <div className="mb-6">
-                    <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Dinero en Caja (Conteo Real)</label>
-                    <div className="relative">
-                        <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6B7280] w-6 h-6"/>
-                        <input 
-                            type="number" step="0.01" autoFocus 
-                            value={amount} onChange={e => setAmount(e.target.value)} 
-                            onKeyDown={(e) => { if(e.key === 'Enter') { e.preventDefault(); handleCloseShift(); } }}
-                            className="w-full pl-12 pr-4 py-4 text-3xl font-black text-[#1F2937] border-2 border-gray-200 rounded-xl focus:border-[#0B3B68]" 
-                        />
+                <div className="p-6">
+                    <div className="bg-gray-50 p-4 rounded-xl mb-6 border">
+                        <div className="flex justify-between items-center mb-1">
+                            <span className="text-xs font-bold text-[#6B7280] uppercase">Efectivo Esperado</span>
+                            <span className="text-lg font-black text-[#1F2937]">{formatMoney(shiftStats.expectedCash)}</span>
+                        </div>
                     </div>
+                    <div className="mb-6">
+                        <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Dinero en Caja (Conteo Real)</label>
+                        <input type="number" step="0.01" autoFocus value={amount} onChange={e => setAmount(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter') handleCloseShift(); }} className="w-full pl-12 pr-4 py-4 text-3xl font-black border-2 rounded-xl" />
+                    </div>
+                    <button type="button" onClick={handleCloseShift} disabled={isLoading || amount === ''} className="w-full py-4 bg-[#0B3B68] text-white font-bold rounded-xl">
+                        FINALIZAR TURNO
+                    </button>
                 </div>
-
-                <button 
-                    type="button" 
-                    onClick={(e) => { e.preventDefault(); handleCloseShift(); }}
-                    disabled={isLoading || amount === ''}
-                    className="w-full py-4 bg-[#0B3B68] text-white font-bold rounded-xl hover:bg-[#0B3B68]/90 shadow-xl shadow-[#0B3B68]/20 transition-all flex justify-center items-center gap-2 active:scale-[0.98]"
-                >
-                    {isLoading ? <Loader2 className="animate-spin"/> : 'FINALIZAR TURNO'}
-                </button>
-              </div>
-           </div>
+            </div>
         </div>
       )}
 

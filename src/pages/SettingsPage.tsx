@@ -2,31 +2,30 @@ import { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff, type BusinessConfig } from '../lib/db';
-import { syncPush, syncPull, isOnline } from '../lib/sync';
+import { syncPush, syncPull, isOnline, addToQueue } from '../lib/sync'; // ✅ AÑADIDO addToQueue
 import { logAuditAction } from '../lib/audit';
 import { toast } from 'sonner';
 import { 
   Save, RefreshCw, Printer, Store, Shield, 
   Trash2, Loader2, Smartphone, 
-  Wifi, WifiOff, AlertTriangle
+  Wifi, WifiOff, AlertTriangle, Key
 } from 'lucide-react';
 
 export function SettingsPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
   const businessId = localStorage.getItem('nexus_business_id');
   
-  // Eliminamos la pestaña 'staff' y dejamos solo las útiles
   const [activeTab, setActiveTab] = useState<'general' | 'devices' | 'data'>('general');
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const onlineStatus = isOnline();
 
-  // --- ESTADOS DE FORMULARIOS ---
   const [businessForm, setBusinessForm] = useState({
     name: '',
     address: '',
     phone: '',
-    receipt_message: '¡Gracias por su compra!'
+    receipt_message: '¡Gracias por su compra!',
+    master_pin: '1234'
   });
 
   const [showResetDbConfirm, setShowResetDbConfirm] = useState(false);
@@ -39,7 +38,6 @@ export function SettingsPage() {
     return { name: 'Impresora Térmica', ip: '192.168.1.200', width: '80mm', autoPrint: true };
   });
 
-  // --- CARGA DE DATOS ---
   const settings = useLiveQuery(async () => {
     if (!businessId) return null;
     return await db.settings.where('id').equals(businessId).first(); 
@@ -51,15 +49,17 @@ export function SettingsPage() {
         name: settings.name || '',
         address: settings.address || '',
         phone: settings.phone || '',
-        receipt_message: settings.receipt_message || '¡Gracias por su compra!'
+        receipt_message: settings.receipt_message || '¡Gracias por su compra!',
+        master_pin: settings.master_pin || '1234'
       });
     }
   }, [settings]);
 
-  // --- HANDLERS: NEGOCIO ---
+  // ✅ CORREGIDO: AHORA SÍ SE ENVÍA EL PIN A LA NUBE
   const handleSaveBusiness = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!businessId) return;
+    if (businessForm.master_pin.length !== 4) return toast.error('El PIN debe ser de 4 números');
     setIsLoading(true);
 
     try {
@@ -69,15 +69,20 @@ export function SettingsPage() {
             address: businessForm.address,
             phone: businessForm.phone,
             receipt_message: businessForm.receipt_message,
+            master_pin: businessForm.master_pin, 
             status: 'active',
             sync_status: 'pending_update'
         };
 
-        await db.settings.put(updatedSettings);
-        await logAuditAction('UPDATE_SETTINGS', { name: businessForm.name }, currentStaff);
-        await syncPush();
+        // Guardamos localmente Y enviamos a la cola de Supabase al mismo tiempo
+        await db.transaction('rw', [db.settings, db.action_queue, db.audit_logs], async () => {
+            await db.settings.put(updatedSettings);
+            await addToQueue('SETTINGS_SYNC', updatedSettings); // <--- ESTO FALTABA
+            await logAuditAction('UPDATE_SETTINGS', { name: businessForm.name }, currentStaff);
+        });
         
-        toast.success('Perfil de negocio actualizado');
+        toast.success('Perfil y PIN guardados correctamente');
+        syncPush().catch(() => {}); // Obligamos a subir los datos de inmediato
     } catch (error) {
         console.error(error);
         toast.error('Error al guardar configuración');
@@ -86,7 +91,6 @@ export function SettingsPage() {
     }
   };
 
-  // --- HANDLERS: SISTEMA ---
   const handleManualSync = async () => {
       setIsSyncing(true);
       try {
@@ -116,17 +120,14 @@ export function SettingsPage() {
 
       <div className="flex flex-col md:flex-row gap-6">
         
-        {/* SIDEBAR DE NAVEGACIÓN LIMPIO */}
         <div className="w-full md:w-64 flex flex-col gap-2 shrink-0">
             <button onClick={() => setActiveTab('general')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'general' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Store size={20}/> Mi Negocio</button>
             <button onClick={() => setActiveTab('devices')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'devices' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Printer size={20}/> Hardware</button>
             <button onClick={() => setActiveTab('data')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'data' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Shield size={20}/> Datos y Nube</button>
         </div>
 
-        {/* CONTENIDO PRINCIPAL */}
         <div className="flex-1">
             
-            {/* --- SECCIÓN 1: GENERAL --- */}
             {activeTab === 'general' && (
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 animate-in fade-in slide-in-from-right-4 duration-300">
                     <h2 className="text-xl font-bold text-[#1F2937] mb-6 flex items-center gap-2">
@@ -150,10 +151,21 @@ export function SettingsPage() {
                             <input type="text" value={businessForm.address} onChange={e => setBusinessForm({...businessForm, address: e.target.value})}
                                 className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none transition-all" placeholder="Calle Principal #123" />
                         </div>
-                        <div>
-                            <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Mensaje en Ticket</label>
-                            <textarea rows={3} value={businessForm.receipt_message} onChange={e => setBusinessForm({...businessForm, receipt_message: e.target.value})}
-                                className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none transition-all resize-none" placeholder="¡Gracias por su compra!" />
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-4">
+                            <div>
+                                <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Mensaje en Ticket</label>
+                                <textarea rows={2} value={businessForm.receipt_message} onChange={e => setBusinessForm({...businessForm, receipt_message: e.target.value})}
+                                    className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none transition-all resize-none" placeholder="¡Gracias por su compra!" />
+                            </div>
+                            <div className="bg-red-50 p-4 rounded-xl border border-red-100">
+                                <label className="block text-xs font-bold text-red-600 uppercase mb-1 flex items-center gap-1">
+                                    <Key size={14}/> PIN Maestro de Seguridad
+                                </label>
+                                <p className="text-[10px] text-red-500 mb-2">Se pedirá para retirar dinero o anular ventas.</p>
+                                <input type="password" inputMode="numeric" maxLength={4} required value={businessForm.master_pin} onChange={e => setBusinessForm({...businessForm, master_pin: e.target.value})}
+                                    className="w-full p-3 border border-red-200 rounded-xl focus:ring-2 focus:ring-red-500 outline-none font-mono text-xl tracking-widest text-center" />
+                            </div>
                         </div>
                         
                         <div className="pt-4 border-t border-gray-100 flex justify-end">
@@ -166,7 +178,6 @@ export function SettingsPage() {
                 </div>
             )}
 
-            {/* --- SECCIÓN 3: DISPOSITIVOS --- */}
             {activeTab === 'devices' && (
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 animate-in fade-in slide-in-from-right-4 duration-300">
                     <h2 className="text-xl font-bold text-[#1F2937] mb-6 flex items-center gap-2">
@@ -224,7 +235,6 @@ export function SettingsPage() {
                 </div>
             )}
 
-            {/* --- SECCIÓN 4: DATOS --- */}
             {activeTab === 'data' && (
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 animate-in fade-in slide-in-from-right-4 duration-300">
                     <h2 className="text-xl font-bold text-[#1F2937] mb-6 flex items-center gap-2">
@@ -273,7 +283,6 @@ export function SettingsPage() {
         </div>
       </div>
 
-      {/* --- MODAL CONFIRMACIÓN RESET DB --- */}
       {showResetDbConfirm && (
           <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200">
               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center animate-in zoom-in-95 duration-200">
