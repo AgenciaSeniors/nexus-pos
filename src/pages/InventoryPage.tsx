@@ -4,7 +4,7 @@ import { db, type Product, type Staff, type InventoryMovement } from '../lib/db'
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
     Plus, Search, Edit2, Trash2, Package, Loader2, History as HistoryIcon, 
-    LayoutList, ClipboardEdit, AlertTriangle, ArrowRightLeft, X, Download 
+    LayoutList, ClipboardEdit, AlertTriangle, ArrowRightLeft, X, Download, Bell, Clock 
 } from 'lucide-react';
 import { syncPush, addToQueue } from '../lib/sync';
 import { currency } from '../lib/currency';
@@ -24,6 +24,9 @@ export function InventoryPage() {
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [deleteConfirmProduct, setDeleteConfirmProduct] = useState<Product | null>(null);
+  
+  // ✅ NUEVO MODAL DE ALERTAS
+  const [showAlertsModal, setShowAlertsModal] = useState(false);
 
   const [isLoading, setIsLoading] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -55,6 +58,26 @@ export function InventoryPage() {
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.sku?.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  // ✅ LÓGICA DE ALERTAS (Bajo Stock y Vencimiento)
+  const getDaysUntilExpiration = (dateString?: string) => {
+      if (!dateString) return null;
+      const expDate = new Date(dateString);
+      if (isNaN(expDate.getTime())) return null;
+      const today = new Date();
+      expDate.setHours(0, 0, 0, 0);
+      today.setHours(0, 0, 0, 0);
+      const diffTime = expDate.getTime() - today.getTime();
+      return Math.ceil(diffTime / (1000 * 3600 * 24));
+  };
+
+  const lowStockProducts = products.filter(p => p.stock <= 5);
+  const expiringProducts = products.filter(p => {
+      const days = getDaysUntilExpiration(p.expiration_date);
+      return days !== null && days <= 90; // Vencidos o vencen en <= 90 días
+  });
+
+  const totalAlerts = lowStockProducts.length + expiringProducts.length;
 
   // --- 1. GUARDAR PRODUCTO ---
   const handleSubmitProduct = async (e: React.FormEvent) => {
@@ -207,37 +230,32 @@ export function InventoryPage() {
       }
   };
 
-  // ✅ NUEVA FUNCIÓN: EXPORTAR A EXCEL (CSV)
+  // EXPORTAR A EXCEL (CSV)
   const handleExportCSV = () => {
     if (products.length === 0) {
         toast.error("No hay productos para exportar");
         return;
     }
 
-    // Cabeceras del Excel
-    const headers = ['Nombre del Producto', 'SKU', 'Categoría', 'Precio Venta', 'Costo', 'Stock Actual', 'Unidad de Medida'];
+    const headers = ['Nombre del Producto', 'SKU', 'Categoría', 'Precio Venta', 'Costo', 'Stock Actual', 'Unidad de Medida', 'Vencimiento'];
     
-    // Convertir productos a formato de filas
     const csvRows = products.map(p => {
         return [
-            `"${p.name.replace(/"/g, '""')}"`, // Evita que comas en el nombre rompan el Excel
+            `"${p.name.replace(/"/g, '""')}"`, 
             `"${p.sku || ''}"`,
             `"${p.category || 'General'}"`,
             p.price,
             p.cost || 0,
             p.stock,
-            `"${p.unit || 'un'}"`
+            `"${p.unit || 'un'}"`,
+            `"${p.expiration_date || ''}"`
         ].join(',');
     });
 
-    // Unir cabeceras y filas
     const csvContent = [headers.join(','), ...csvRows].join('\n');
-    
-    // Crear el archivo con soporte para tildes y eñes (BOM UTF-8)
     const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     
-    // Forzar la descarga
     const link = document.createElement('a');
     link.setAttribute('href', url);
     link.setAttribute('download', `Inventario_Bisne_${new Date().toISOString().split('T')[0]}.csv`);
@@ -314,7 +332,20 @@ export function InventoryPage() {
                     />
                 </div>
                 
-                {/* ✅ BOTÓN DE EXPORTAR A EXCEL */}
+                {/* ✅ BOTÓN DE ALERTAS (CAMPANA) */}
+                <button 
+                    onClick={() => setShowAlertsModal(true)}
+                    className="relative bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50 hover:text-orange-500 px-3 py-2.5 rounded-xl flex items-center justify-center transition-colors shadow-sm"
+                    title="Alertas de Inventario"
+                >
+                    <Bell size={18} />
+                    {totalAlerts > 0 && (
+                        <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white animate-pulse">
+                            {totalAlerts > 99 ? '99+' : totalAlerts}
+                        </span>
+                    )}
+                </button>
+
                 <button 
                     onClick={handleExportCSV}
                     className="bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50 hover:text-[#0B3B68] px-3 py-2.5 rounded-xl flex items-center gap-2 font-bold text-sm transition-colors shadow-sm"
@@ -352,14 +383,23 @@ export function InventoryPage() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                            {filteredProducts.map(product => (
+                            {filteredProducts.map(product => {
+                                const daysToExpiry = getDaysUntilExpiration(product.expiration_date);
+                                const isExpiringSoon = daysToExpiry !== null && daysToExpiry <= 90;
+
+                                return (
                                 <tr key={product.id} className="hover:bg-gray-50 transition-colors group">
                                     <td className="p-4" data-label="Producto">
                                         <div className="text-right md:text-left">
                                             <div className="font-bold text-[#1F2937]">{product.name}</div>
-                                            <div className="flex items-center justify-end md:justify-start gap-2 mt-1">
+                                            <div className="flex items-center justify-end md:justify-start gap-2 mt-1 flex-wrap">
                                                 <span className="text-[10px] font-mono bg-gray-100 px-1.5 rounded text-[#6B7280] border border-gray-200">{product.sku || 'SIN SKU'}</span>
                                                 <span className="text-[10px] bg-[#0B3B68]/10 text-[#0B3B68] px-1.5 rounded font-bold uppercase">{product.category}</span>
+                                                {isExpiringSoon && (
+                                                    <span className={`text-[10px] px-1.5 rounded font-bold flex items-center gap-1 ${daysToExpiry < 0 ? 'bg-red-100 text-red-600' : 'bg-orange-100 text-orange-600'}`}>
+                                                        <Clock size={10}/> {daysToExpiry < 0 ? 'Vencido' : 'Próximo a Vencer'}
+                                                    </span>
+                                                )}
                                             </div>
                                         </div>
                                     </td>
@@ -380,7 +420,7 @@ export function InventoryPage() {
                                                 <span className="text-[9px] uppercase font-bold opacity-70">{product.unit}</span>
                                             </div>
                                             {product.stock <= 5 && (
-                                                <div className="text-[9px] font-bold text-[#F59E0B] flex items-center justify-center gap-1 mt-1 animate-pulse">
+                                                <div className="text-[9px] font-bold text-[#F59E0B] flex items-center justify-center gap-1 mt-1">
                                                     <AlertTriangle size={10}/> BAJO STOCK
                                                 </div>
                                             )}
@@ -404,7 +444,7 @@ export function InventoryPage() {
                                         </div>
                                     </td>
                                 </tr>
-                            ))}
+                            )})}
                         </tbody>
                     </table>
                 </div>
@@ -412,6 +452,85 @@ export function InventoryPage() {
           </div>
       ) : (
           <InventoryHistory /> 
+      )}
+
+      {/* ✅ MODAL 0: CENTRO DE ALERTAS */}
+      {showAlertsModal && (
+        <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+                <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-[#F3F4F6]">
+                    <h2 className="font-bold text-lg text-[#1F2937] flex items-center gap-2">
+                        <Bell className="text-orange-500" /> Centro de Alertas
+                    </h2>
+                    <button onClick={() => setShowAlertsModal(false)}><X className="text-gray-400 hover:text-gray-600" /></button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-5 bg-gray-50 space-y-6">
+                    {/* ALERTA 1: BAJO STOCK */}
+                    <div>
+                        <h3 className="font-bold text-[#1F2937] mb-3 flex items-center gap-2">
+                            <AlertTriangle className="text-red-500" size={18} /> 
+                            Productos con Bajo Stock ({lowStockProducts.length})
+                        </h3>
+                        {lowStockProducts.length === 0 ? (
+                            <p className="text-sm text-gray-500 italic bg-white p-4 rounded-xl border border-gray-200 text-center">Todo en orden. No hay bajo stock.</p>
+                        ) : (
+                            <div className="space-y-2">
+                                {lowStockProducts.map(p => (
+                                    <div key={p.id} className="bg-white p-3 rounded-xl border border-red-100 shadow-sm flex justify-between items-center">
+                                        <div>
+                                            <p className="font-bold text-[#1F2937] text-sm">{p.name}</p>
+                                            <p className="text-xs text-gray-500">{p.sku || 'Sin código'}</p>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <span className="bg-red-100 text-red-600 px-2 py-1 rounded text-xs font-bold border border-red-200">
+                                                Quedan {p.stock} {p.unit}
+                                            </span>
+                                            <button onClick={() => {setShowAlertsModal(false); openStock(p);}} className="text-[#0B3B68] text-xs font-bold hover:underline">Reabastecer</button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* ALERTA 2: VENCIMIENTOS CERCANOS */}
+                    <div>
+                        <h3 className="font-bold text-[#1F2937] mb-3 flex items-center gap-2">
+                            <Clock className="text-orange-500" size={18} /> 
+                            Vencimientos Próximos (3 meses) o Vencidos ({expiringProducts.length})
+                        </h3>
+                        {expiringProducts.length === 0 ? (
+                            <p className="text-sm text-gray-500 italic bg-white p-4 rounded-xl border border-gray-200 text-center">No hay productos próximos a vencer.</p>
+                        ) : (
+                            <div className="space-y-2">
+                                {expiringProducts.map(p => {
+                                    const days = getDaysUntilExpiration(p.expiration_date)!;
+                                    const isExpired = days < 0;
+                                    const statusColor = isExpired ? 'bg-red-100 text-red-600 border-red-200' : 'bg-orange-100 text-orange-700 border-orange-200';
+                                    const statusText = isExpired ? `Venció hace ${Math.abs(days)} días` : days === 0 ? 'Vence HOY' : `Vence en ${days} días`;
+
+                                    return (
+                                        <div key={p.id} className="bg-white p-3 rounded-xl border border-orange-100 shadow-sm flex justify-between items-center">
+                                            <div>
+                                                <p className="font-bold text-[#1F2937] text-sm">{p.name}</p>
+                                                <p className="text-xs text-gray-500">Fecha: {new Date(p.expiration_date!).toLocaleDateString()}</p>
+                                            </div>
+                                            <div className="flex items-center gap-3">
+                                                <span className={`px-2 py-1 rounded text-xs font-bold border ${statusColor}`}>
+                                                    {statusText}
+                                                </span>
+                                                <button onClick={() => {setShowAlertsModal(false); openEdit(p);}} className="text-[#0B3B68] text-xs font-bold hover:underline">Editar</button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
       )}
 
       {/* --- MODAL 1: FORMULARIO PRODUCTO --- */}

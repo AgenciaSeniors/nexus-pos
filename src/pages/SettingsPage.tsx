@@ -1,14 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff, type BusinessConfig } from '../lib/db';
-import { syncPush, syncPull, isOnline, addToQueue } from '../lib/sync'; // ✅ AÑADIDO addToQueue
+import { syncPush, syncPull, isOnline, addToQueue } from '../lib/sync';
 import { logAuditAction } from '../lib/audit';
 import { toast } from 'sonner';
 import { 
   Save, RefreshCw, Printer, Store, Shield, 
   Trash2, Loader2, Smartphone, 
-  Wifi, WifiOff, AlertTriangle, Key
+  Wifi, WifiOff, AlertTriangle, Key,
+  Download, Upload, Database // ✅ NUEVOS ICONOS IMPORTADOS
 } from 'lucide-react';
 
 export function SettingsPage() {
@@ -19,6 +20,9 @@ export function SettingsPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const onlineStatus = isOnline();
+
+  // ✅ REF PARA EL SELECTOR DE ARCHIVOS DE RESPALDO
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [businessForm, setBusinessForm] = useState({
     name: '',
@@ -55,7 +59,6 @@ export function SettingsPage() {
     }
   }, [settings]);
 
-  // ✅ CORREGIDO: AHORA SÍ SE ENVÍA EL PIN A LA NUBE
   const handleSaveBusiness = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!businessId) return;
@@ -74,15 +77,14 @@ export function SettingsPage() {
             sync_status: 'pending_update'
         };
 
-        // Guardamos localmente Y enviamos a la cola de Supabase al mismo tiempo
         await db.transaction('rw', [db.settings, db.action_queue, db.audit_logs], async () => {
             await db.settings.put(updatedSettings);
-            await addToQueue('SETTINGS_SYNC', updatedSettings); // <--- ESTO FALTABA
+            await addToQueue('SETTINGS_SYNC', updatedSettings);
             await logAuditAction('UPDATE_SETTINGS', { name: businessForm.name }, currentStaff);
         });
         
         toast.success('Perfil y PIN guardados correctamente');
-        syncPush().catch(() => {}); // Obligamos a subir los datos de inmediato
+        syncPush().catch(() => {});
     } catch (error) {
         console.error(error);
         toast.error('Error al guardar configuración');
@@ -110,12 +112,89 @@ export function SettingsPage() {
       setTimeout(() => toast.success('Prueba enviada'), 1000);
   };
 
+  // ✅ NUEVA FUNCIÓN: EXPORTAR RESPALDO DE TODA LA BASE DE DATOS
+  const handleExportBackup = async () => {
+      try {
+          setIsLoading(true);
+          toast.info("Empaquetando datos del negocio...");
+          
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const backupData: Record<string, any[]> = {};
+          
+          // Recorremos todas las tablas y extraemos su información
+          for (const table of db.tables) {
+              backupData[table.name] = await table.toArray();
+          }
+
+          // Lo convertimos en un archivo JSON descargable
+          const dataStr = JSON.stringify(backupData);
+          const blob = new Blob([dataStr], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          
+          const a = document.createElement('a');
+          a.href = url;
+          const date = new Date().toISOString().split('T')[0];
+          a.download = `Respaldo_Bisne_${date}.json`;
+          
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          
+          toast.success("Copia de seguridad descargada con éxito");
+      } catch (error) {
+          console.error(error);
+          toast.error("Error al generar la copia de seguridad");
+      } finally {
+          setIsLoading(false);
+      }
+  };
+
+  // ✅ NUEVA FUNCIÓN: IMPORTAR RESPALDO
+  const handleImportBackup = async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+          try {
+              setIsLoading(true);
+              toast.info("Restaurando datos, por favor espera...");
+              
+              const content = e.target?.result as string;
+              const parsedData = JSON.parse(content);
+
+              // Usamos una transacción masiva para borrar lo actual y poner lo nuevo
+              await db.transaction('rw', db.tables, async () => {
+                  for (const table of db.tables) {
+                      if (parsedData[table.name]) {
+                          await table.clear(); // Borramos la info vieja
+                          await table.bulkPut(parsedData[table.name]); // Inyectamos la info del archivo
+                      }
+                  }
+              });
+
+              toast.success("Copia de seguridad restaurada correctamente");
+              // Recargamos la página para que todos los estados de React lean la nueva DB
+              setTimeout(() => window.location.reload(), 1500);
+
+          } catch (error) {
+              console.error(error);
+              toast.error("El archivo no es válido o está corrupto");
+          } finally {
+              setIsLoading(false);
+              if (fileInputRef.current) fileInputRef.current.value = ''; // Limpiamos el input
+          }
+      };
+      reader.readAsText(file);
+  };
+
   return (
     <div className="p-4 md:p-6 pb-24 max-w-6xl mx-auto min-h-screen bg-[#F3F4F6]">
       
       <div className="mb-8">
         <h1 className="text-3xl font-black text-[#0B3B68] mb-2">Configuración</h1>
-        <p className="text-[#6B7280]">Administra tu negocio, dispositivos y sincronización.</p>
+        <p className="text-[#6B7280]">Administra tu negocio, dispositivos y copias de seguridad.</p>
       </div>
 
       <div className="flex flex-col md:flex-row gap-6">
@@ -123,7 +202,7 @@ export function SettingsPage() {
         <div className="w-full md:w-64 flex flex-col gap-2 shrink-0">
             <button onClick={() => setActiveTab('general')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'general' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Store size={20}/> Mi Negocio</button>
             <button onClick={() => setActiveTab('devices')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'devices' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Printer size={20}/> Hardware</button>
-            <button onClick={() => setActiveTab('data')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'data' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Shield size={20}/> Datos y Nube</button>
+            <button onClick={() => setActiveTab('data')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'data' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Shield size={20}/> Datos y Respaldo</button>
         </div>
 
         <div className="flex-1">
@@ -238,7 +317,7 @@ export function SettingsPage() {
             {activeTab === 'data' && (
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 animate-in fade-in slide-in-from-right-4 duration-300">
                     <h2 className="text-xl font-bold text-[#1F2937] mb-6 flex items-center gap-2">
-                        <Shield className="text-[#0B3B68]"/> Estado del Sistema
+                        <Shield className="text-[#0B3B68]"/> Estado y Respaldos
                     </h2>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
@@ -254,8 +333,8 @@ export function SettingsPage() {
                         <div className="p-4 rounded-xl border bg-blue-50 border-blue-100 flex items-center gap-4">
                             <RefreshCw className="text-blue-600" size={28}/>
                             <div>
-                                <h4 className="font-bold text-[#1F2937]">Sincronización</h4>
-                                <p className="text-xs text-blue-600">Estado: Activo</p>
+                                <h4 className="font-bold text-[#1F2937]">Nube de Supabase</h4>
+                                <p className="text-xs text-blue-600">Sincronización Activa</p>
                             </div>
                         </div>
                     </div>
@@ -269,7 +348,44 @@ export function SettingsPage() {
                             <span className="text-xs font-bold bg-[#0B3B68] text-white px-3 py-1 rounded-full group-hover:shadow-md transition-all">Sincronizar</span>
                         </button>
 
-                        <div className="border-t border-gray-100 my-4 pt-4">
+                        {/* ✅ NUEVA ZONA DE COPIAS DE SEGURIDAD LOCALES */}
+                        <div className="border-t border-gray-100 my-6 pt-6">
+                            <h4 className="font-bold text-[#1F2937] mb-2 flex items-center gap-2">
+                                <Database className="text-[#0B3B68]" size={20}/>
+                                Copias de Seguridad Locales (Offline)
+                            </h4>
+                            <p className="text-xs text-[#6B7280] mb-4 leading-relaxed">
+                                Si vas a cambiar de teléfono , reinstalar o actualizar la aplicación, descarga un respaldo de tus datos y guárdalo en un lugar seguro. Luego podrás restaurarlo aquí mismo.
+                            </p>
+                            
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <button 
+                                    onClick={handleExportBackup} 
+                                    disabled={isLoading} 
+                                    className="p-3.5 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors flex items-center justify-center gap-2 font-bold text-[#0B3B68] shadow-sm active:scale-95"
+                                >
+                                    {isLoading ? <Loader2 className="animate-spin"/> : <><Download size={18}/> Descargar Respaldo</>}
+                                </button>
+                                
+                                {/* Input oculto para subir archivo */}
+                                <input 
+                                    type="file" 
+                                    accept=".json" 
+                                    className="hidden" 
+                                    ref={fileInputRef} 
+                                    onChange={handleImportBackup} 
+                                />
+                                <button 
+                                    onClick={() => fileInputRef.current?.click()} 
+                                    disabled={isLoading} 
+                                    className="p-3.5 bg-[#0B3B68] text-white rounded-xl hover:bg-[#0B3B68]/90 transition-colors flex items-center justify-center gap-2 font-bold shadow-lg shadow-[#0B3B68]/20 active:scale-95"
+                                >
+                                    <Upload size={18}/> Restaurar Respaldo
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="border-t border-gray-100 my-4 pt-6">
                             <h4 className="text-[#EF4444] font-bold text-sm mb-2 uppercase flex items-center gap-2"><AlertTriangle size={16}/> Zona de Peligro</h4>
                             <button onClick={() => setShowResetDbConfirm(true)}
                                 className="w-full p-4 flex items-center justify-between bg-[#EF4444]/5 border border-[#EF4444]/20 rounded-xl hover:bg-[#EF4444]/10 transition-colors text-[#EF4444]">
