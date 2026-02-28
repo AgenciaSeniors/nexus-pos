@@ -1,6 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { useEffect, useState, useRef } from 'react';
-// ✅ CAMBIO 1: Agregamos useNavigate para poder redirigir
+import { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import { type Staff, db } from './lib/db'; 
@@ -8,7 +6,6 @@ import { type Session } from '@supabase/supabase-js';
 import { Toaster, toast } from 'sonner';
 import { syncCriticalData, syncHeavyData } from './lib/sync';
 
-// --- IMPORTACIONES DE PÁGINAS Y COMPONENTES ---
 import { Layout } from './components/Layout';
 import { PosPage } from './pages/PosPage';
 import { InventoryPage } from './pages/InventoryPage'; 
@@ -18,21 +15,74 @@ import { SuperAdminPage } from './pages/SuperAdminPage';
 import { SuperAdminLogin } from './pages/SuperAdminLogin';
 import { CustomersPage } from './components/CustomersPage';
 
-// ✅ CAMBIO 2: Agregamos el icono Shield para el botón de admin
-import { Loader2, Store, User, Lock, Mail, Phone, ArrowRight, CheckCircle, WifiOff, RefreshCcw, LogOut, Shield } from 'lucide-react';
+import { Loader2, Store, User, Lock, Mail, Phone, ArrowRight, CheckCircle, Shield } from 'lucide-react';
 
 // =============================================================================
-// 1. COMPONENTE LOGIN SCREEN
+// 0. PANTALLA DE ACTUALIZAR CONTRASEÑA (Modo Recuperación)
+// =============================================================================
+function UpdatePasswordScreen({ onComplete }: { onComplete: () => void }) {
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password.length < 6) return toast.error("La contraseña debe tener al menos 6 caracteres");
+    
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) throw error;
+      toast.success("Contraseña actualizada exitosamente.");
+      onComplete();
+    } catch (error: any) {
+      toast.error(error.message || "Error al actualizar la contraseña");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <div className="bg-white p-8 rounded-2xl shadow-xl max-w-sm w-full border border-slate-200 animate-in zoom-in-95 duration-300">
+        <div className="bg-[#0B3B68] w-14 h-14 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-[#0B3B68]/20">
+           <Lock className="text-white w-7 h-7" />
+        </div>
+        <h2 className="text-2xl font-black text-slate-900 mb-2">Nueva Contraseña</h2>
+        <p className="text-slate-500 mb-6 text-sm">Ingresa una nueva contraseña segura para recuperar el acceso a tu cuenta.</p>
+        <form onSubmit={handleUpdate} className="space-y-4">
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide">Nueva Contraseña</label>
+            <div className="relative">
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+              <input 
+                type="password" required minLength={6} autoFocus
+                className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none transition-all font-medium" 
+                placeholder="••••••••" 
+                value={password} onChange={e => setPassword(e.target.value)} 
+              />
+            </div>
+          </div>
+          <button disabled={loading} type="submit" className="w-full bg-[#7AC142] text-white font-bold py-3.5 rounded-xl hover:bg-[#5e9631] transition-all flex items-center justify-center gap-2 mt-4 shadow-lg shadow-[#7AC142]/20 active:scale-95 disabled:opacity-70">
+            {loading ? <Loader2 className="animate-spin w-5 h-5" /> : "Guardar Contraseña"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// 1. COMPONENTE LOGIN SCREEN (Clientes y Empleados)
 // =============================================================================
 function LoginScreen() {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  
-  // ✅ CAMBIO 3: Inicializamos el hook de navegación
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const navigate = useNavigate();
+
+  // ✅ NÚMERO DE WHATSAPP OFICIAL GUARDADO
+  const ADMIN_PHONE = "5359887863"; 
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [businessName, setBusinessName] = useState('');
@@ -42,54 +92,35 @@ function LoginScreen() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password
-      });
-
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Error al iniciar sesión";
-      toast.error(message);
-    } finally {
+    } catch (error: any) {
+      toast.error(error.message === 'Invalid login credentials' ? 'Credenciales incorrectas' : error.message);
       setLoading(false);
-    }
+    } 
   };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
-        password,
-      });
-
+      const { data: authData, error: authError } = await supabase.auth.signUp({ email, password });
       if (authError) throw authError;
       if (!authData.session) {
          toast.warning("Desactiva 'Confirm Email' en Supabase para continuar.");
          return;
       }
-
       const { error: rpcError } = await supabase.rpc('submit_registration_request', {
-        p_owner_name: fullName,
-        p_business_name: businessName,
-        p_phone: phone
+        p_owner_name: fullName, p_business_name: businessName, p_phone: phone
       });
-
       if (rpcError) throw rpcError;
-
       await supabase.auth.signOut();
       
-      toast.success("Solicitud enviada. Tu cuenta está pendiente de aprobación — contacta al administrador para activarla.", { duration: 8000 });
-
+      toast.success("Solicitud enviada. Toca el botón de WhatsApp abajo para pedir tu aprobación.", { duration: 8000 });
       setMode('login');
       setEmail('');
       setPassword('');
-
     } catch (error: any) {
       console.error(error);
       await supabase.auth.signOut();
@@ -99,166 +130,182 @@ function LoginScreen() {
     }
   };
 
+  const handleForgotPassword = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!email) return toast.error("Por favor, ingresa tu correo electrónico");
+      setLoading(true);
+      try {
+          const { error } = await supabase.auth.resetPasswordForEmail(email, {
+              redirectTo: window.location.origin + '/', 
+          });
+          if (error) throw error;
+          toast.success("Te hemos enviado un enlace de recuperación. Revisa tu correo.");
+          setMode('login');
+      } catch (error: any) {
+          toast.error(error.message || "Error al solicitar recuperación");
+      } finally {
+          setLoading(false);
+      }
+  };
+
+  // ✅ MENSAJE DINÁMICO DE WHATSAPP
+  const defaultWhatsAppMessage = mode === 'register' 
+        ? "Hola administrador, acabo de registrar mi negocio en Bisne con Talla y necesito que aprueben mi cuenta."
+        : "Hola soporte de Bisne con Talla, necesito ayuda para acceder a mi cuenta.";
+  const whatsappUrl = `https://wa.me/${ADMIN_PHONE}?text=${encodeURIComponent(defaultWhatsAppMessage)}`;
+
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-4xl rounded-2xl shadow-xl overflow-hidden flex flex-col md:flex-row">
+    <div className="min-h-screen bg-[#F3F4F6] flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-4xl rounded-[2rem] shadow-2xl overflow-hidden flex flex-col md:flex-row">
         
-        <div className="w-full md:w-1/2 bg-slate-900 p-8 flex flex-col justify-between text-white relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
-             <div className="absolute top-10 left-10 w-32 h-32 bg-indigo-500 rounded-full blur-3xl"></div>
-             <div className="absolute bottom-10 right-10 w-40 h-40 bg-blue-500 rounded-full blur-3xl"></div>
+        {/* LADO IZQUIERDO: DECORATIVO (SOLO PC) */}
+        <div className="w-full md:w-1/2 bg-[#0B3B68] p-10 flex flex-col justify-between text-white relative overflow-hidden hidden md:flex">
+          <div className="absolute top-0 left-0 w-full h-full opacity-20 pointer-events-none">
+             <div className="absolute top-10 left-10 w-40 h-40 bg-[#7AC142] rounded-full blur-3xl"></div>
+             <div className="absolute bottom-10 right-10 w-56 h-56 bg-blue-400 rounded-full blur-[100px]"></div>
           </div>
           
           <div className="relative z-10">
-            <div className="flex items-center gap-2 mb-8">
-              <div className="bg-indigo-500 p-2 rounded-lg">
-                <Store className="w-6 h-6 text-white" />
-              </div>
-              <span className="text-2xl font-bold tracking-tight">Bisne con Talla</span>
+            <div className="flex items-center gap-3 mb-10">
+              <div className="bg-[#7AC142] p-2.5 rounded-xl shadow-lg shadow-[#7AC142]/20"><Store className="w-7 h-7 text-[#0B3B68]" /></div>
+              <span className="text-2xl font-black tracking-tight drop-shadow-md">Bisne con Talla</span>
             </div>
             
-            <h1 className="text-4xl font-bold mb-4 leading-tight">
-              {mode === 'login' ? 'Bienvenido de nuevo' : 'Comienza tu negocio hoy'}
+            {/* ✅ TITULARES MEJORADOS Y EN VERDE PARA QUE RESALTEN */}
+            <h1 className="text-5xl font-black mb-5 leading-tight drop-shadow-xl text-[#7AC142]">
+              {mode === 'login' ? 'Bienvenido' : mode === 'forgot' ? 'Recupera tu acceso' : 'Comienza tu negocio'}
             </h1>
-            <p className="text-slate-400 text-lg">
-              {mode === 'login' 
-                ? 'Gestiona tus ventas, inventario y clientes desde un solo lugar.' 
-                : 'Únete a miles de negocios que confían en Bisne con Talla para crecer.'}
+            <p className="text-slate-300 text-lg font-medium leading-relaxed drop-shadow-md">
+              {mode === 'login' ? 'Gestiona tus ventas, inventario y clientes desde un solo lugar.' : mode === 'forgot' ? 'Te ayudaremos a restablecer tu contraseña de forma segura.' : 'Únete a los negocios que confían en nuestro sistema.'}
             </p>
           </div>
 
           <div className="relative z-10 mt-8 md:mt-0">
-            <div className="flex items-center gap-4 text-sm text-slate-400">
-              <span className="flex items-center gap-1"><CheckCircle className="w-4 h-4 text-green-400"/> Offline First</span>
-              <span className="flex items-center gap-1"><CheckCircle className="w-4 h-4 text-green-400"/> Multi-caja</span>
+            <div className="flex flex-col gap-3 text-sm text-slate-200 font-medium">
+              <span className="flex items-center gap-2"><CheckCircle className="w-5 h-5 text-[#7AC142]"/> Base de Datos Offline-First</span>
+              <span className="flex items-center gap-2"><CheckCircle className="w-5 h-5 text-[#7AC142]"/> Sincronización Inmediata</span>
             </div>
           </div>
         </div>
 
-        <div className="w-full md:w-1/2 p-8 md:p-12 bg-white">
-          <div className="max-w-sm mx-auto">
-            <h2 className="text-2xl font-bold text-slate-900 mb-2">
-              {mode === 'login' ? 'Iniciar Sesión' : 'Crear Cuenta'}
+        {/* LADO DERECHO: FORMULARIOS (MÓVIL Y PC) */}
+        <div className="w-full md:w-1/2 p-6 sm:p-10 md:p-12 bg-white flex flex-col justify-center relative">
+          
+          <div className="max-w-sm mx-auto w-full">
+            
+            {/* ✅ ENCABEZADO MÓVIL */}
+            <div className="md:hidden flex flex-col items-center mb-8 text-center animate-in fade-in slide-in-from-top-4 duration-500">
+                <div className="bg-[#0B3B68] p-3.5 rounded-2xl mb-4 shadow-xl shadow-[#0B3B68]/20">
+                    <Store className="w-8 h-8 text-[#7AC142]" />
+                </div>
+                <h1 className="text-3xl font-black text-[#0B3B68] tracking-tight">Bisne con Talla</h1>
+                <p className="text-[#7AC142] text-sm mt-1 font-bold">
+                    {mode === 'login' ? 'Bienvenido' : mode === 'register' ? 'Crea tu cuenta ahora' : 'Restablecer Acceso'}
+                </p>
+            </div>
+
+            <h2 className="text-2xl font-black text-[#1F2937] mb-2 hidden md:block">
+                {mode === 'login' ? 'Iniciar Sesión' : mode === 'forgot' ? 'Recuperar Contraseña' : 'Crear Cuenta'}
             </h2>
-            <p className="text-slate-500 mb-8 text-sm">
-              {mode === 'login' ? 'Ingresa tus credenciales para acceder' : 'Completa los datos de tu negocio'}
+            <p className="text-[#6B7280] mb-8 text-sm hidden md:block">
+                {mode === 'login' ? 'Ingresa tus credenciales para acceder' : mode === 'forgot' ? 'Te enviaremos un enlace a tu correo' : 'Completa los datos de tu negocio'}
             </p>
 
-            <form onSubmit={mode === 'login' ? handleLogin : handleRegister} className="space-y-4">
+            <form onSubmit={mode === 'login' ? handleLogin : mode === 'register' ? handleRegister : handleForgotPassword} className="space-y-4">
               
               {mode === 'register' && (
-                <>
+                <div className="animate-in slide-in-from-right-4 duration-300 space-y-4">
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700 uppercase">Nombre Completo</label>
+                    <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Nombre Completo</label>
                     <div className="relative">
-                      <User className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
-                      <input 
-                        type="text" 
-                        required
-                        className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                        placeholder="Ej. Juan Pérez"
-                        value={fullName}
-                        onChange={e => setFullName(e.target.value)}
-                      />
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
+                      <input type="text" required className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="Ej. Juan Pérez" value={fullName} onChange={e => setFullName(e.target.value)} />
                     </div>
                   </div>
-
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700 uppercase">Nombre del Negocio</label>
+                    <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Nombre del Negocio</label>
                     <div className="relative">
-                      <Store className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
-                      <input 
-                        type="text" 
-                        required
-                        className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                        placeholder="Ej. Cafetería Central"
-                        value={businessName}
-                        onChange={e => setBusinessName(e.target.value)}
-                      />
+                      <Store className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
+                      <input type="text" required className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="Ej. Cafetería Central" value={businessName} onChange={e => setBusinessName(e.target.value)} />
                     </div>
                   </div>
-
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700 uppercase">Teléfono</label>
+                    <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Teléfono</label>
                     <div className="relative">
-                      <Phone className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
-                      <input 
-                        type="tel" 
-                        className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                        placeholder="+53 5555 5555"
-                        value={phone}
-                        onChange={e => setPhone(e.target.value)}
-                      />
+                      <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
+                      <input type="tel" className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="+53 5555 5555" value={phone} onChange={e => setPhone(e.target.value)} />
                     </div>
                   </div>
-                </>
+                </div>
               )}
 
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700 uppercase">Correo Electrónico</label>
+                <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Correo Electrónico</label>
                 <div className="relative">
-                  <Mail className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
-                  <input 
-                    type="email" 
-                    required
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                    placeholder="correo@ejemplo.com"
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                  />
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
+                  <input type="email" required className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="correo@ejemplo.com" value={email} onChange={e => setEmail(e.target.value)} />
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700 uppercase">Contraseña</label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
-                  <input 
-                    type="password" 
-                    required
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                  />
-                </div>
-              </div>
+              {mode !== 'forgot' && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Contraseña</label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
+                      <input type="password" required className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
+                    </div>
+                  </div>
+              )}
 
-              <button 
-                disabled={loading}
-                type="submit" 
-                className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-slate-800 transition-all flex items-center justify-center gap-2 mt-4 shadow-lg shadow-slate-200 disabled:opacity-70"
-              >
+              <button disabled={loading} type="submit" className="w-full bg-[#0B3B68] text-white font-bold py-3.5 rounded-xl hover:bg-[#092b4d] transition-all flex items-center justify-center gap-2 mt-6 shadow-xl shadow-[#0B3B68]/20 disabled:opacity-70 active:scale-95 text-lg">
                 {loading && <Loader2 className="animate-spin w-5 h-5" />}
-                {mode === 'login' ? 'Entrar al Sistema' : 'Registrar Negocio'}
-                {!loading && <ArrowRight className="w-5 h-5" />}
+                {mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? 'Enviar Enlace' : 'Registrar Negocio'}
+                {!loading && mode !== 'forgot' && <ArrowRight className="w-5 h-5" />}
               </button>
-
             </form>
 
-            <div className="mt-6 text-center">
-              <p className="text-slate-500 text-sm">
-                {mode === 'login' ? '¿No tienes cuenta?' : '¿Ya tienes cuenta?'}
-                <button 
-                  onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
-                  className="ml-2 font-bold text-indigo-600 hover:text-indigo-700 transition-colors"
-                >
-                  {mode === 'login' ? 'Regístrate' : 'Inicia Sesión'}
-                </button>
-              </p>
+            <div className="mt-6 text-center space-y-3">
+              {mode === 'login' && (
+                  <button type="button" onClick={() => setMode('forgot')} className="text-sm font-bold text-[#6B7280] hover:text-[#0B3B68] transition-colors">
+                    ¿Olvidaste tu contraseña?
+                  </button>
+              )}
+              
+              <div className="text-[#6B7280] text-sm">
+                {mode === 'login' ? '¿No tienes cuenta?' : mode === 'register' ? '¿Ya tienes cuenta?' : ''}
+                {mode !== 'forgot' ? (
+                    <button onClick={() => setMode(mode === 'login' ? 'register' : 'login')} className="ml-2 font-black text-[#7AC142] hover:text-[#5e9631] transition-colors">
+                      {mode === 'login' ? 'Regístrate Aquí' : 'Inicia Sesión'}
+                    </button>
+                ) : (
+                    <button onClick={() => setMode('login')} className="font-black text-[#0B3B68] hover:text-[#092b4d] transition-colors">
+                      Volver a Iniciar Sesión
+                    </button>
+                )}
+              </div>
             </div>
 
-            {/* ✅ CAMBIO 4: Botón de acceso a Super Admin al final */}
-            <div className="mt-8 pt-6 border-t border-slate-100 flex justify-center">
-                <button
-                    onClick={() => navigate('/admin-login')}
-                    className="flex items-center gap-2 text-slate-400 hover:text-slate-600 transition-colors text-xs font-semibold uppercase tracking-wider"
+            {/* ✅ BOTÓN DE WHATSAPP INTEGRADO OFICIALMENTE */}
+            <div className="mt-8 pt-6 border-t border-gray-100">
+                <p className="text-center text-[10px] text-gray-400 font-black uppercase tracking-widest mb-3">¿Problemas con tu cuenta?</p>
+                <a 
+                    href={whatsappUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="flex items-center justify-center gap-2 w-full p-3.5 rounded-xl bg-[#25D366]/10 text-[#128C7E] hover:bg-[#25D366]/20 border border-[#25D366]/30 font-bold transition-all shadow-sm active:scale-95"
                 >
-                    <Shield size={14} />
-                    Acceso Super Admin
-                </button>
+                    <svg width="22" height="22" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.305-.885-.653-1.482-1.459-1.656-1.756-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z"/>
+                    </svg>
+                    Contactar Soporte por WhatsApp
+                </a>
             </div>
 
+            <div className="mt-4 pt-4 flex justify-center">
+                <button onClick={() => navigate('/admin-login')} className="flex items-center gap-1.5 text-gray-400 hover:text-[#0B3B68] transition-colors text-[10px] font-bold uppercase tracking-wider">
+                    <Shield size={12} /> Acceso Super Admin
+                </button>
+            </div>
           </div>
         </div>
       </div>
@@ -267,57 +314,47 @@ function LoginScreen() {
 }
 
 // =============================================================================
-// 2. COMPONENTE BUSINESS APP (OPTIMIZADO)
+// 2. COMPONENTE BUSINESS APP (ROBUSTO Y LINEAL)
 // =============================================================================
 function BusinessApp() {
   const [session, setSession] = useState<Session | null>(null);
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
   const [loading, setLoading] = useState(true);
-  
-  const [showTimeout, setShowTimeout] = useState(false);
-  const lastLoadedUserId = useRef<string | null>(null);
+  const [recoveryMode, setRecoveryMode] = useState(false);
 
-  const fetchProfile = async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      if (error) {
-        if (error.code === 'PGRST116') {
-             console.error("Perfil no encontrado. Cerrando sesión...");
-             setSession(null);
-             return;
-        }
-        throw error;
+  // BOTÓN DE PÁNICO: Destruye todo rastro de caché corrupta
+  const handleForceLogout = async () => {
+      try {
+          Object.keys(localStorage).forEach(key => {
+              if (key.startsWith('sb-') || key.startsWith('nexus_')) {
+                  localStorage.removeItem(key);
+              }
+          });
+          sessionStorage.clear();
+          await db.delete(); 
+          await supabase.auth.signOut();
+      } catch (e) {
+          // Ignoramos errores de red durante el cierre
+      } finally {
+          window.location.replace('/'); 
       }
+  };
+
+  // Función controlada para descargar el perfil de Supabase
+  const fetchProfileAndSync = async (userId: string, isBackgroundSync = false) => {
+    try {
+      const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
+
+      if (error) throw error;
 
       if (data) {
-        if (data.status === 'pending') {
-          toast.info("Cuenta pendiente de aprobación.");
-          await supabase.auth.signOut();
-          setSession(null);
-          return;
-        }
-        if (data.status === 'suspended' || data.status === 'rejected') {
-          toast.error("Cuenta suspendida.");
-          await supabase.auth.signOut();
+        if (data.status !== 'active') {
+          if (!isBackgroundSync) toast.error("Cuenta pendiente o inactiva. Espera la aprobación del administrador.");
+          await handleForceLogout(); 
           return;
         }
 
-        // Actualizar datos de licencia (rápido)
-        const { data: bizData } = await supabase
-            .from('businesses')
-            .select('subscription_expires_at')
-            .eq('id', data.business_id)
-            .single();
-
-        if (bizData?.subscription_expires_at) {
-            localStorage.setItem('nexus_license_expiry', bizData.subscription_expires_at);
-            localStorage.setItem('nexus_last_sync', new Date().toISOString());
-        }
+        localStorage.setItem('nexus_business_id', data.business_id);
 
         const adminStaff: Staff = {
           id: data.id,
@@ -328,155 +365,145 @@ function BusinessApp() {
           business_id: data.business_id 
         };
 
-        localStorage.setItem('nexus_business_id', data.business_id);
-
-        // ✅ CAMBIO CLAVE: Carga Inteligente en 2 Pasos
-        // Paso 1: Carga crítica (Config, Turnos) -> BLOQUEA UN INSTANTE
-        await syncCriticalData(data.business_id);
+        // Guardar de forma segura en la DB
+        await db.transaction('rw', db.staff, async () => {
+            await db.staff.clear();
+            await db.staff.put(adminStaff);
+        });
         
-        // Paso 2: Carga pesada (Productos, Clientes) -> SEGUNDO PLANO (NO BLOQUEA)
-        syncHeavyData(data.business_id).catch(err => console.warn("Sync background warning:", err));
-        
-        // Entramos rápido a la app
-        await db.staff.filter(s => s.business_id !== data.business_id).delete();
-        await db.staff.put(adminStaff);
-
-        lastLoadedUserId.current = userId;
         setCurrentStaff(adminStaff);
+        if (!isBackgroundSync) setLoading(false);
+
+        // Sincronización secundaria silenciosa
+        await syncCriticalData(data.business_id);
+        syncHeavyData(data.business_id).catch(() => {});
       }
-    } catch (error: unknown) {
-      console.error("Error perfil:", error);
-    } finally {
-      setLoading(false);
+    } catch (error: any) {
+      console.error("Error obteniendo perfil:", error);
+      
+      // Si el perfil no se encuentra (PGRST116), lo expulsamos con un mensaje claro
+      if (error?.code === 'PGRST116') {
+          toast.error("El perfil de tu cuenta aún no está configurado.");
+          await handleForceLogout();
+          return;
+      }
+
+      // Si fue error de internet, pero tenemos datos locales, lo dejamos entrar (Offline-First)
+      if (!isBackgroundSync) {
+          const localStaff = await db.staff.toArray().catch(() => []);
+          if (localStaff.length > 0) {
+              toast.info("Conexión lenta. Modo sin conexión activado.");
+              setCurrentStaff(localStaff[0]);
+              setLoading(false);
+          } else {
+              toast.error("Error de conexión. Necesitas internet para tu primer inicio.");
+              await handleForceLogout(); // Lo devolvemos al login si no tiene datos locales
+          }
+      }
     }
   };
 
+  // Carga inicial al abrir la página
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    if (loading) {
-      timer = setTimeout(() => setShowTimeout(true), 25000);
-    } else {
-      setShowTimeout(false);
-    }
-    return () => clearTimeout(timer);
-  }, [loading]);
+    let mounted = true;
 
-  useEffect(() => {
-    const initSession = async () => {
+    const initApp = async () => {
+      if (window.location.hash.includes('type=recovery')) {
+          setRecoveryMode(true);
+      }
+
       try {
-        // Timeout solo para obtener la sesión (5s es suficiente, Supabase responde rápido)
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Tiempo de espera de red agotado')), 5000)
-        );
+          // Extraemos sesión local de Supabase (sin forzar la red inmediatamente)
+          const { data: { session }, error } = await supabase.auth.getSession();
+          if (error) throw error;
 
-        let session = null;
-        try {
-          const { data, error } = await Promise.race([
-            supabase.auth.getSession(),
-            timeoutPromise
-          ]) as any;
-          if (!error) session = data?.session ?? null;
-        } catch {
-          // getSession tardó o falló — intentar con sesión local cacheada
-          const localBiz = localStorage.getItem('nexus_business_id');
-          if (localBiz) {
-            toast.info("Conexión lenta, entrando con sesión guardada...");
+          if (!mounted) return;
+
+          if (session && !window.location.hash.includes('type=recovery')) {
+              setSession(session);
+              
+              const localStaff = await db.staff.toArray().catch(() => []);
+              const localBizId = localStorage.getItem('nexus_business_id');
+              
+              if (localStaff.length > 0 && localBizId) {
+                  // Carga ultra rápida si hay datos locales (No esperamos por internet)
+                  setCurrentStaff(localStaff[0]);
+                  setLoading(false);
+                  fetchProfileAndSync(session.user.id, true).catch(() => {});
+              } else {
+                  // Si no hay datos locales, dependemos de descargar el perfil
+                  await fetchProfileAndSync(session.user.id, false);
+              }
+          } else {
+              setSession(null);
+              setCurrentStaff(null);
+              setLoading(false);
           }
-        }
-
-        if (session) {
-          setSession(session);
-          // fetchProfile tiene su propio manejo de errores, no bloqueamos el loading
-          fetchProfile(session.user.id).catch(err => {
-            console.error("No se pudo cargar perfil (posible modo offline):", err);
-          });
-        } else {
+      } catch (error: any) {
+          // Si Supabase se aborta (AbortError) lo ignoramos.
+          if (error.name === 'AbortError' || error.message?.includes('AbortError')) return;
+          
+          console.error("Error crítico de inicialización:", error);
           setSession(null);
           setCurrentStaff(null);
-          localStorage.removeItem('nexus_business_id');
           setLoading(false);
-        }
-
-      } catch (error) {
-        console.error("🔴 Error crítico al iniciar:", error);
-        setSession(null);
-        setLoading(false);
       }
     };
 
-    initSession();
+    initApp();
 
+    // Escuchador de cambios (Ej: Cuando alguien inicia sesión exitosamente en LoginScreen)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+      if (!mounted) return;
+      
+      if (event === 'PASSWORD_RECOVERY') setRecoveryMode(true);
+
       if (event === 'SIGNED_IN' && newSession) {
-        if (lastLoadedUserId.current === newSession.user.id) {
-            setSession(newSession); 
-            return; 
-        }
-        setCurrentStaff(null); 
         setSession(newSession);
-        setLoading(true);
-        await fetchProfile(newSession.user.id);
-        setLoading(false);
+        // Evitamos doble carga si `currentStaff` ya estaba seteado por `initApp`
+        if (!currentStaff && !window.location.hash.includes('type=recovery')) {
+            setLoading(true);
+            await fetchProfileAndSync(newSession.user.id, false);
+        }
       } 
       else if (event === 'SIGNED_OUT') {
         setSession(null);
         setCurrentStaff(null);
-        lastLoadedUserId.current = null;
-        localStorage.clear(); 
-      }
-      else if (event === 'TOKEN_REFRESHED') {
-        setSession(newSession);
       }
     });
 
-    return () => subscription.unsubscribe();
-  }, []);
+    return () => {
+        mounted = false;
+        subscription.unsubscribe();
+    };
+  }, [currentStaff]); // Dependencia clave para evitar race conditions
+
+  if (recoveryMode) {
+      return <UpdatePasswordScreen onComplete={() => {
+          setRecoveryMode(false);
+          window.location.hash = ''; 
+          window.location.replace('/'); 
+      }} />;
+  }
 
   if (loading) {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50 gap-6 p-4">
-        {showTimeout ? (
-          <div className="flex flex-col items-center text-center animate-in fade-in zoom-in duration-300 max-w-sm bg-white p-8 rounded-2xl shadow-xl border border-slate-200">
-            <div className="bg-amber-100 p-4 rounded-full mb-4">
-              <WifiOff className="w-8 h-8 text-amber-600" />
-            </div>
-            <h2 className="text-xl font-bold text-slate-800 mb-2">Conexión lenta</h2>
-            <div className="flex flex-col gap-3 w-full mt-4">
-              <button onClick={() => window.location.reload()} className="bg-indigo-600 text-white py-3 rounded-xl font-bold">
-                <RefreshCcw size={18} className="inline mr-2"/> Recargar
-              </button>
-              <button onClick={async () => { await supabase.auth.signOut(); window.location.reload(); }} className="bg-white text-slate-600 border border-slate-200 py-3 rounded-xl font-bold">
-                <LogOut size={18} className="inline mr-2"/> Salir
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center gap-1">
-            <Loader2 className="animate-spin text-indigo-600 w-8 h-8 mb-4" />
-            <p className="text-slate-700 font-bold text-lg">Iniciando Bisne con Talla...</p>
-          </div>
-        )}
+         <div className="flex flex-col items-center gap-2">
+            <Loader2 className="animate-spin text-[#0B3B68] w-10 h-10 mb-4" />
+            <p className="text-slate-700 font-bold text-lg tracking-tight">Verificando Credenciales...</p>
+            <p className="text-slate-400 text-xs mt-2">Conectando con Bisne con Talla</p>
+         </div>
+         {/* Botón de pánico oculto por si acaso */}
+         <button onClick={handleForceLogout} className="mt-8 text-xs text-slate-400 underline hover:text-slate-600">
+             Forzar reinicio
+         </button>
       </div>
     );
   }
 
-  if (!session) {
-    return <LoginScreen />; 
-  }
-
-  if (!currentStaff) {
-     return (
-        <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50 gap-6 p-4 text-center">
-            <div className="bg-white p-8 rounded-2xl shadow-lg max-w-sm w-full border border-slate-200">
-                <Loader2 className="w-12 h-12 text-indigo-500 mx-auto mb-4 animate-spin" />
-                <h2 className="text-xl font-bold text-slate-800">Cargando perfil...</h2>
-                <button onClick={async () => { await supabase.auth.signOut(); localStorage.clear(); window.location.reload(); }} className="mt-6 w-full bg-slate-100 text-slate-600 py-2 rounded-xl font-bold text-sm">
-                    Cancelar / Salir
-                </button>
-            </div>
-        </div>
-     );
-  }
+  if (!session) return <LoginScreen />; 
+  if (!currentStaff) return null;
 
   return (
     <Routes>
@@ -493,33 +520,24 @@ function BusinessApp() {
 }
 
 // =============================================================================
-// 3. ADMIN ROUTE
+// 3. ADMIN ROUTE (Protector de Panel)
 // =============================================================================
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const [authorized, setAuthorized] = useState<boolean | null>(null);
 
   useEffect(() => {
     let mounted = true;
-
     const checkAdmin = async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        
         if (!user) { if (mounted) setAuthorized(false); return; }
 
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('is_super_admin')
-          .eq('id', user.id)
-          .single();
-        
+        const { data, error } = await supabase.from('profiles').select('is_super_admin').eq('id', user.id).single();
         if (mounted) setAuthorized(!error && data?.is_super_admin);
-        
       } catch { 
         if (mounted) setAuthorized(false);
       }
     };
-
     checkAdmin();
     return () => { mounted = false; };
   }, []);
@@ -527,12 +545,11 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   if (authorized === null) {
       return (
         <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center gap-4">
-            <Loader2 className="animate-spin text-indigo-500 w-10 h-10"/>
-            <p className="text-slate-400 text-sm">Verificando credenciales...</p>
+            <Loader2 className="animate-spin text-red-500 w-10 h-10"/>
+            <p className="text-slate-400 text-sm font-bold tracking-widest uppercase">Verificando Credenciales</p>
         </div>
       );
   }
-  
   return authorized ? <>{children}</> : <Navigate to="/admin-login" replace />;
 }
 
