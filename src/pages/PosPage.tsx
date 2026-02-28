@@ -11,7 +11,7 @@ import { ParkedOrdersModal } from '../components/ParkedOrdersModal';
 import { CustomerSelect } from '../components/CustomerSelect';
 import { 
   PauseCircle, ClipboardList, Search, Barcode, Keyboard, AlertTriangle, 
-  Plus, Minus, X, Lock, ShoppingCart, ChevronRight, Package, Trash2 
+  Plus, Minus, X, Lock, ShoppingCart, ChevronRight, Package, Trash2, Edit3 
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -29,6 +29,9 @@ export function PosPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCheckout, setIsCheckout] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
+  
+  // ✅ ESTADO AÑADIDO PARA LA MESA/NOMBRE
+  const [orderNote, setOrderNote] = useState('');
   
   // --- MODALES Y CLIENTE ---
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -140,12 +143,17 @@ export function PosPage() {
               })),
               total: currency.calculateTotal(cart),
               customer_id: selectedCustomer?.id,
-              customer_name: selectedCustomer?.name
+              customer_name: selectedCustomer?.name,
+              note: orderNote.trim() // ✅ SE GUARDA LA NOTA/MESA AQUÍ
           };
           await db.parked_orders.add(parked);
+          
+          // Limpiar todo después de guardar
           setCart([]);
           setSelectedCustomer(null);
+          setOrderNote(''); // Limpia el nombre/mesa
           setMobileView('catalog');
+          
           toast.success("Orden guardada en pendientes");
       } catch (e) {
           console.error(e);
@@ -172,6 +180,9 @@ export function PosPage() {
               const customer = await db.customers.get(order.customer_id);
               if (customer) setSelectedCustomer(customer);
           }
+          // ✅ Restaura la nota si existía
+          if (order.note) setOrderNote(order.note);
+
           await db.parked_orders.delete(order.id);
           setShowParkedModal(false);
           setMobileView('cart');
@@ -182,7 +193,7 @@ export function PosPage() {
   };
 
   // --- PROCESAMIENTO DE VENTA ---
- const handleCheckout = async (methodInput: string, tendered: number, change: number) => {
+  const handleCheckout = async (methodInput: string, tendered: number, change: number) => {
     if (!activeShift || !activeShift.id) return toast.error("Caja cerrada o turno inválido");
     
     setIsCheckout(true);
@@ -264,6 +275,7 @@ export function PosPage() {
         setLastSale(sale);
         setCart([]);
         setSelectedCustomer(null);
+        setOrderNote(''); // Limpiamos la nota de la mesa al cobrar
         setMobileView('catalog');
         toast.success(`Venta completada. Cambio: ${currency.format(sale.change || 0)}`);
         
@@ -457,6 +469,21 @@ export function PosPage() {
         </div>
 
         <div className="p-5 bg-surface border-t border-gray-200 shadow-[0_-4px_20px_-5px_rgba(0,0,0,0.1)] relative z-30 shrink-0">
+            
+            {/* ✅ CAMPO DE TEXTO OPCIONAL PARA NOMBRE/MESA AÑADIDO AQUÍ */}
+            <div className="mb-3">
+                <div className="relative flex items-center">
+                    <Edit3 className="absolute left-3 text-gray-400 w-4 h-4" />
+                    <input 
+                        type="text" 
+                        placeholder="Nombre o Mesa (Opcional)" 
+                        value={orderNote}
+                        onChange={(e) => setOrderNote(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-[#1F2937] focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all placeholder-gray-400"
+                    />
+                </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-3 mb-4">
                 <button 
                     onClick={() => setShowParkedModal(true)} 
@@ -546,7 +573,7 @@ export function PosPage() {
                 Cancelar
               </button>
               <button
-                onClick={() => { setCart([]); setShowClearConfirm(false); }}
+                onClick={() => { setCart([]); setOrderNote(''); setShowClearConfirm(false); }}
                 className="flex-1 py-2.5 bg-state-error text-white font-bold rounded-xl hover:bg-state-error/90 transition-colors"
               >
                 Vaciar

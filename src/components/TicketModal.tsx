@@ -1,15 +1,16 @@
 import { useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../lib/db';
-import type { Sale, SaleItem } from '../lib/db';
+import type { Sale, SaleItem, ParkedOrder } from '../lib/db';
 import { Printer, X, User, Star } from 'lucide-react';
 
 interface TicketModalProps {
-  sale: Sale | null;
+  sale?: Sale | null;
+  order?: ParkedOrder | null; // ✅ AHORA ACEPTA ÓRDENES EN ESPERA
   onClose: () => void;
 }
 
-export function TicketModal({ sale, onClose }: TicketModalProps) {
+export function TicketModal({ sale, order, onClose }: TicketModalProps) {
   const contentRef = useRef<HTMLDivElement>(null);
 
   // 1. Cargar Configuración del Negocio
@@ -21,35 +22,35 @@ export function TicketModal({ sale, onClose }: TicketModalProps) {
     return undefined;
   });
   
-  if (!sale) return null;
+  // Detectar si estamos imprimiendo una Pre-cuenta o un Recibo Final
+  const doc = sale || order;
+  if (!doc) return null;
+  const isPreBill = !!order;
 
-  // 2. Calcular Puntos Ganados (Regla: 1 pto por cada $10)
-  // Nota: Esto es visual. La lógica real de guardado ya ocurrió en PosPage.
-  const pointsEarned = sale.customer_id ? Math.floor(sale.total / 10) : 0;
+  // 2. Calcular Puntos Ganados (Solo si es venta final)
+  const pointsEarned = (!isPreBill && doc.customer_id) ? Math.floor(doc.total / 10) : 0;
 
- const handlePrint = () => {
+  const handlePrint = () => {
     if (window.electronAPI) {
-      // ✅ MODO ELECTRON: Le pedimos al proceso principal que imprima
-      // (Esto permitirá impresión silenciosa y sin diálogos molestos)
       window.electronAPI.printTicket();
     } else {
-      // 🌐 MODO WEB: Usamos el diálogo normal del navegador
       window.print();
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[9999] backdrop-blur-sm animate-in fade-in duration-200 print:p-0 print:block print:bg-white print:static">
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[9999] backdrop-blur-sm animate-in fade-in duration-200">
       
-      <div className="bg-white w-full max-w-[380px] shadow-2xl overflow-hidden relative rounded-2xl print:shadow-none print:w-full print:max-w-none print:rounded-none">
+      {/* ✅ AÑADIDO id="printable-ticket" PARA EL MOTOR DE PDF */}
+      <div id="printable-ticket" className="bg-white w-full max-w-[380px] shadow-2xl overflow-hidden relative rounded-2xl">
         
-        {/* Decoración Visual (Solo pantalla) */}
-        <div className="h-3 bg-indigo-600 w-full print:hidden"></div>
+        {/* Decoración Visual (Si es pre-cuenta es naranja, si es final es azul) */}
+        <div className={`h-3 w-full no-print ${isPreBill ? 'bg-orange-500' : 'bg-[#0B3B68]'}`}></div>
 
         {/* --- CONTENIDO DEL TICKET --- */}
         <div 
             ref={contentRef}
-            className="p-6 text-slate-900 font-mono text-xs leading-relaxed max-h-[85vh] overflow-y-auto print:max-h-none print:overflow-visible print:h-auto print:p-0 print:m-0"
+            className="p-6 text-slate-900 font-mono text-xs leading-relaxed max-h-[85vh] overflow-y-auto"
         >
           {/* 1. ENCABEZADO */}
           <div className="text-center mb-4">
@@ -62,32 +63,44 @@ export function TicketModal({ sale, onClose }: TicketModalProps) {
             <div className="mt-4 pt-2 border-t border-dashed border-slate-300">
                 <p className="flex justify-between">
                     <span>FECHA:</span> 
-                    <span>{new Date(sale.date).toLocaleDateString()}</span>
+                    <span>{new Date(doc.date).toLocaleDateString()}</span>
                 </p>
                 <p className="flex justify-between">
                     <span>HORA:</span> 
-                    <span>{new Date(sale.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                    <span>{new Date(doc.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                 </p>
                 <p className="flex justify-between font-bold">
-                    <span>TICKET:</span> 
-                    <span>#{sale.id.slice(0, 8).toUpperCase()}</span>
+                    <span>{isPreBill ? 'PRE-CUENTA:' : 'TICKET:'}</span> 
+                    <span>#{doc.id.slice(0, 8).toUpperCase()}</span>
                 </p>
-                <p className="flex justify-between">
-                    <span>VENDEDOR:</span> 
-                    <span className="uppercase">{sale.staff_name?.split(' ')[0] || 'Cajero'}</span>
-                </p>
+                
+                {/* MOSTRAR MESA O NOTA SI ES UNA PRE-CUENTA */}
+                {isPreBill && order?.note && (
+                  <p className="flex justify-between font-black text-sm mt-1 bg-gray-100 p-1 rounded">
+                      <span>MESA / REF:</span> 
+                      <span className="uppercase">{order.note}</span>
+                  </p>
+                )}
+                
+                {/* MOSTRAR CAJERO SOLO EN RECIBO FINAL */}
+                {!isPreBill && sale?.staff_name && (
+                  <p className="flex justify-between">
+                      <span>VENDEDOR:</span> 
+                      <span className="uppercase">{sale.staff_name.split(' ')[0] || 'Cajero'}</span>
+                  </p>
+                )}
             </div>
           </div>
 
           {/* 2. CLIENTE (Si existe) */}
-          {sale.customer_name && (
-             <div className="mb-4 border border-slate-200 rounded p-2 bg-slate-50 print:border-black print:bg-transparent print:border-dashed">
-                <div className="flex items-center gap-1 font-bold text-slate-700 print:text-black">
+          {doc.customer_name && (
+             <div className="mb-4 border border-slate-200 rounded p-2 bg-slate-50">
+                <div className="flex items-center gap-1 font-bold text-slate-700">
                     <User size={12} /> 
-                    <span className="uppercase">{sale.customer_name}</span>
+                    <span className="uppercase">{doc.customer_name}</span>
                 </div>
                 {pointsEarned > 0 && (
-                    <div className="flex items-center gap-1 text-[10px] text-indigo-600 mt-1 font-bold print:text-black">
+                    <div className="flex items-center gap-1 text-[10px] text-indigo-600 mt-1 font-bold">
                         <Star size={10} fill="currentColor" />
                         <span>Has ganado +{pointsEarned} puntos</span>
                     </div>
@@ -105,13 +118,13 @@ export function TicketModal({ sale, onClose }: TicketModalProps) {
                 </tr>
             </thead>
             <tbody className="divide-y divide-dashed divide-slate-300">
-                {sale.items.map((item: SaleItem, index: number) => (
+                {doc.items.map((item: SaleItem, index: number) => (
                 <tr key={index}>
                     <td className="py-2 align-top font-bold">{item.quantity}</td>
                     <td className="py-2 align-top pr-2">
                         <div className="uppercase">{item.name}</div>
                         {item.quantity > 1 && (
-                            <div className="text-[10px] text-slate-500 print:text-black">
+                            <div className="text-[10px] text-slate-500">
                                 {item.quantity} x ${item.price.toFixed(2)}
                             </div>
                         )}
@@ -128,39 +141,49 @@ export function TicketModal({ sale, onClose }: TicketModalProps) {
           <div className="border-t-2 border-black pt-2 mb-4 space-y-1">
             <div className="flex justify-between text-lg font-black">
                 <span>TOTAL</span>
-                <span>${sale.total.toFixed(2)}</span>
+                <span>${doc.total.toFixed(2)}</span>
             </div>
             
-            {/* Desglose de Pago */}
-            <div className="pt-2 mt-2 border-t border-dashed border-slate-300 text-xs">
-                <div className="flex justify-between">
-                    <span>FORMA DE PAGO:</span>
-                    <span className="uppercase font-bold">{sale.payment_method}</span>
+            {/* Desglose de Pago (SOLO SI ES VENTA FINAL) */}
+            {!isPreBill && sale && (
+                <div className="pt-2 mt-2 border-t border-dashed border-slate-300 text-xs">
+                    <div className="flex justify-between">
+                        <span>FORMA DE PAGO:</span>
+                        <span className="uppercase font-bold">{sale.payment_method}</span>
+                    </div>
+                    {sale.payment_method === 'efectivo' && (
+                        <>
+                            <div className="flex justify-between">
+                                <span>EFECTIVO:</span>
+                                <span>${sale.amount_tendered?.toFixed(2) || sale.total.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between font-bold">
+                                <span>CAMBIO:</span>
+                                <span>${sale.change?.toFixed(2) || '0.00'}</span>
+                            </div>
+                        </>
+                    )}
                 </div>
-                {sale.payment_method === 'efectivo' && (
-                    <>
-                        <div className="flex justify-between">
-                            <span>EFECTIVO:</span>
-                            <span>${sale.amount_tendered?.toFixed(2) || sale.total.toFixed(2)}</span>
-                        </div>
-                        <div className="flex justify-between font-bold">
-                            <span>CAMBIO:</span>
-                            <span>${sale.change?.toFixed(2) || '0.00'}</span>
-                        </div>
-                    </>
-                )}
-            </div>
+            )}
+
+            {/* ADVERTENCIA SI ES PRE-CUENTA */}
+            {isPreBill && (
+                 <div className="pt-3 mt-3 border-t border-dashed border-slate-300 text-[10px] text-center font-bold">
+                    *** DOCUMENTO NO VÁLIDO COMO FACTURA ***<br/>
+                    SOLICITE SU RECIBO AL PAGAR
+                 </div>
+            )}
           </div>
 
           {/* 5. PIE DE PÁGINA */}
           <div className="text-center mt-6 pt-4 border-t border-slate-200">
             <p className="font-medium italic">"{config?.receipt_message || '¡Gracias por su compra!'}"</p>
-            <p className="text-[9px] text-slate-400 mt-2 uppercase print:hidden">Powered by Agencia Seniors</p>
+            <p className="text-[9px] text-slate-400 mt-2 uppercase no-print">Powered by Agencia Señores</p>
           </div>
         </div>
 
-        {/* --- BOTONES DE ACCIÓN (No se imprimen) --- */}
-        <div className="bg-slate-50 p-4 flex gap-3 border-t border-slate-200 print:hidden">
+        {/* --- BOTONES DE ACCIÓN (Clase no-print para que no salgan en el PDF) --- */}
+        <div className="bg-slate-50 p-4 flex gap-3 border-t border-slate-200 no-print">
           <button 
             onClick={onClose}
             className="flex-1 bg-white border border-slate-300 text-slate-700 font-bold py-3 rounded-xl hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 shadow-sm"
@@ -170,67 +193,58 @@ export function TicketModal({ sale, onClose }: TicketModalProps) {
           <button 
             onClick={handlePrint} 
             autoFocus
-            className="flex-1 bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-black transition-colors flex justify-center items-center gap-2 shadow-lg"
+            className={`flex-1 text-white font-bold py-3 rounded-xl transition-colors flex justify-center items-center gap-2 shadow-lg ${isPreBill ? 'bg-orange-500 hover:bg-orange-600' : 'bg-[#0B3B68] hover:bg-[#0B3B68]/90'}`}
           >
-            <Printer size={18} /> Imprimir (Enter)
+            <Printer size={18} /> Imprimir / PDF
           </button>
         </div>
 
       </div>
 
-      {/* 🛡️ CSS ESPECIALIZADO PARA IMPRESORAS TÉRMICAS (58mm / 80mm) */}
+      {/* ✅ CSS DE IMPRESIÓN SEGURO PARA EXPORTAR A PDF */}
       <style>{`
         @media print {
           @page { 
-            margin: 0; 
-            size: auto; 
+            margin: 5mm; 
+          }
+          body { 
+            background: white !important; 
+            -webkit-print-color-adjust: exact; 
+            print-color-adjust: exact; 
           }
           
-          body { 
-            background: white; 
-            margin: 0; 
-            padding: 0; 
-          }
-
-          /* Ocultar todo lo que no sea el ticket */
+          /* Oculta toda la app de fondo */
           body * { 
             visibility: hidden; 
-            height: 0;
-            overflow: hidden; 
           }
           
-          /* Hacer visible solo el contenedor del ticket */
-          .fixed, .bg-white { 
-            position: static !important; 
-            width: 100% !important; 
-            height: auto !important; 
-            background: none !important; 
-            box-shadow: none !important; 
-            overflow: visible !important;
-            display: block !important;
+          /* Muestra SOLO el ticket */
+          #printable-ticket, #printable-ticket * { 
+            visibility: visible; 
           }
           
-          div[class*="overflow-y-auto"] { 
-            visibility: visible !important; 
-            height: auto !important;
-            width: 100% !important;
-            max-width: 100% !important; 
-            position: absolute;
-            left: 0;
-            top: 0;
-            padding: 10px !important; /* Margen seguro para impresora */
-            margin: 0 !important; 
-          }
-          
-          /* Asegurar que todos los hijos del ticket sean visibles y negros */
-          div[class*="overflow-y-auto"] * { 
-            visibility: visible !important; 
-            height: auto !important;
-            color: black !important; /* Impresoras térmicas solo imprimen negro */
+          /* Posiciona el ticket arriba a la izquierda como si fuera la página principal para que no se corte */
+          #printable-ticket { 
+            position: absolute; 
+            left: 0; 
+            top: 0; 
+            width: 100%; 
+            margin: 0; 
+            padding: 0;
+            box-shadow: none !important;
+            border-radius: 0 !important;
           }
 
-          /* Ocultar elementos decorativos */
-          .print\\:hidden { display: none !important; }
+          /* Oculta forzosamente los botones y elementos innecesarios */
+          .no-print, .no-print * { 
+            display: none !important; 
+          }
+          
+          /* Corrige el scroll para que el PDF renderice todo el largo del ticket y no solo lo que se ve en pantalla */
+          div[class*="overflow-y-auto"] {
+             overflow: visible !important;
+             max-height: none !important;
+          }
         }
       `}</style>
     </div>
