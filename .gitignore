@@ -22,3 +22,10 @@ release
 /playwright/.cache/
 /playwright/.auth/
 .claude/
+# Instaladores y carpetas de compilación pesadas
+*.apk
+*.aab
+*.exe
+release/
+android/app/build/
+android/.gradle/
