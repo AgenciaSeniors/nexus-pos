@@ -1,11 +1,11 @@
 import { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.bisne.contalla', // El ID que pusiste antes
+appId: 'com.bisne.contalla',
   appName: 'Bisne con Talla',
-  webDir: 'dist', // Vite genera la carpeta 'dist'
+  webDir: 'dist', 
   server: {
-    androidScheme: 'https' // Necesario para que funcione bien la API
+    androidScheme: 'https' 
   }
 };
 
