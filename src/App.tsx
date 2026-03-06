@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import { type Staff, db } from './lib/db'; 
@@ -74,7 +74,12 @@ function UpdatePasswordScreen({ onComplete }: { onComplete: () => void }) {
 // =============================================================================
 // 1. COMPONENTE LOGIN SCREEN (Clientes y Empleados)
 // =============================================================================
-function LoginScreen() {
+interface LoginScreenProps {
+  onRegistrationStart: () => void;
+  onRegistrationEnd: () => void;
+}
+
+function LoginScreen({ onRegistrationStart, onRegistrationEnd }: LoginScreenProps) {
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const navigate = useNavigate();
 
@@ -104,19 +109,24 @@ function LoginScreen() {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    onRegistrationStart();
     try {
       const { data: authData, error: authError } = await supabase.auth.signUp({ email, password });
       if (authError) throw authError;
+      if (!authData.user) {
+        throw new Error("No se pudo crear la cuenta. Intenta nuevamente.");
+      }
       if (!authData.session) {
-         toast.warning("Desactiva 'Confirm Email' en Supabase para continuar.");
-         return;
+        toast.info("Confirma tu correo electrónico y luego vuelve para completar el registro.");
+        setMode('login');
+        return;
       }
       const { error: rpcError } = await supabase.rpc('submit_registration_request', {
         p_owner_name: fullName, p_business_name: businessName, p_phone: phone
       });
       if (rpcError) throw rpcError;
       await supabase.auth.signOut();
-      
+
       toast.success("Solicitud enviada. Toca el botón de WhatsApp abajo para pedir tu aprobación.", { duration: 8000 });
       setMode('login');
       setEmail('');
@@ -127,6 +137,7 @@ function LoginScreen() {
       toast.error(error.message || "Error al enviar solicitud.");
     } finally {
       setLoading(false);
+      onRegistrationEnd();
     }
   };
 
@@ -321,6 +332,8 @@ function BusinessApp() {
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
   const [loading, setLoading] = useState(true);
   const [recoveryMode, setRecoveryMode] = useState(false);
+  // Bandera para evitar que onAuthStateChange procese SIGNED_IN durante el registro
+  const isRegisteringRef = useRef(false);
 
   // BOTÓN DE PÁNICO: Destruye todo rastro de caché corrupta
   const handleForceLogout = async () => {
@@ -349,8 +362,8 @@ function BusinessApp() {
 
       if (data) {
         if (data.status !== 'active') {
-          if (!isBackgroundSync) toast.error("Cuenta pendiente o inactiva. Espera la aprobación del administrador.");
-          await handleForceLogout(); 
+          if (!isBackgroundSync) toast.error("Tu cuenta está pendiente de aprobación. Espera la confirmación del administrador.");
+          await supabase.auth.signOut();
           return;
         }
 
@@ -381,10 +394,10 @@ function BusinessApp() {
     } catch (error: any) {
       console.error("Error obteniendo perfil:", error);
       
-      // Si el perfil no se encuentra (PGRST116), lo expulsamos con un mensaje claro
+      // Si el perfil no se encuentra (PGRST116), es usuario recién creado sin perfil aún
       if (error?.code === 'PGRST116') {
-          toast.error("El perfil de tu cuenta aún no está configurado.");
-          await handleForceLogout();
+          if (!isBackgroundSync) toast.error("El perfil de tu cuenta aún no está configurado. Contacta al administrador.");
+          await supabase.auth.signOut();
           return;
       }
 
@@ -459,13 +472,17 @@ function BusinessApp() {
       if (event === 'PASSWORD_RECOVERY') setRecoveryMode(true);
 
       if (event === 'SIGNED_IN' && newSession) {
+        // Si el usuario está en medio del flujo de registro, ignoramos este evento
+        // para evitar que fetchProfileAndSync corra antes de que exista el perfil
+        if (isRegisteringRef.current) return;
+
         setSession(newSession);
         // Evitamos doble carga si `currentStaff` ya estaba seteado por `initApp`
         if (!currentStaff && !window.location.hash.includes('type=recovery')) {
             setLoading(true);
             await fetchProfileAndSync(newSession.user.id, false);
         }
-      } 
+      }
       else if (event === 'SIGNED_OUT') {
         setSession(null);
         setCurrentStaff(null);
@@ -502,7 +519,12 @@ function BusinessApp() {
     );
   }
 
-  if (!session) return <LoginScreen />; 
+  if (!session) return (
+    <LoginScreen
+      onRegistrationStart={() => { isRegisteringRef.current = true; }}
+      onRegistrationEnd={() => { isRegisteringRef.current = false; }}
+    />
+  );
   if (!currentStaff) return null;
 
   return (
