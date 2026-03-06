@@ -155,9 +155,21 @@ async function processItem(item: QueueItem) {
   }
 }
 
-export async function processQueue() {
-  if (!isOnline()) return;
+// Guard para evitar ejecuciones concurrentes del procesador de cola
+let _isProcessingQueue = false;
 
+export async function processQueue() {
+  if (!isOnline() || _isProcessingQueue) return;
+
+  _isProcessingQueue = true;
+  try {
+    await _runQueue();
+  } finally {
+    _isProcessingQueue = false;
+  }
+}
+
+async function _runQueue() {
   const pendingItems = await db.action_queue.where('status').equals('pending').limit(5).toArray();
   if (pendingItems.length === 0) return;
 
@@ -181,7 +193,7 @@ export async function processQueue() {
   }
 
   if ((await db.action_queue.where('status').equals('pending').count()) > 0) {
-    await processQueue(); 
+    await _runQueue();
   }
 }
 
@@ -316,7 +328,11 @@ export async function syncManualFull() {
 }
 
 if (typeof window !== 'undefined') {
-    window.addEventListener('online', () => { resetProcessingItems().then(() => processQueue()); });
+    window.addEventListener('online', () => {
+        resetProcessingItems()
+            .then(() => processQueue())
+            .catch(err => console.error("Error al procesar cola tras reconexión:", err));
+    });
     resetProcessingItems();
-    setInterval(() => { if (isOnline()) processQueue(); }, 30000);
+    setInterval(() => { if (isOnline()) processQueue().catch(err => console.error("Error en sync periódico:", err)); }, 30000);
 }

@@ -47,12 +47,12 @@ export function CustomersPage() {
       
       const sales = await db.sales
         .where('business_id').equals(businessId)
-        .filter(s => s.customer_id === selectedCustomer.id)
+        .filter(s => s.customer_id === selectedCustomer.id && s.status !== 'voided')
         .toArray();
-      
+
       // Ordenar por fecha descendente
       sales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        
+
       const totalSpent = sales.reduce((sum, s) => sum + s.total, 0);
       const lastVisit = sales.length > 0 ? sales[0].date : null;
 
