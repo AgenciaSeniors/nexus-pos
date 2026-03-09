@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { 
-  Shield, Check, X, Search, RefreshCw, UserCheck, Inbox, 
-  CalendarPlus, Key, User, LogOut, Store, Trash2, AlertTriangle, Calendar, AlertOctagon
+import {
+  Shield, Check, X, Search, RefreshCw, UserCheck, Inbox,
+  CalendarPlus, Key, User, LogOut, Store, Trash2, AlertTriangle, Calendar, AlertOctagon,
+  History, TrendingUp, Award
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -20,7 +21,12 @@ interface Profile {
   license_expiry?: string;
   business_id?: string;
   role?: string;
+  approved_by?: string;
+  approved_by_name?: string;
+  approved_at?: string;
 }
+
+type HistoryPeriod = 'day' | 'week' | 'month' | 'year';
 
 type ConfirmAction = {
     type: 'suspend' | 'delete';
@@ -31,8 +37,10 @@ export function SuperAdminPage() {
   const navigate = useNavigate();
   
   // --- ESTADOS DE LA INTERFAZ ---
-  const [activeTab, setActiveTab] = useState<'requests' | 'active'>('requests');
+  const [activeTab, setActiveTab] = useState<'requests' | 'active' | 'history'>('requests');
   const [dataList, setDataList] = useState<Profile[]>([]);
+  const [historyList, setHistoryList] = useState<Profile[]>([]);
+  const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>('month');
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -46,8 +54,9 @@ export function SuperAdminPage() {
   const [extendMonths, setExtendMonths] = useState(1);
   const [adminPin, setAdminPin] = useState('1234'); // Estado para el PIN (Ya no prompt)
 
-  // 1. CARGA DE DATOS
+  // 1. CARGA DE DATOS (Solicitudes y Clientes)
   const fetchData = useCallback(async () => {
+    if (activeTab === 'history') return;
     setLoading(true);
     try {
       let query = supabase
@@ -73,11 +82,49 @@ export function SuperAdminPage() {
     }
   }, [activeTab]);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  // 2. CARGA DE HISTORIAL
+  const fetchHistory = useCallback(async () => {
+    setLoading(true);
+    try {
+      const now = new Date();
+      let fromDate: string;
 
-  // 2. APROBACIÓN DE USUARIO (Con Modal Integrado)
+      if (historyPeriod === 'day') {
+        fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      } else if (historyPeriod === 'week') {
+        const d = new Date(now);
+        d.setDate(now.getDate() - now.getDay());
+        d.setHours(0, 0, 0, 0);
+        fromDate = d.toISOString();
+      } else if (historyPeriod === 'month') {
+        fromDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      } else {
+        fromDate = new Date(now.getFullYear(), 0, 1).toISOString();
+      }
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .not('approved_at', 'is', null)
+        .gte('approved_at', fromDate)
+        .order('approved_at', { ascending: false });
+
+      if (error) throw error;
+      setHistoryList(data || []);
+    } catch (error) {
+      console.error('Error cargando historial:', error);
+      toast.error("No se pudo cargar el historial");
+    } finally {
+      setLoading(false);
+    }
+  }, [historyPeriod]);
+
+  useEffect(() => {
+    if (activeTab === 'history') fetchHistory();
+    else fetchData();
+  }, [activeTab, fetchData, fetchHistory]);
+
+  // 3. APROBACIÓN DE USUARIO (Con Modal Integrado)
   const executeApproval = async () => {
     if (!approvingItem) return;
 
@@ -89,19 +136,36 @@ export function SuperAdminPage() {
 
     setLoading(true);
     try {
+      const { data: { user: adminUser } } = await supabase.auth.getUser();
+
       const { error } = await supabase.rpc('approve_client_transaction', {
         target_user_id: approvingItem.id,
         months_to_grant: monthsToGrant,
-        initial_pin: adminPin, // Usamos el estado
-        admin_user_id: (await supabase.auth.getUser()).data.user?.id 
+        initial_pin: adminPin,
+        admin_user_id: adminUser?.id
       });
 
       if (error) throw error;
 
+      // Obtener el nombre del super admin aprobador
+      let approverName = adminUser?.email || 'Admin';
+      const { data: approverProfile } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', adminUser?.id)
+        .single();
+      if (approverProfile?.full_name) approverName = approverProfile.full_name;
+
+      // Registrar quién aprobó y cuándo
+      await supabase.from('profiles').update({
+        approved_by: adminUser?.id,
+        approved_by_name: approverName,
+        approved_at: new Date().toISOString()
+      }).eq('id', approvingItem.id);
+
       toast.success(`Cliente aprobado. PIN Maestro: ${adminPin}`);
-      
       setApprovingItem(null);
-      setAdminPin('1234'); // Reset
+      setAdminPin('1234');
       fetchData();
 
     } catch (err: unknown) {
@@ -234,39 +298,176 @@ export function SuperAdminPage() {
         {/* BARRA DE HERRAMIENTAS */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div className="bg-white p-1 rounded-xl shadow-sm border border-slate-200 flex w-full sm:w-auto">
-                <button 
+                <button
                     onClick={() => setActiveTab('requests')}
-                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${activeTab === 'requests' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${activeTab === 'requests' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
                 >
-                    <Inbox size={18} /> Solicitudes
+                    <Inbox size={16} /> Solicitudes
                 </button>
-                <button 
+                <button
                     onClick={() => setActiveTab('active')}
-                    className={`relative flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${activeTab === 'active' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                    className={`relative flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${activeTab === 'active' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
                 >
-                    <UserCheck size={18} /> Clientes
-                    {/* ✅ GLOBO DE ALERTA DE VENCIMIENTOS */}
+                    <UserCheck size={16} /> Clientes
                     {expiringCount > 0 && (
                         <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full animate-pulse border-2 border-white shadow-sm">
                             {expiringCount}
                         </span>
                     )}
                 </button>
+                <button
+                    onClick={() => setActiveTab('history')}
+                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${activeTab === 'history' ? 'bg-violet-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                >
+                    <History size={16} /> Historial
+                </button>
             </div>
 
-            <div className="relative w-full sm:w-96 group">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5 group-focus-within:text-indigo-500 transition-colors"/>
-                <input 
-                    type="text" 
-                    placeholder="Buscar por nombre, email o teléfono..." 
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none shadow-sm transition-all text-sm font-medium"
-                />
-            </div>
+            {activeTab !== 'history' && (
+                <div className="relative w-full sm:w-96 group">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5 group-focus-within:text-indigo-500 transition-colors"/>
+                    <input
+                        type="text"
+                        placeholder="Buscar por nombre, email o teléfono..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none shadow-sm transition-all text-sm font-medium"
+                    />
+                </div>
+            )}
         </div>
 
-        {/* TABLA DE DATOS */}
+        {/* ===== PESTAÑA HISTORIAL ===== */}
+        {activeTab === 'history' && (
+          <div className="space-y-5">
+            {/* Filtros de período */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {([['day','Hoy'], ['week','Esta semana'], ['month','Este mes'], ['year','Este año']] as [HistoryPeriod, string][]).map(([p, label]) => (
+                <button
+                  key={p}
+                  onClick={() => setHistoryPeriod(p)}
+                  className={`px-5 py-2 rounded-xl text-sm font-bold transition-all border ${historyPeriod === p ? 'bg-violet-600 text-white border-violet-600 shadow-md' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                >
+                  {label}
+                </button>
+              ))}
+              <button onClick={fetchHistory} className="ml-auto p-2 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors" title="Actualizar">
+                <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+              </button>
+            </div>
+
+            {/* Tarjetas de resumen */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-4 shadow-sm">
+                <div className="w-10 h-10 bg-violet-100 rounded-xl flex items-center justify-center">
+                  <Award className="w-5 h-5 text-violet-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-black text-slate-800">{historyList.length}</p>
+                  <p className="text-xs text-slate-400 font-medium">Aprobadas</p>
+                </div>
+              </div>
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-4 shadow-sm">
+                <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
+                  <TrendingUp className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-black text-slate-800">
+                    {historyList.reduce((sum, i) => sum + (i.months_requested || 1), 0)}
+                  </p>
+                  <p className="text-xs text-slate-400 font-medium">Meses totales</p>
+                </div>
+              </div>
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-4 shadow-sm col-span-2 sm:col-span-1">
+                <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
+                  <UserCheck className="w-5 h-5 text-indigo-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-black text-slate-800">
+                    {new Set(historyList.map(i => i.approved_by_name).filter(Boolean)).size}
+                  </p>
+                  <p className="text-xs text-slate-400 font-medium">Admins activos</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Tabla de historial */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden min-h-[300px]">
+              {loading ? (
+                <div className="h-64 flex flex-col items-center justify-center text-slate-400">
+                  <RefreshCw className="animate-spin w-8 h-8 mb-3 text-violet-500 opacity-50" />
+                  <p className="text-sm font-medium">Cargando historial...</p>
+                </div>
+              ) : historyList.length === 0 ? (
+                <div className="h-64 flex flex-col items-center justify-center text-slate-400">
+                  <History className="w-12 h-12 opacity-20 mb-3" />
+                  <p className="text-sm font-medium">Sin aprobaciones en este período</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase font-bold text-slate-500 tracking-wider">
+                        <th className="p-4">Fecha</th>
+                        <th className="p-4">Cliente</th>
+                        <th className="p-4">Aprobado por</th>
+                        <th className="p-4 text-center">Meses</th>
+                        <th className="p-4">Vence</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {historyList.map(item => (
+                        <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="p-4">
+                            <div className="text-xs font-bold text-slate-700">
+                              {item.approved_at ? new Date(item.approved_at).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                            </div>
+                            <div className="text-[10px] text-slate-400 mt-0.5">
+                              {item.approved_at ? new Date(item.approved_at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : ''}
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-full bg-violet-600 flex items-center justify-center text-white text-xs font-bold">
+                                {item.full_name.substring(0,2).toUpperCase()}
+                              </div>
+                              <div>
+                                <div className="text-sm font-bold text-slate-800">{item.full_name}</div>
+                                <div className="text-[11px] text-slate-400">{item.email || '—'}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            {item.approved_by_name ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-bold border border-indigo-100">
+                                <Shield size={10} /> {item.approved_by_name}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-slate-400 italic">Sin registro</span>
+                            )}
+                          </td>
+                          <td className="p-4 text-center">
+                            <span className="inline-flex items-center justify-center w-8 h-8 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-black">
+                              {item.months_requested || 1}
+                            </span>
+                          </td>
+                          <td className="p-4">
+                            <span className="text-xs font-medium text-slate-600">
+                              {item.license_expiry ? new Date(item.license_expiry).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ===== PESTAÑAS SOLICITUDES / CLIENTES ===== */}
+        {activeTab !== 'history' && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden min-h-[400px]">
             {loading ? (
                 <div className="h-96 flex flex-col items-center justify-center text-slate-400">
@@ -285,10 +486,11 @@ export function SuperAdminPage() {
                     <table className="w-full text-left border-collapse">
                         <thead>
                             <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase font-bold text-slate-500 tracking-wider">
-                                <th className="p-5 w-72">Negocio / Cliente</th>
+                                <th className="p-5 w-64">Negocio / Cliente</th>
                                 <th className="p-5">Contacto</th>
                                 <th className="p-5 text-center">Estado</th>
                                 <th className="p-5">Detalles</th>
+                                {activeTab === 'active' && <th className="p-5">Aprobado por</th>}
                                 <th className="p-5 text-right">Acciones</th>
                             </tr>
                         </thead>
@@ -333,38 +535,47 @@ export function SuperAdminPage() {
                                             item.status === 'pending' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
                                             'bg-red-50 text-red-700 border-red-200'
                                         }`}>
-                                            {item.status === 'active' ? 'ACTIVO' : 
+                                            {item.status === 'active' ? 'ACTIVO' :
                                              item.status === 'pending' ? 'PENDIENTE' : item.status}
                                         </span>
                                     </td>
                                     <td className="p-5">
                                         <div className="space-y-1">
                                             <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
-                                                <Key size={12} className="text-slate-400"/> PIN Solicitud: <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 text-slate-700">{item.initial_pin}</span>
+                                                <Key size={12} className="text-slate-400"/> PIN: <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 text-slate-700">{item.initial_pin}</span>
                                             </div>
-                                            
-                                            {/* ✅ TEXTO DINÁMICO DE VENCIMIENTO */}
                                             <div className="text-xs flex items-center gap-2 mt-1">
-                                                <Calendar size={12} className={isExpired ? 'text-red-500' : isExpiringSoon ? 'text-orange-500' : 'text-slate-400'}/> 
+                                                <Calendar size={12} className={isExpired ? 'text-red-500' : isExpiringSoon ? 'text-orange-500' : 'text-slate-400'}/>
                                                 <span className={isExpired ? 'text-red-600 font-bold' : isExpiringSoon ? 'text-orange-600 font-bold' : 'text-slate-500'}>
-                                                    {item.license_expiry 
-                                                        ? (isExpired ? `¡Venció hace ${Math.abs(daysLeft!)} días!` : isExpiringSoon ? `¡Vence en ${daysLeft} días!` : `Vence: ${new Date(item.license_expiry).toLocaleDateString()}`) 
+                                                    {item.license_expiry
+                                                        ? (isExpired ? `¡Venció hace ${Math.abs(daysLeft!)} días!` : isExpiringSoon ? `¡Vence en ${daysLeft} días!` : `Vence: ${new Date(item.license_expiry).toLocaleDateString()}`)
                                                         : `Solicita: ${item.months_requested} Mes(es)`}
                                                 </span>
                                             </div>
                                         </div>
                                     </td>
+                                    {activeTab === 'active' && (
+                                        <td className="p-5">
+                                            {item.approved_by_name ? (
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-bold border border-indigo-100 whitespace-nowrap">
+                                                    <Shield size={10} /> {item.approved_by_name}
+                                                </span>
+                                            ) : (
+                                                <span className="text-xs text-slate-400 italic">—</span>
+                                            )}
+                                        </td>
+                                    )}
                                     <td className="p-5 text-right">
                                         <div className="flex items-center justify-end gap-2">
                                             {activeTab === 'requests' ? (
                                                 <>
-                                                    <button 
+                                                    <button
                                                         onClick={() => { setApprovingItem(item); setMonthsToGrant(item.months_requested || 1); setAdminPin('1234'); }}
                                                         className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg shadow-sm transition-colors text-xs font-bold"
                                                     >
                                                         <Check size={14} /> Aprobar
                                                     </button>
-                                                    <button 
+                                                    <button
                                                         onClick={() => setConfirmModal({ type: 'delete', item })}
                                                         className="flex items-center gap-1 bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-slate-500 px-3 py-1.5 rounded-lg transition-colors text-xs font-bold"
                                                     >
@@ -373,21 +584,21 @@ export function SuperAdminPage() {
                                                 </>
                                             ) : (
                                                 <>
-                                                    <button 
+                                                    <button
                                                         onClick={() => { setExtendingItem(item); setExtendMonths(1); }}
                                                         className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
                                                         title="Extender Licencia"
                                                     >
                                                         <CalendarPlus size={18} />
                                                     </button>
-                                                    <button 
+                                                    <button
                                                         onClick={() => setConfirmModal({ type: 'suspend', item })}
                                                         className={`p-2 rounded-lg transition-colors ${item.status === 'active' ? 'text-slate-400 hover:text-amber-600 hover:bg-amber-50' : 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100'}`}
                                                         title={item.status === 'active' ? "Suspender Cuenta" : "Reactivar Cuenta"}
                                                     >
                                                         {item.status === 'active' ? <UserCheck size={18} /> : <Check size={18} />}
                                                     </button>
-                                                    <button 
+                                                    <button
                                                         onClick={() => setConfirmModal({ type: 'delete', item })}
                                                         className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                                         title="Eliminar Definitivamente"
@@ -405,6 +616,7 @@ export function SuperAdminPage() {
                 </div>
             )}
         </div>
+        )}
       </main>
 
       {/* ================= MODALES ================= */}
