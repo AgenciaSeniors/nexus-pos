@@ -62,7 +62,7 @@ export function SettingsPage() {
   const handleSaveBusiness = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!businessId) return;
-    if (businessForm.master_pin.length !== 4) return toast.error('El PIN debe ser de 4 números');
+    if (!/^\d{4}$/.test(businessForm.master_pin)) return toast.error('El PIN debe ser exactamente 4 dígitos numéricos');
     setIsLoading(true);
 
     try {
@@ -242,7 +242,7 @@ export function SettingsPage() {
                                     <Key size={14}/> PIN Maestro de Seguridad
                                 </label>
                                 <p className="text-[10px] text-red-500 mb-2">Se pedirá para retirar dinero o anular ventas.</p>
-                                <input type="password" inputMode="numeric" maxLength={4} required value={businessForm.master_pin} onChange={e => setBusinessForm({...businessForm, master_pin: e.target.value})}
+                                <input type="password" inputMode="numeric" maxLength={4} required value={businessForm.master_pin} onChange={e => setBusinessForm({...businessForm, master_pin: e.target.value.replace(/\D/g, '').slice(0, 4)})}
                                     className="w-full p-3 border border-red-200 rounded-xl focus:ring-2 focus:ring-red-500 outline-none font-mono text-xl tracking-widest text-center" />
                             </div>
                         </div>

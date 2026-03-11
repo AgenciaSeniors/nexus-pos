@@ -176,20 +176,27 @@ async function _runQueue() {
   if (pendingItems.length === 0) return;
 
   for (const item of pendingItems) {
+    // Backoff exponencial: omitir ítems reintentados recientemente
+    if (item.retries > 0) {
+      const backoffMs = Math.min(Math.pow(2, item.retries - 1) * 30000, 300000); // 30s, 60s, 2m, 4m, máx 5m
+      if (Date.now() - item.timestamp < backoffMs) continue;
+    }
+
     try {
       await db.action_queue.update(item.id, { status: 'processing' });
       await processItem(item);
-      await db.action_queue.delete(item.id); 
+      await db.action_queue.delete(item.id);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const newRetries = (item.retries || 0) + 1;
-      
+
       console.error(`❌ Fallo ítem ${item.type} (${item.id}):`, errorMessage);
 
       if (newRetries >= 5) {
           await db.action_queue.update(item.id, { status: 'failed', error: `ABANDONADO: ${errorMessage}` });
       } else {
-          await db.action_queue.update(item.id, { status: 'pending', retries: newRetries, error: errorMessage });
+          // Actualiza timestamp para calcular el backoff desde el último intento
+          await db.action_queue.update(item.id, { status: 'pending', retries: newRetries, error: errorMessage, timestamp: Date.now() });
       }
     }
   }

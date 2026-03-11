@@ -248,9 +248,12 @@ export function PosPage() {
             const updateStockPromises = cart.map(async (item) => {
                 const product = await db.products.get(item.id);
                 if (product) {
-                    await db.products.update(item.id, { 
-                        stock: product.stock - item.quantity, 
-                        sync_status: 'pending_update' 
+                    if (product.stock < item.quantity) {
+                        throw new Error(`Stock insuficiente para "${product.name}": disponible ${product.stock}, solicitado ${item.quantity}`);
+                    }
+                    await db.products.update(item.id, {
+                        stock: product.stock - item.quantity,
+                        sync_status: 'pending_update'
                     });
                 }
             });
