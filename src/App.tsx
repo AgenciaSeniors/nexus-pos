@@ -91,6 +91,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd }: LoginScreenProp
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [businessName, setBusinessName] = useState('');
+  const [monthsRequested, setMonthsRequested] = useState(1);
   
   const [loading, setLoading] = useState(false);
 
@@ -122,7 +123,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd }: LoginScreenProp
         return;
       }
       const { error: rpcError } = await supabase.rpc('submit_registration_request', {
-        p_owner_name: fullName, p_business_name: businessName, p_phone: phone
+        p_owner_name: fullName, p_business_name: businessName, p_phone: phone, p_months_requested: monthsRequested
       });
       if (rpcError) throw rpcError;
       await supabase.auth.signOut();
@@ -141,22 +142,11 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd }: LoginScreenProp
     }
   };
 
-  const handleForgotPassword = async (e: React.FormEvent) => {
+  const handleForgotPassword = (e: React.FormEvent) => {
       e.preventDefault();
       if (!email) return toast.error("Por favor, ingresa tu correo electrónico");
-      setLoading(true);
-      try {
-          const { error } = await supabase.auth.resetPasswordForEmail(email, {
-              redirectTo: window.location.origin + '/', 
-          });
-          if (error) throw error;
-          toast.success("Te hemos enviado un enlace de recuperación. Revisa tu correo.");
-          setMode('login');
-      } catch (error: any) {
-          toast.error(error.message || "Error al solicitar recuperación");
-      } finally {
-          setLoading(false);
-      }
+      const msg = `Hola, olvidé mi contraseña de Bisne con Talla.\nMi correo es: ${email}\nNecesito que me la restablezcan. Gracias.`;
+      window.open(`https://wa.me/${ADMIN_PHONE}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
   // ✅ MENSAJE DINÁMICO DE WHATSAPP
@@ -187,7 +177,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd }: LoginScreenProp
               {mode === 'login' ? 'Bienvenido' : mode === 'forgot' ? 'Recupera tu acceso' : 'Comienza tu negocio'}
             </h1>
             <p className="text-slate-300 text-lg font-medium leading-relaxed drop-shadow-md">
-              {mode === 'login' ? 'Gestiona tus ventas, inventario y clientes desde un solo lugar.' : mode === 'forgot' ? 'Te ayudaremos a restablecer tu contraseña de forma segura.' : 'Únete a los negocios que confían en nuestro sistema.'}
+              {mode === 'login' ? 'Gestiona tus ventas, inventario y clientes desde un solo lugar.' : mode === 'forgot' ? 'Escribe tu correo y el administrador te ayudará por WhatsApp.' : 'Únete a los negocios que confían en nuestro sistema.'}
             </p>
           </div>
 
@@ -219,7 +209,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd }: LoginScreenProp
                 {mode === 'login' ? 'Iniciar Sesión' : mode === 'forgot' ? 'Recuperar Contraseña' : 'Crear Cuenta'}
             </h2>
             <p className="text-[#6B7280] mb-8 text-sm hidden md:block">
-                {mode === 'login' ? 'Ingresa tus credenciales para acceder' : mode === 'forgot' ? 'Te enviaremos un enlace a tu correo' : 'Completa los datos de tu negocio'}
+                {mode === 'login' ? 'Ingresa tus credenciales para acceder' : mode === 'forgot' ? 'Escribe tu correo y te contactamos por WhatsApp para restablecerla.' : 'Completa los datos de tu negocio'}
             </p>
 
             <form onSubmit={mode === 'login' ? handleLogin : mode === 'register' ? handleRegister : handleForgotPassword} className="space-y-4">
@@ -247,6 +237,17 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd }: LoginScreenProp
                       <input type="tel" className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="+53 5555 5555" value={phone} onChange={e => setPhone(e.target.value)} />
                     </div>
                   </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">¿Cuántos meses deseas contratar?</label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {[1, 3, 6, 12].map(m => (
+                        <button key={m} type="button" onClick={() => setMonthsRequested(m)}
+                          className={`py-2.5 text-sm font-bold rounded-xl border transition-all ${monthsRequested === m ? 'bg-[#0B3B68] text-white border-[#0B3B68] shadow-md' : 'bg-[#F3F4F6] text-[#6B7280] hover:bg-gray-200 border-gray-200'}`}>
+                          {m}M
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -270,7 +271,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd }: LoginScreenProp
 
               <button disabled={loading} type="submit" className="w-full bg-[#0B3B68] text-white font-bold py-3.5 rounded-xl hover:bg-[#092b4d] transition-all flex items-center justify-center gap-2 mt-6 shadow-xl shadow-[#0B3B68]/20 disabled:opacity-70 active:scale-95 text-lg">
                 {loading && <Loader2 className="animate-spin w-5 h-5" />}
-                {mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? 'Enviar Enlace' : 'Registrar Negocio'}
+                {mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? 'Contactar por WhatsApp' : 'Registrar Negocio'}
                 {!loading && mode !== 'forgot' && <ArrowRight className="w-5 h-5" />}
               </button>
             </form>
@@ -334,9 +335,13 @@ function BusinessApp() {
   const [recoveryMode, setRecoveryMode] = useState(false);
   // Bandera para evitar que onAuthStateChange procese SIGNED_IN durante el registro
   const isRegisteringRef = useRef(false);
+  // Bandera para saber si el staff ya fue cargado (evita doble-carga y loop de efectos)
+  const isStaffLoadedRef = useRef(false);
 
   // BOTÓN DE PÁNICO: Destruye todo rastro de caché corrupta
-  const handleForceLogout = async () => {
+  // No es async: redirige inmediatamente para evitar que el timer de sync
+  // dispare sobre la DB eliminada (DatabaseClosedError).
+  const handleForceLogout = () => {
       try {
           Object.keys(localStorage).forEach(key => {
               if (key.startsWith('sb-') || key.startsWith('nexus_')) {
@@ -344,12 +349,13 @@ function BusinessApp() {
               }
           });
           sessionStorage.clear();
-          await db.delete(); 
-          await supabase.auth.signOut();
+          // Fire-and-forget: no bloqueamos la redirección
+          supabase.auth.signOut().catch(() => {});
+          db.delete().catch(() => {});
       } catch (e) {
-          // Ignoramos errores de red durante el cierre
+          // Ignoramos errores durante el cierre
       } finally {
-          window.location.replace('/'); 
+          window.location.replace('/');
       }
   };
 
@@ -362,7 +368,10 @@ function BusinessApp() {
 
       if (data) {
         if (data.status !== 'active') {
-          if (!isBackgroundSync) toast.error("Tu cuenta está pendiente de aprobación. Espera la confirmación del administrador.");
+          if (!isBackgroundSync) {
+            setLoading(false);
+            toast.error("Tu cuenta está pendiente de aprobación. Espera la confirmación del administrador.");
+          }
           await supabase.auth.signOut();
           return;
         }
@@ -385,6 +394,7 @@ function BusinessApp() {
         });
         
         setCurrentStaff(adminStaff);
+        isStaffLoadedRef.current = true;
         if (!isBackgroundSync) setLoading(false);
 
         // Sincronización secundaria silenciosa
@@ -396,7 +406,10 @@ function BusinessApp() {
       
       // Si el perfil no se encuentra (PGRST116), es usuario recién creado sin perfil aún
       if (error?.code === 'PGRST116') {
-          if (!isBackgroundSync) toast.error("El perfil de tu cuenta aún no está configurado. Contacta al administrador.");
+          if (!isBackgroundSync) {
+            setLoading(false);
+            toast.error("El perfil de tu cuenta aún no está configurado. Contacta al administrador.");
+          }
           await supabase.auth.signOut();
           return;
       }
@@ -407,6 +420,7 @@ function BusinessApp() {
           if (localStaff.length > 0) {
               toast.info("Conexión lenta. Modo sin conexión activado.");
               setCurrentStaff(localStaff[0]);
+              isStaffLoadedRef.current = true;
               setLoading(false);
           } else {
               toast.error("Error de conexión. Necesitas internet para tu primer inicio.");
@@ -434,10 +448,12 @@ function BusinessApp() {
 
           if (session && !window.location.hash.includes('type=recovery')) {
               setSession(session);
-              
+              // Marcamos inmediatamente para que SIGNED_IN no interfiera
+              isStaffLoadedRef.current = true;
+
               const localStaff = await db.staff.toArray().catch(() => []);
               const localBizId = localStorage.getItem('nexus_business_id');
-              
+
               if (localStaff.length > 0 && localBizId) {
                   // Carga ultra rápida si hay datos locales (No esperamos por internet)
                   setCurrentStaff(localStaff[0]);
@@ -472,18 +488,19 @@ function BusinessApp() {
       if (event === 'PASSWORD_RECOVERY') setRecoveryMode(true);
 
       if (event === 'SIGNED_IN' && newSession) {
-        // Si el usuario está en medio del flujo de registro, ignoramos este evento
-        // para evitar que fetchProfileAndSync corra antes de que exista el perfil
+        // Ignorar eventos durante el flujo de registro
         if (isRegisteringRef.current) return;
+        // Ignorar si initApp ya está manejando la carga (evita doble-fetch y loop)
+        if (isStaffLoadedRef.current) return;
 
         setSession(newSession);
-        // Evitamos doble carga si `currentStaff` ya estaba seteado por `initApp`
-        if (!currentStaff && !window.location.hash.includes('type=recovery')) {
+        if (!window.location.hash.includes('type=recovery')) {
             setLoading(true);
             await fetchProfileAndSync(newSession.user.id, false);
         }
       }
       else if (event === 'SIGNED_OUT') {
+        isStaffLoadedRef.current = false;
         setSession(null);
         setCurrentStaff(null);
       }
@@ -493,7 +510,7 @@ function BusinessApp() {
         mounted = false;
         subscription.unsubscribe();
     };
-  }, [currentStaff]); // Dependencia clave para evitar race conditions
+  }, []); // Sin dependencias: el efecto corre solo al montar. Los refs evitan race conditions.
 
   if (recoveryMode) {
       return <UpdatePasswordScreen onComplete={() => {

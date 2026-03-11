@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Shield, Check, X, Search, RefreshCw, UserCheck, Inbox,
   CalendarPlus, Key, User, LogOut, Store, Trash2, AlertTriangle, Calendar, AlertOctagon,
-  History, TrendingUp, Award
+  History, TrendingUp, Award, KeyRound, Eye, EyeOff
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -28,6 +28,21 @@ interface Profile {
 
 type HistoryPeriod = 'day' | 'week' | 'month' | 'year';
 
+type EventType = 'approval' | 'extension' | 'suspension' | 'reactivation' | 'password_reset';
+
+interface LicenseEvent {
+  id: string;
+  profile_id: string;
+  client_name: string;
+  client_email?: string;
+  event_type: EventType;
+  months_granted?: number;
+  new_expiry_at?: string;
+  performed_by?: string;
+  performed_by_name?: string;
+  created_at: string;
+}
+
 type ConfirmAction = {
     type: 'suspend' | 'delete';
     item: Profile;
@@ -39,7 +54,7 @@ export function SuperAdminPage() {
   // --- ESTADOS DE LA INTERFAZ ---
   const [activeTab, setActiveTab] = useState<'requests' | 'active' | 'history'>('requests');
   const [dataList, setDataList] = useState<Profile[]>([]);
-  const [historyList, setHistoryList] = useState<Profile[]>([]);
+  const [historyList, setHistoryList] = useState<LicenseEvent[]>([]);
   const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>('month');
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -48,11 +63,14 @@ export function SuperAdminPage() {
   const [approvingItem, setApprovingItem] = useState<Profile | null>(null);
   const [extendingItem, setExtendingItem] = useState<Profile | null>(null);
   const [confirmModal, setConfirmModal] = useState<ConfirmAction | null>(null);
+  const [resetPasswordItem, setResetPasswordItem] = useState<Profile | null>(null);
 
   // --- VALORES DE FORMULARIO ---
   const [monthsToGrant, setMonthsToGrant] = useState(1);
   const [extendMonths, setExtendMonths] = useState(1);
   const [adminPin, setAdminPin] = useState('1234'); // Estado para el PIN (Ya no prompt)
+  const [newPassword, setNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
 
   // 1. CARGA DE DATOS (Solicitudes y Clientes)
   const fetchData = useCallback(async () => {
@@ -103,11 +121,10 @@ export function SuperAdminPage() {
       }
 
       const { data, error } = await supabase
-        .from('profiles')
+        .from('license_history')
         .select('*')
-        .not('approved_at', 'is', null)
-        .gte('approved_at', fromDate)
-        .order('approved_at', { ascending: false });
+        .gte('created_at', fromDate)
+        .order('created_at', { ascending: false });
 
       if (error) throw error;
       setHistoryList(data || []);
@@ -136,32 +153,38 @@ export function SuperAdminPage() {
 
     setLoading(true);
     try {
-      const { data: { user: adminUser } } = await supabase.auth.getUser();
+      const { id: adminId, name: approverName } = await getAdminInfo();
 
       const { error } = await supabase.rpc('approve_client_transaction', {
         target_user_id: approvingItem.id,
         months_to_grant: monthsToGrant,
         initial_pin: adminPin,
-        admin_user_id: adminUser?.id
+        admin_user_id: adminId
       });
 
       if (error) throw error;
 
-      // Obtener el nombre del super admin aprobador
-      let approverName = adminUser?.email || 'Admin';
-      const { data: approverProfile } = await supabase
-        .from('profiles')
-        .select('full_name')
-        .eq('id', adminUser?.id)
-        .single();
-      if (approverProfile?.full_name) approverName = approverProfile.full_name;
+      const expiryDate = new Date();
+      expiryDate.setMonth(expiryDate.getMonth() + monthsToGrant);
 
       // Registrar quién aprobó y cuándo
       await supabase.from('profiles').update({
-        approved_by: adminUser?.id,
+        approved_by: adminId,
         approved_by_name: approverName,
         approved_at: new Date().toISOString()
       }).eq('id', approvingItem.id);
+
+      // Registrar en historial
+      await supabase.from('license_history').insert({
+        profile_id: approvingItem.id,
+        client_name: approvingItem.full_name,
+        client_email: approvingItem.email,
+        event_type: 'approval',
+        months_granted: monthsToGrant,
+        new_expiry_at: expiryDate.toISOString(),
+        performed_by: adminId,
+        performed_by_name: approverName,
+      });
 
       toast.success(`Cliente aprobado. PIN Maestro: ${adminPin}`);
       setApprovingItem(null);
@@ -200,6 +223,19 @@ export function SuperAdminPage() {
           .eq('id', extendingItem.business_id);
       }
 
+      // Registrar en historial
+      const { id: adminId, name: adminName } = await getAdminInfo();
+      await supabase.from('license_history').insert({
+        profile_id: extendingItem.id,
+        client_name: extendingItem.full_name,
+        client_email: extendingItem.email,
+        event_type: 'extension',
+        months_granted: extendMonths,
+        new_expiry_at: baseDate.toISOString(),
+        performed_by: adminId,
+        performed_by_name: adminName,
+      });
+
       setExtendingItem(null);
       fetchData();
       toast.success("Licencia extendida correctamente.");
@@ -210,7 +246,49 @@ export function SuperAdminPage() {
     }
   };
 
-  // 4. EJECUTAR ACCIÓN DESTRUCTIVA (Suspender/Borrar)
+  // 4. RESTABLECER CONTRASEÑA DE USUARIO
+  const executeResetPassword = async () => {
+    if (!resetPasswordItem) return;
+    if (!newPassword || newPassword.length < 6) {
+        toast.warning("La contraseña debe tener al menos 6 caracteres");
+        return;
+    }
+
+    setLoading(true);
+    try {
+        const { error } = await supabase.rpc('reset_user_password', {
+            target_user_id: resetPasswordItem.id,
+            new_password: newPassword
+        });
+
+        if (error) throw error;
+
+        // Registrar en historial
+        const { id: adminId, name: adminName } = await getAdminInfo();
+        await supabase.from('license_history').insert({
+          profile_id: resetPasswordItem.id,
+          client_name: resetPasswordItem.full_name,
+          client_email: resetPasswordItem.email,
+          event_type: 'password_reset',
+          performed_by: adminId,
+          performed_by_name: adminName,
+        });
+
+        toast.success(`Contraseña de ${resetPasswordItem.full_name} restablecida correctamente`);
+        setResetPasswordItem(null);
+        setNewPassword('');
+        setShowNewPassword(false);
+
+    } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Error desconocido";
+        console.error(err);
+        toast.error("Error al restablecer: " + msg);
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  // 5. EJECUTAR ACCIÓN DESTRUCTIVA (Suspender/Borrar)
   const executeConfirmAction = async () => {
       if (!confirmModal) return;
       const { type, item } = confirmModal;
@@ -223,16 +301,28 @@ export function SuperAdminPage() {
               if (item.business_id) {
                   await supabase.from('businesses').update({ status: newStatus }).eq('id', item.business_id);
               }
+
+              // Registrar en historial
+              const { id: adminId, name: adminName } = await getAdminInfo();
+              await supabase.from('license_history').insert({
+                profile_id: item.id,
+                client_name: item.full_name,
+                client_email: item.email,
+                event_type: newStatus === 'suspended' ? 'suspension' : 'reactivation',
+                performed_by: adminId,
+                performed_by_name: adminName,
+              });
+
               toast.success(`Usuario ${newStatus === 'active' ? 'reactivado' : 'suspendido'}`);
-          } 
+          }
           else if (type === 'delete') {
-              const { error } = await supabase.rpc('delete_user_completely', { 
-                  target_user_id: item.id 
+              const { error } = await supabase.rpc('delete_user_completely', {
+                  target_user_id: item.id
               });
               if (error) throw error;
               toast.success("Usuario eliminado completamente de la base de datos.");
           }
-          
+
           setConfirmModal(null);
           fetchData();
 
@@ -249,6 +339,15 @@ export function SuperAdminPage() {
   const handleLogout = async () => {
     await supabase.auth.signOut();
     navigate('/admin-login');
+  };
+
+  // Helper: obtener id y nombre del admin actual
+  const getAdminInfo = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    let name = user?.email || 'Admin';
+    const { data } = await supabase.from('profiles').select('full_name').eq('id', user?.id).single();
+    if (data?.full_name) name = data.full_name;
+    return { id: user?.id as string | undefined, name };
   };
 
   // ✅ FUNCIONES PARA ALERTAS DE VENCIMIENTO
@@ -364,7 +463,7 @@ export function SuperAdminPage() {
                 </div>
                 <div>
                   <p className="text-2xl font-black text-slate-800">{historyList.length}</p>
-                  <p className="text-xs text-slate-400 font-medium">Aprobadas</p>
+                  <p className="text-xs text-slate-400 font-medium">Eventos</p>
                 </div>
               </div>
               <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-4 shadow-sm">
@@ -373,9 +472,9 @@ export function SuperAdminPage() {
                 </div>
                 <div>
                   <p className="text-2xl font-black text-slate-800">
-                    {historyList.reduce((sum, i) => sum + (i.months_requested || 1), 0)}
+                    {historyList.reduce((sum, i) => sum + (i.months_granted || 0), 0)}
                   </p>
-                  <p className="text-xs text-slate-400 font-medium">Meses totales</p>
+                  <p className="text-xs text-slate-400 font-medium">Meses otorgados</p>
                 </div>
               </div>
               <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-4 shadow-sm col-span-2 sm:col-span-1">
@@ -384,7 +483,7 @@ export function SuperAdminPage() {
                 </div>
                 <div>
                   <p className="text-2xl font-black text-slate-800">
-                    {new Set(historyList.map(i => i.approved_by_name).filter(Boolean)).size}
+                    {new Set(historyList.map(i => i.performed_by_name).filter(Boolean)).size}
                   </p>
                   <p className="text-xs text-slate-400 font-medium">Admins activos</p>
                 </div>
@@ -401,7 +500,7 @@ export function SuperAdminPage() {
               ) : historyList.length === 0 ? (
                 <div className="h-64 flex flex-col items-center justify-center text-slate-400">
                   <History className="w-12 h-12 opacity-20 mb-3" />
-                  <p className="text-sm font-medium">Sin aprobaciones en este período</p>
+                  <p className="text-sm font-medium">Sin eventos en este período</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -409,55 +508,75 @@ export function SuperAdminPage() {
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase font-bold text-slate-500 tracking-wider">
                         <th className="p-4">Fecha</th>
+                        <th className="p-4">Evento</th>
                         <th className="p-4">Cliente</th>
-                        <th className="p-4">Aprobado por</th>
+                        <th className="p-4">Realizado por</th>
                         <th className="p-4 text-center">Meses</th>
-                        <th className="p-4">Vence</th>
+                        <th className="p-4">Nueva Fecha</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {historyList.map(item => (
-                        <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="p-4">
-                            <div className="text-xs font-bold text-slate-700">
-                              {item.approved_at ? new Date(item.approved_at).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
-                            </div>
-                            <div className="text-[10px] text-slate-400 mt-0.5">
-                              {item.approved_at ? new Date(item.approved_at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : ''}
-                            </div>
-                          </td>
-                          <td className="p-4">
-                            <div className="flex items-center gap-2.5">
-                              <div className="w-8 h-8 rounded-full bg-violet-600 flex items-center justify-center text-white text-xs font-bold">
-                                {item.full_name.substring(0,2).toUpperCase()}
+                      {historyList.map(item => {
+                        const eventConfig: Record<EventType, { label: string; classes: string }> = {
+                          approval:       { label: 'Nueva Licencia', classes: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+                          extension:      { label: 'Extensión',      classes: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+                          suspension:     { label: 'Suspensión',     classes: 'bg-red-50 text-red-700 border-red-200' },
+                          reactivation:   { label: 'Reactivación',   classes: 'bg-teal-50 text-teal-700 border-teal-200' },
+                          password_reset: { label: 'Contraseña',     classes: 'bg-violet-50 text-violet-700 border-violet-200' },
+                        };
+                        const ev = eventConfig[item.event_type];
+                        return (
+                          <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="p-4">
+                              <div className="text-xs font-bold text-slate-700">
+                                {new Date(item.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })}
                               </div>
-                              <div>
-                                <div className="text-sm font-bold text-slate-800">{item.full_name}</div>
-                                <div className="text-[11px] text-slate-400">{item.email || '—'}</div>
+                              <div className="text-[10px] text-slate-400 mt-0.5">
+                                {new Date(item.created_at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
                               </div>
-                            </div>
-                          </td>
-                          <td className="p-4">
-                            {item.approved_by_name ? (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-bold border border-indigo-100">
-                                <Shield size={10} /> {item.approved_by_name}
+                            </td>
+                            <td className="p-4">
+                              <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide border ${ev.classes}`}>
+                                {ev.label}
                               </span>
-                            ) : (
-                              <span className="text-xs text-slate-400 italic">Sin registro</span>
-                            )}
-                          </td>
-                          <td className="p-4 text-center">
-                            <span className="inline-flex items-center justify-center w-8 h-8 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-black">
-                              {item.months_requested || 1}
-                            </span>
-                          </td>
-                          <td className="p-4">
-                            <span className="text-xs font-medium text-slate-600">
-                              {item.license_expiry ? new Date(item.license_expiry).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                            </td>
+                            <td className="p-4">
+                              <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-full bg-violet-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                                  {item.client_name.substring(0, 2).toUpperCase()}
+                                </div>
+                                <div>
+                                  <div className="text-sm font-bold text-slate-800">{item.client_name}</div>
+                                  <div className="text-[11px] text-slate-400">{item.client_email || '—'}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="p-4">
+                              {item.performed_by_name ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-bold border border-indigo-100">
+                                  <Shield size={10} /> {item.performed_by_name}
+                                </span>
+                              ) : (
+                                <span className="text-xs text-slate-400 italic">—</span>
+                              )}
+                            </td>
+                            <td className="p-4 text-center">
+                              {item.months_granted ? (
+                                <span className="inline-flex items-center justify-center w-8 h-8 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-black">
+                                  {item.months_granted}
+                                </span>
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
+                            </td>
+                            <td className="p-4">
+                              <span className="text-xs font-medium text-slate-600">
+                                {item.new_expiry_at ? new Date(item.new_expiry_at).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -592,6 +711,13 @@ export function SuperAdminPage() {
                                                         <CalendarPlus size={18} />
                                                     </button>
                                                     <button
+                                                        onClick={() => { setResetPasswordItem(item); setNewPassword(''); setShowNewPassword(false); }}
+                                                        className="p-2 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
+                                                        title="Restablecer Contraseña"
+                                                    >
+                                                        <KeyRound size={18} />
+                                                    </button>
+                                                    <button
                                                         onClick={() => setConfirmModal({ type: 'suspend', item })}
                                                         className={`p-2 rounded-lg transition-colors ${item.status === 'active' ? 'text-slate-400 hover:text-amber-600 hover:bg-amber-50' : 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100'}`}
                                                         title={item.status === 'active' ? "Suspender Cuenta" : "Reactivar Cuenta"}
@@ -647,18 +773,18 @@ export function SuperAdminPage() {
 
                     {/* PIN Maestro */}
                     <div>
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Asignar PIN Maestro</label>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">PIN Maestro de Seguridad</label>
                         <div className="relative">
                             <Key className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-                            <input 
+                            <input
                                 type="text" maxLength={4}
                                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-lg font-bold text-slate-800 tracking-widest outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-50 transition-all text-center"
                                 value={adminPin}
                                 onChange={(e) => setAdminPin(e.target.value.replace(/\D/g,''))}
-                                placeholder="0000"
+                                placeholder="1234"
                             />
                         </div>
-                        <p className="text-[10px] text-slate-400 mt-1.5 text-center">Este PIN se usará para acceder a la caja.</p>
+                        <p className="text-[10px] text-slate-400 mt-1.5 text-center">Para retiros, anulaciones y acceso al POS. El cliente puede cambiarlo luego.</p>
                     </div>
 
                     {/* Acciones */}
@@ -701,7 +827,63 @@ export function SuperAdminPage() {
         </div>
       )}
 
-      {/* 3. MODAL DE CONFIRMACIÓN (Suspensión / Eliminación) */}
+      {/* 3. MODAL DE RESTABLECER CONTRASEÑA */}
+      {resetPasswordItem && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+                <div className="p-6 bg-violet-50 border-b border-violet-100">
+                    <h3 className="text-lg font-black text-violet-900 flex items-center gap-2">
+                        <KeyRound className="w-5 h-5 text-violet-600"/> RESTABLECER CONTRASEÑA
+                    </h3>
+                    <p className="text-xs text-violet-600 mt-1 font-medium">{resetPasswordItem.full_name}</p>
+                    <p className="text-[11px] text-violet-400 mt-0.5">{resetPasswordItem.email}</p>
+                </div>
+
+                <div className="p-6 space-y-5">
+                    <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Nueva Contraseña</label>
+                        <div className="relative">
+                            <Key className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                            <input
+                                type={showNewPassword ? 'text' : 'password'}
+                                className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-base font-bold text-slate-800 tracking-widest outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all"
+                                value={newPassword}
+                                onChange={(e) => setNewPassword(e.target.value)}
+                                placeholder="mínimo 6 caracteres"
+                                autoFocus
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setShowNewPassword(!showNewPassword)}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                            >
+                                {showNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                            </button>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1.5">El cliente deberá usar esta contraseña en su próximo inicio de sesión.</p>
+                    </div>
+
+                    <div className="flex gap-3 pt-2">
+                        <button
+                            onClick={() => { setResetPasswordItem(null); setNewPassword(''); setShowNewPassword(false); }}
+                            className="flex-1 py-3 text-slate-500 font-bold bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors text-xs"
+                        >
+                            CANCELAR
+                        </button>
+                        <button
+                            onClick={executeResetPassword}
+                            disabled={loading}
+                            className="flex-1 py-3 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white font-bold rounded-xl shadow-lg shadow-violet-200 transition-all text-xs"
+                        >
+                            {loading ? 'GUARDANDO...' : 'CONFIRMAR'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* 4. MODAL DE CONFIRMACIÓN (Suspensión / Eliminación) */}
       {confirmModal && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border-t-4 border-red-500">

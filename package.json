@@ -27,6 +27,15 @@
             "target": "nsis",
             "artifactName": "${productName} Setup ${version}.${ext}",
             "icon": "public/icon.ico"
+        },
+        "nsis": {
+            "oneClick": true,
+            "perMachine": false,
+            "allowElevation": true,
+            "deleteAppDataOnUninstall": false,
+            "shortcutName": "Bisne con Talla",
+            "createDesktopShortcut": true,
+            "createStartMenuShortcut": true
         }
     },
     "dependencies": {

@@ -68,10 +68,11 @@ export function Layout({ currentStaff }: LayoutProps) {
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    // signOut dispara SIGNED_OUT en BusinessApp, que limpia el estado y muestra LoginScreen.
+    // No llamamos navigate() aquí porque el componente se desmonta tras el SIGNED_OUT
+    // y una llamada al router en ese momento causa errores de React Router.
     localStorage.removeItem('nexus_business_id');
-    localStorage.removeItem('nexus_current_staff'); 
-    navigate('/');
+    await supabase.auth.signOut();
   };
 
   const isAdmin = currentStaff?.role === 'admin';
@@ -159,7 +160,10 @@ export function Layout({ currentStaff }: LayoutProps) {
 
       {/* HEADER MÓVIL */}
       <div className="flex-1 flex flex-col min-w-0 relative">
-        <header className="bg-[#0B3B68] text-white border-b border-[#0B3B68] px-4 py-3 flex justify-between items-center md:hidden z-10 shadow-lg sticky top-0">
+        <header
+          className="bg-[#0B3B68] text-white border-b border-[#0B3B68] px-4 pb-3 flex justify-between items-center md:hidden z-10 shadow-lg sticky top-0"
+          style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+        >
             <button onClick={() => setIsMobileMenuOpen(true)} className="text-white hover:text-[#7AC142] transition-colors">
                 <Menu size={26} />
             </button>
@@ -179,11 +183,14 @@ export function Layout({ currentStaff }: LayoutProps) {
             </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto overflow-x-hidden relative bg-[#F3F4F6] pb-safe scroll-smooth">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden relative bg-[#F3F4F6] scroll-smooth pb-safe">
             <Outlet context={{ currentStaff }} /> 
         </main>
 
-        <nav className="md:hidden bg-white border-t border-gray-200 flex justify-around items-center p-2 pb-safe z-30 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] sticky bottom-0">
+        <nav
+          className="md:hidden bg-white border-t border-gray-200 flex justify-around items-center px-2 pt-2 z-30 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] sticky bottom-0"
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
+        >
             {menuItems.filter(i => i.show).slice(0, 4).map((item) => {
               const isActive = location.pathname === item.path;
               return (
@@ -200,7 +207,10 @@ export function Layout({ currentStaff }: LayoutProps) {
                 <div className="absolute inset-0 bg-[#0B3B68]/90 backdrop-blur-sm animate-in fade-in" onClick={() => setIsMobileMenuOpen(false)} />
                 
                 <div className="relative bg-[#F3F4F6] w-4/5 max-w-xs h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 border-l border-gray-200">
-                    <div className="p-6 bg-[#0B3B68] text-white">
+                    <div
+                      className="px-6 pb-6 bg-[#0B3B68] text-white"
+                      style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 1.5rem)' }}
+                    >
                         <div className="flex justify-between items-center mb-6">
                            {/* ✅ LOGO EN EL MENÚ MÓVIL DESPLEGABLE */}
                            <div className="bg-white p-1.5 rounded-xl shadow-lg w-12 h-12 flex items-center justify-center">

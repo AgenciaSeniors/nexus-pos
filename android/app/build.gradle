@@ -1,5 +1,12 @@
 apply plugin: 'com.android.application'
 
+// Lee versión desde package.json para mantener todo sincronizado
+def packageJson = new groovy.json.JsonSlurper().parseText(file('../../package.json').text)
+def appVersion = packageJson.version ?: "1.0.0"
+def parts = appVersion.tokenize('.')
+// versionCode: 1.2.3 → 10203  (máx 99 por segmento)
+def computedVersionCode = parts[0].toInteger() * 10000 + parts[1].toInteger() * 100 + (parts.size() > 2 ? parts[2].toInteger() : 0)
+
 android {
     namespace "com.bisne.contalla"
     compileSdkVersion rootProject.ext.compileSdkVersion
@@ -7,8 +14,8 @@ android {
         applicationId "com.bisne.contalla"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode computedVersionCode
+        versionName appVersion
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'

@@ -385,13 +385,20 @@ export function SettingsPage() {
                             </div>
                         </div>
 
-                        <div className="border-t border-gray-100 my-4 pt-6">
-                            <h4 className="text-[#EF4444] font-bold text-sm mb-2 uppercase flex items-center gap-2"><AlertTriangle size={16}/> Zona de Peligro</h4>
-                            <button onClick={() => setShowResetDbConfirm(true)}
-                                className="w-full p-4 flex items-center justify-between bg-[#EF4444]/5 border border-[#EF4444]/20 rounded-xl hover:bg-[#EF4444]/10 transition-colors text-[#EF4444]">
-                                <span className="font-bold">Restablecer Base de Datos Local</span>
-                                <Trash2 size={20}/>
-                            </button>
+                        <div className="border-t border-gray-100 my-4 pt-6 flex items-center justify-between">
+                            <div>
+                                <h4 className="text-[#EF4444] font-bold text-sm mb-2 uppercase flex items-center gap-2"><AlertTriangle size={16}/> Zona de Peligro</h4>
+                                <button onClick={() => setShowResetDbConfirm(true)}
+                                    className="w-full p-4 flex items-center justify-between bg-[#EF4444]/5 border border-[#EF4444]/20 rounded-xl hover:bg-[#EF4444]/10 transition-colors text-[#EF4444]">
+                                    <span className="font-bold">Restablecer Base de Datos Local</span>
+                                    <Trash2 size={20}/>
+                                </button>
+                            </div>
+                            <div className="text-right pl-6 flex-shrink-0">
+                                <p className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Versión</p>
+                                <p className="text-lg font-black text-[#0B3B68]">v{__APP_VERSION__}</p>
+                                <p className="text-[10px] text-[#6B7280]">Bisne con Talla</p>
+                            </div>
                         </div>
                     </div>
                 </div>

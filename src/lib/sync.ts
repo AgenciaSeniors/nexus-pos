@@ -21,6 +21,7 @@ export function isOnline() {
 }
 
 export async function resetProcessingItems() {
+    if (!db.isOpen()) return;
     const stuckItems = await db.action_queue.where('status').equals('processing').toArray();
     if (stuckItems.length > 0) {
         await db.action_queue.where('status').equals('processing').modify({ status: 'pending' });
@@ -170,6 +171,7 @@ export async function processQueue() {
 }
 
 async function _runQueue() {
+  if (!db.isOpen()) return;
   const pendingItems = await db.action_queue.where('status').equals('pending').limit(5).toArray();
   if (pendingItems.length === 0) return;
 
@@ -323,6 +325,12 @@ export async function syncPull() {
 
 export async function syncManualFull() {
     if (!isOnline()) throw new Error("Sin conexión a internet");
+    // Reintentar ítems que fallaron previamente (en sync automático solo se reintenta hasta 5 veces)
+    if (db.isOpen()) {
+        await db.action_queue
+            .where('status').equals('failed')
+            .modify({ status: 'pending', retries: 0, error: undefined });
+    }
     await syncPush();
     await syncPull();
 }
@@ -334,5 +342,11 @@ if (typeof window !== 'undefined') {
             .catch(err => console.error("Error al procesar cola tras reconexión:", err));
     });
     resetProcessingItems();
-    setInterval(() => { if (isOnline()) processQueue().catch(err => console.error("Error en sync periódico:", err)); }, 30000);
+    setInterval(() => {
+        if (isOnline() && db.isOpen()) {
+            processQueue().catch(err => {
+                if (err?.name !== 'DatabaseClosedError') console.error("Error en sync periódico:", err);
+            });
+        }
+    }, 30000);
 }
