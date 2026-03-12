@@ -15,7 +15,7 @@ import { SuperAdminPage } from './pages/SuperAdminPage';
 import { SuperAdminLogin } from './pages/SuperAdminLogin';
 import { CustomersPage } from './components/CustomersPage';
 
-import { Loader2, Store, User, Lock, Mail, Phone, ArrowRight, CheckCircle, Shield } from 'lucide-react';
+import { Loader2, Store, User, Lock, Mail, Phone, ArrowRight, CheckCircle, Shield, Eye, EyeOff } from 'lucide-react';
 
 // =============================================================================
 // 0. PANTALLA DE ACTUALIZAR CONTRASEÑA (Modo Recuperación)
@@ -92,7 +92,8 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd }: LoginScreenProp
   const [phone, setPhone] = useState('');
   const [businessName, setBusinessName] = useState('');
   const [monthsRequested, setMonthsRequested] = useState(1);
-  
+  const [showPassword, setShowPassword] = useState(false);
+
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -264,7 +265,10 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd }: LoginScreenProp
                     <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Contraseña</label>
                     <div className="relative">
                       <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
-                      <input type="password" required className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
+                      <input type={showPassword ? 'text' : 'password'} required className="w-full pl-10 pr-11 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
+                      <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B7280] hover:text-[#0B3B68] transition-colors p-1">
+                        {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                      </button>
                     </div>
                   </div>
               )}
