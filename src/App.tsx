@@ -445,7 +445,7 @@ function BusinessApp() {
           const localStaff = await db.staff.toArray().catch(() => []);
           const localBizId = localStorage.getItem('nexus_business_id');
 
-          if (localStaff.length > 0 && localBizId && !mounted) return;
+          if (!mounted) return;
 
           if (localStaff.length > 0 && localBizId) {
               // Tenemos datos locales: mostrar la app inmediatamente sin esperar la red
