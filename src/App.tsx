@@ -437,41 +437,57 @@ function BusinessApp() {
     const initApp = async () => {
       if (window.location.hash.includes('type=recovery')) {
           setRecoveryMode(true);
+          return; // El hash de recovery lo maneja onAuthStateChange
       }
 
       try {
-          // Extraemos sesión local de Supabase (sin forzar la red inmediatamente)
+          // 1. PRIMERO: Revisar datos locales (IndexedDB + localStorage) — no requiere red
+          const localStaff = await db.staff.toArray().catch(() => []);
+          const localBizId = localStorage.getItem('nexus_business_id');
+
+          if (localStaff.length > 0 && localBizId && !mounted) return;
+
+          if (localStaff.length > 0 && localBizId) {
+              // Tenemos datos locales: mostrar la app inmediatamente sin esperar la red
+              isStaffLoadedRef.current = true;
+              setCurrentStaff(localStaff[0]);
+              setLoading(false);
+
+              // 2. LUEGO: Validar sesión y sincronizar en el fondo (no bloquea la UI)
+              supabase.auth.getSession().then(({ data: { session } }) => {
+                  if (!mounted) return;
+                  if (session) {
+                      setSession(session);
+                      fetchProfileAndSync(session.user.id, true).catch(() => {});
+                  } else {
+                      // Sesión expirada y no renovable: cerrar sesión limpiamente
+                      toast.error("Tu sesión expiró. Por favor inicia sesión de nuevo.");
+                      setCurrentStaff(null);
+                      setSession(null);
+                      isStaffLoadedRef.current = false;
+                  }
+              }).catch(() => {
+                  // Error de red validando: se queda en modo offline, no hace nada
+              });
+              return;
+          }
+
+          // 3. Sin datos locales (primer inicio): necesitamos la sesión de la red
           const { data: { session }, error } = await supabase.auth.getSession();
           if (error) throw error;
-
           if (!mounted) return;
 
-          if (session && !window.location.hash.includes('type=recovery')) {
+          if (session) {
               setSession(session);
-              // Marcamos inmediatamente para que SIGNED_IN no interfiera
               isStaffLoadedRef.current = true;
-
-              const localStaff = await db.staff.toArray().catch(() => []);
-              const localBizId = localStorage.getItem('nexus_business_id');
-
-              if (localStaff.length > 0 && localBizId) {
-                  // Carga ultra rápida si hay datos locales (No esperamos por internet)
-                  setCurrentStaff(localStaff[0]);
-                  setLoading(false);
-                  fetchProfileAndSync(session.user.id, true).catch(() => {});
-              } else {
-                  // Si no hay datos locales, dependemos de descargar el perfil
-                  await fetchProfileAndSync(session.user.id, false);
-              }
+              await fetchProfileAndSync(session.user.id, false);
           } else {
               setSession(null);
               setCurrentStaff(null);
               setLoading(false);
           }
       } catch (error: any) {
-          // Si Supabase se aborta (AbortError) lo ignoramos.
           if (error.name === 'AbortError' || error.message?.includes('AbortError')) return;
-          
           console.error("Error crítico de inicialización:", error);
           setSession(null);
           setCurrentStaff(null);
