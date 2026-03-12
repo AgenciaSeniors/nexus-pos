@@ -8,12 +8,13 @@ import { syncCriticalData, syncHeavyData } from './lib/sync';
 
 import { Layout } from './components/Layout';
 import { PosPage } from './pages/PosPage';
-import { InventoryPage } from './pages/InventoryPage'; 
+import { InventoryPage } from './pages/InventoryPage';
 import { FinancePage } from './pages/FinancePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
 import { SuperAdminLogin } from './pages/SuperAdminLogin';
 import { CustomersPage } from './components/CustomersPage';
+import { StaffSelectorModal } from './components/StaffSelectorModal';
 
 import { Loader2, Store, User, Lock, Mail, Phone, ArrowRight, CheckCircle, Shield, Eye, EyeOff } from 'lucide-react';
 
@@ -337,6 +338,7 @@ function BusinessApp() {
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
   const [loading, setLoading] = useState(true);
   const [recoveryMode, setRecoveryMode] = useState(false);
+  const [showStaffSelector, setShowStaffSelector] = useState(false);
   // Bandera para evitar que onAuthStateChange procese SIGNED_IN durante el registro
   const isRegisteringRef = useRef(false);
   // Bandera para saber si el staff ya fue cargado (evita doble-carga y loop de efectos)
@@ -382,24 +384,41 @@ function BusinessApp() {
 
         localStorage.setItem('nexus_business_id', data.business_id);
 
+        // Preservar PIN del admin si ya existe en la DB local
+        const existingAdmin = await db.staff.get(data.id);
         const adminStaff: Staff = {
           id: data.id,
           name: data.full_name || data.email,
-          role: 'admin', 
-          pin: '0000', 
+          role: 'admin',
+          pin: existingAdmin?.pin || '0000',
           active: true,
-          business_id: data.business_id 
+          business_id: data.business_id
         };
 
-        // Guardar de forma segura en la DB
-        await db.transaction('rw', db.staff, async () => {
-            await db.staff.clear();
-            await db.staff.put(adminStaff);
-        });
-        
-        setCurrentStaff(adminStaff);
+        // Solo upsert del admin — NO borrar el resto del equipo
+        await db.staff.put(adminStaff);
+
         isStaffLoadedRef.current = true;
         if (!isBackgroundSync) setLoading(false);
+
+        if (!isBackgroundSync) {
+          // Determinar qué vendedor mostrar en este dispositivo
+          const savedStaffId = localStorage.getItem('nexus_staff_id');
+          const allActive = await db.staff
+            .where('business_id').equals(data.business_id)
+            .filter(s => s.active !== false)
+            .toArray();
+          const savedStaff = savedStaffId ? allActive.find(s => s.id === savedStaffId) : null;
+
+          if (savedStaff) {
+            setCurrentStaff(savedStaff);
+          } else if (allActive.length > 1) {
+            setShowStaffSelector(true); // Múltiples vendedores → seleccionar
+          } else {
+            setCurrentStaff(adminStaff);
+          }
+        }
+        // En background: no tocamos currentStaff para no interrumpir al vendedor activo
 
         // Sincronización secundaria silenciosa
         await syncCriticalData(data.business_id);
@@ -423,7 +442,10 @@ function BusinessApp() {
           const localStaff = await db.staff.toArray().catch(() => []);
           if (localStaff.length > 0) {
               toast.info("Conexión lenta. Modo sin conexión activado.");
-              setCurrentStaff(localStaff[0]);
+              const savedStaffId = localStorage.getItem('nexus_staff_id');
+              const activeLocal = localStaff.filter(s => s.active !== false);
+              const savedStaff = savedStaffId ? activeLocal.find(s => s.id === savedStaffId) : null;
+              setCurrentStaff(savedStaff || localStaff.find(s => s.role === 'admin') || localStaff[0]);
               isStaffLoadedRef.current = true;
               setLoading(false);
           } else {
@@ -454,7 +476,20 @@ function BusinessApp() {
           if (localStaff.length > 0 && localBizId) {
               // Tenemos datos locales: mostrar la app inmediatamente sin esperar la red
               isStaffLoadedRef.current = true;
-              setCurrentStaff(localStaff[0]);
+
+              // Restaurar selección de vendedor guardada en este dispositivo
+              const savedStaffId = localStorage.getItem('nexus_staff_id');
+              const activeLocal = localStaff.filter(s => s.active !== false);
+              const savedStaff = savedStaffId ? activeLocal.find(s => s.id === savedStaffId) : null;
+              const adminStaffLocal = localStaff.find(s => s.role === 'admin') || localStaff[0];
+
+              if (savedStaff) {
+                setCurrentStaff(savedStaff);
+              } else if (activeLocal.length > 1) {
+                setShowStaffSelector(true);
+              } else {
+                setCurrentStaff(adminStaffLocal);
+              }
               setLoading(false);
 
               // 2. LUEGO: Validar sesión y sincronizar en el fondo (no bloquea la UI)
@@ -562,19 +597,48 @@ function BusinessApp() {
       onRegistrationEnd={() => { isRegisteringRef.current = false; }}
     />
   );
+
+  const businessId = localStorage.getItem('nexus_business_id') || '';
+
+  // Selector obligatorio: múltiples vendedores y ninguno seleccionado aún
+  if (!currentStaff && showStaffSelector) {
+    return (
+      <StaffSelectorModal
+        businessId={businessId}
+        onSelect={(staff) => {
+          setCurrentStaff(staff);
+          setShowStaffSelector(false);
+        }}
+      />
+    );
+  }
+
   if (!currentStaff) return null;
 
   return (
-    <Routes>
-      <Route element={<Layout currentStaff={currentStaff} />}>
-        <Route path="/" element={<PosPage />} />
-        <Route path="/clientes" element={<CustomersPage />} />
-        <Route path="/inventario" element={<InventoryPage />} />
-        <Route path="/finanzas" element={<FinancePage />} />
-        <Route path="/configuracion" element={<SettingsPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Route>
-    </Routes>
+    <>
+      {/* Selector opcional (cambio de vendedor desde Layout) */}
+      {showStaffSelector && (
+        <StaffSelectorModal
+          businessId={businessId}
+          onSelect={(staff) => {
+            setCurrentStaff(staff);
+            setShowStaffSelector(false);
+          }}
+          onClose={() => setShowStaffSelector(false)}
+        />
+      )}
+      <Routes>
+        <Route element={<Layout currentStaff={currentStaff} onChangeStaff={() => setShowStaffSelector(true)} />}>
+          <Route path="/" element={<PosPage />} />
+          <Route path="/clientes" element={<CustomersPage />} />
+          <Route path="/inventario" element={<InventoryPage />} />
+          <Route path="/finanzas" element={<FinancePage />} />
+          <Route path="/configuracion" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </>
   );
 }
 

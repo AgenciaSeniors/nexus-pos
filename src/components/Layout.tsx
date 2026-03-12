@@ -1,7 +1,8 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { 
-  Package, PieChart, Settings, 
-  Cloud, AlertCircle, RefreshCw, LogOut, Menu, X, Users as UsersIcon, CheckCircle2 
+import {
+  Package, PieChart, Settings,
+  Cloud, AlertCircle, RefreshCw, LogOut, Menu, X, Users as UsersIcon, CheckCircle2,
+  ArrowLeftRight
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -15,9 +16,10 @@ import logo from '../assets/logo.png';
 
 interface LayoutProps {
   currentStaff: Staff | null;
+  onChangeStaff?: () => void;
 }
 
-export function Layout({ currentStaff }: LayoutProps) {
+export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
   
@@ -35,6 +37,13 @@ export function Layout({ currentStaff }: LayoutProps) {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  const multipleStaff = useLiveQuery(async () => {
+    const bId = localStorage.getItem('nexus_business_id');
+    if (!bId) return false;
+    const count = await db.staff.where('business_id').equals(bId).filter(s => s.active !== false).count();
+    return count > 1;
+  }, []) || false;
 
   const pendingCount = useLiveQuery(async () => {
     const sales = await db.sales.where('sync_status').equals('pending_create').count();
@@ -117,14 +126,23 @@ export function Layout({ currentStaff }: LayoutProps) {
           />
         </div>
         
-        <div className="mb-8 text-center px-1 w-full group relative">
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-2 font-bold text-sm shadow-lg transition-colors border-2 border-[#7AC142] ${isAdmin ? 'bg-[#7AC142] text-[#0B3B68]' : 'bg-white/10 text-white'}`}>
+        <div className="mb-8 text-center px-1 w-full relative">
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-1 font-bold text-sm shadow-lg transition-colors border-2 border-[#7AC142] ${isAdmin ? 'bg-[#7AC142] text-[#0B3B68]' : 'bg-white/10 text-white'}`}>
             {currentStaff?.name.substring(0, 2).toUpperCase() || 'BT'}
           </div>
           {!isCashier && (
              <p className="text-[10px] font-bold text-[#7AC142] truncate w-full px-1 uppercase tracking-wider opacity-90">
                {currentStaff?.name?.split(' ')[0]}
              </p>
+          )}
+          {multipleStaff && onChangeStaff && (
+            <button
+              onClick={onChangeStaff}
+              className="mt-1 mx-auto flex items-center justify-center gap-1 text-[9px] font-bold text-white/50 hover:text-[#7AC142] transition-colors uppercase tracking-wide"
+              title="Cambiar vendedor"
+            >
+              <ArrowLeftRight size={10}/> cambiar
+            </button>
           )}
         </div>
 
@@ -234,7 +252,15 @@ export function Layout({ currentStaff }: LayoutProps) {
                         })}
                     </div>
                     
-                    <div className="p-6 border-t border-gray-200 bg-white">
+                    <div className="p-6 border-t border-gray-200 bg-white space-y-3">
+                        {multipleStaff && onChangeStaff && (
+                          <button
+                            onClick={() => { setIsMobileMenuOpen(false); onChangeStaff(); }}
+                            className="flex items-center justify-center gap-3 text-[#0B3B68] w-full p-4 hover:bg-[#0B3B68]/5 rounded-xl font-bold transition-colors border border-[#0B3B68]/20"
+                          >
+                            <ArrowLeftRight size={20} /> Cambiar Vendedor
+                          </button>
+                        )}
                         <button onClick={handleLogout} className="flex items-center justify-center gap-3 text-[#EF4444] w-full p-4 hover:bg-[#EF4444]/5 rounded-xl font-bold transition-colors border border-[#EF4444]/20 hover:border-[#EF4444]">
                             <LogOut size={20} /> Cerrar Sesión
                         </button>

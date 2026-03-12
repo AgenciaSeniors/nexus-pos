@@ -98,19 +98,29 @@ export function FinancePage() {
 
   const shiftStats = useMemo(() => {
     if (!activeShift || !shiftData || !shiftData.sales || !shiftData.movements) return null;
-    
+
     const startAmount = safeFloat(activeShift.start_amount);
     // Ignoramos ventas anuladas para no contarlas como ganancia en caja
     const validSales = shiftData.sales.filter(s => s.status !== 'voided');
-    
+
     const totalSales = validSales.reduce((sum, s) => sum + safeFloat(s.total), 0);
-    const cashSales = validSales.filter(s => ['efectivo', 'mixto'].includes(s.payment_method?.toLowerCase() || 'efectivo')).reduce((sum, s) => sum + safeFloat(s.total), 0); 
-    
+    const cashSales = validSales.filter(s => ['efectivo', 'mixto'].includes(s.payment_method?.toLowerCase() || 'efectivo')).reduce((sum, s) => sum + safeFloat(s.total), 0);
+
     const cashIn = shiftData.movements.filter(m => m.type === 'in').reduce((sum, m) => sum + safeFloat(m.amount), 0);
     const cashOut = shiftData.movements.filter(m => m.type === 'out').reduce((sum, m) => sum + safeFloat(m.amount), 0);
     const expectedCash = (startAmount + cashSales + cashIn) - cashOut;
 
-    return { startAmount, cashSales, totalSales, cashIn, cashOut, expectedCash };
+    // Desglose por vendedor en el turno activo
+    const byStaff: Record<string, { count: number, total: number }> = {};
+    validSales.forEach(s => {
+      const key = s.staff_name || 'Sin asignar';
+      if (!byStaff[key]) byStaff[key] = { count: 0, total: 0 };
+      byStaff[key].count++;
+      byStaff[key].total += safeFloat(s.total);
+    });
+    const staffList = Object.entries(byStaff).map(([name, d]) => ({ name, ...d })).sort((a, b) => b.total - a.total);
+
+    return { startAmount, cashSales, totalSales, cashIn, cashOut, expectedCash, staffList };
   }, [activeShift, shiftData]);
 
   const productMeta = useMemo(() => {
@@ -165,6 +175,7 @@ export function FinancePage() {
   const closingStats = useMemo(() => {
     let cashTotal = 0, transferTotal = 0, cardTotal = 0;
     const productSummary: Record<string, { quantity: number, total: number }> = {};
+    const staffSummary: Record<string, { count: number, total: number }> = {};
 
     dailyStats.sales.forEach((sale) => {
       const saleTotal = safeFloat(sale.total);
@@ -178,10 +189,17 @@ export function FinancePage() {
         productSummary[item.name].quantity += safeFloat(item.quantity);
         productSummary[item.name].total += (safeFloat(item.price) * safeFloat(item.quantity));
       });
+
+      // Desglose por vendedor
+      const sellerName = sale.staff_name || 'Sin asignar';
+      if (!staffSummary[sellerName]) staffSummary[sellerName] = { count: 0, total: 0 };
+      staffSummary[sellerName].count++;
+      staffSummary[sellerName].total += saleTotal;
     });
 
     const productsList = Object.entries(productSummary).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.quantity - a.quantity);
-    return { cashTotal, transferTotal, cardTotal, productsList, ticketCount: dailyStats.sales.length };
+    const staffList = Object.entries(staffSummary).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.total - a.total);
+    return { cashTotal, transferTotal, cardTotal, productsList, staffList, ticketCount: dailyStats.sales.length };
   }, [dailyStats.sales]);
 
   const trendStats = useMemo(() => {
@@ -626,6 +644,28 @@ export function FinancePage() {
                 </div>
             </div>
           </div>
+
+          {shiftStats.staffList.length > 1 && (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
+              <h3 className="font-bold text-[#1F2937] text-sm flex items-center gap-2 mb-4">
+                <Trophy size={16} className="text-[#7AC142]"/> Ventas por Vendedor (Turno Actual)
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {shiftStats.staffList.map((s, i) => (
+                  <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                    <div className="w-9 h-9 rounded-lg bg-[#0B3B68]/10 text-[#0B3B68] flex items-center justify-center text-xs font-black flex-shrink-0">
+                      {s.name.substring(0, 2).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-[#1F2937] truncate">{s.name}</p>
+                      <p className="text-[10px] text-[#6B7280]">{s.count} venta{s.count !== 1 ? 's' : ''}</p>
+                    </div>
+                    <span className="font-black text-sm text-[#7AC142] flex-shrink-0">{formatMoney(s.total)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -797,6 +837,28 @@ export function FinancePage() {
                      </table>
                  ) : <p className="text-center text-[#6B7280] italic text-xs">Sin movimientos.</p>}
              </div>
+
+             {closingStats.staffList.length > 1 && (
+               <div className="mt-6 pt-5 border-t border-dashed border-gray-200">
+                 <h3 className="text-xs font-bold text-[#6B7280] uppercase mb-3 tracking-wider">Ventas por Vendedor</h3>
+                 <div className="space-y-2">
+                   {closingStats.staffList.map((s, i) => (
+                     <div key={i} className="flex items-center justify-between p-2.5 bg-gray-50 rounded-xl border border-gray-100">
+                       <div className="flex items-center gap-2">
+                         <div className="w-7 h-7 rounded-lg bg-[#0B3B68]/10 text-[#0B3B68] flex items-center justify-center text-[10px] font-black">
+                           {s.name.substring(0, 2).toUpperCase()}
+                         </div>
+                         <div>
+                           <p className="text-xs font-bold text-[#1F2937]">{s.name}</p>
+                           <p className="text-[10px] text-[#6B7280]">{s.count} venta{s.count !== 1 ? 's' : ''}</p>
+                         </div>
+                       </div>
+                       <span className="font-black text-sm text-[#0B3B68]">{formatMoney(s.total)}</span>
+                     </div>
+                   ))}
+                 </div>
+               </div>
+             )}
           </div>
         </div>
       )}
