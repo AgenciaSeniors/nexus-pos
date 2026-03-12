@@ -311,22 +311,33 @@ export function PosPage() {
         
         {/* Barra Superior */}
         <div className="p-4 bg-surface border-b border-gray-200 sticky top-0 z-10 shadow-sm flex flex-col gap-3">
-            <div className="relative w-full">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-text-secondary w-5 h-5 group-focus-within:text-bisne-navy transition-colors" />
-                <input 
-                    ref={searchInputRef}
-                    type="text" 
-                    placeholder="Buscar por nombre, código o SKU..." 
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    autoFocus
-                    className="w-full pl-12 pr-10 py-3 bg-background border-none rounded-2xl text-lg focus:ring-2 focus:ring-bisne-navy focus:bg-surface transition-all shadow-inner outline-none text-text-main placeholder-gray-400 font-body"
-                />
-                {query && (
-                    <button onClick={() => {setQuery(''); searchInputRef.current?.focus();}} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-secondary hover:text-state-error p-1">
-                        <X size={18} />
-                    </button>
-                )}
+            <div className="flex gap-2 items-center">
+                <div className="relative flex-1">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-text-secondary w-5 h-5 group-focus-within:text-bisne-navy transition-colors" />
+                    <input
+                        ref={searchInputRef}
+                        type="text"
+                        placeholder="Buscar por nombre, código o SKU..."
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        autoFocus
+                        className="w-full pl-12 pr-10 py-3 bg-background border-none rounded-2xl text-lg focus:ring-2 focus:ring-bisne-navy focus:bg-surface transition-all shadow-inner outline-none text-text-main placeholder-gray-400 font-body"
+                    />
+                    {query && (
+                        <button onClick={() => {setQuery(''); searchInputRef.current?.focus();}} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-secondary hover:text-state-error p-1">
+                            <X size={18} />
+                        </button>
+                    )}
+                </div>
+                <button
+                    onClick={() => setMobileView('cart')}
+                    className="md:hidden relative flex-shrink-0 flex flex-col items-center justify-center gap-0.5 p-2.5 bg-background border border-gray-200 rounded-2xl text-bisne-navy shadow-inner min-w-[56px]"
+                >
+                    <ClipboardList size={22} />
+                    {parkedCount > 0 && (
+                        <span className="text-[10px] font-black text-talla-growth leading-none font-body">{parkedCount}</span>
+                    )}
+                </button>
             </div>
 
             <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
