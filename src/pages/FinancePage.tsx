@@ -114,6 +114,7 @@ export function FinancePage() {
 
     const totalSales = validSales.reduce((sum, s) => sum + safeFloat(s.total), 0);
     const cashSales = validSales.filter(s => ['efectivo', 'mixto'].includes(s.payment_method?.toLowerCase() || 'efectivo')).reduce((sum, s) => sum + safeFloat(s.total), 0);
+    const transferSales = validSales.filter(s => ['transferencia', 'transfer'].includes(s.payment_method?.toLowerCase() || '')).reduce((sum, s) => sum + safeFloat(s.total), 0);
 
     const cashIn = shiftData.movements.filter(m => m.type === 'in').reduce((sum, m) => sum + safeFloat(m.amount), 0);
     const cashOut = shiftData.movements.filter(m => m.type === 'out').reduce((sum, m) => sum + safeFloat(m.amount), 0);
@@ -129,7 +130,7 @@ export function FinancePage() {
     });
     const staffList = Object.entries(byStaff).map(([name, d]) => ({ name, ...d })).sort((a, b) => b.total - a.total);
 
-    return { startAmount, cashSales, totalSales, cashIn, cashOut, expectedCash, staffList };
+    return { startAmount, cashSales, transferSales, totalSales, cashIn, cashOut, expectedCash, staffList };
   }, [activeShift, shiftData]);
 
   const productMeta = useMemo(() => {
@@ -563,7 +564,7 @@ export function FinancePage() {
 
       {viewMode === 'control' && shiftStats && (
         <div className="animate-in slide-in-from-bottom-4 duration-300 space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
                <p className="text-[#6B7280] text-[10px] font-bold uppercase tracking-wider mb-1 flex items-center gap-1"><ShoppingBag size={12}/> Total Ventas</p>
                <h3 className="text-2xl font-black text-[#1F2937]">{formatMoney(shiftStats.totalSales)}</h3>
@@ -576,6 +577,10 @@ export function FinancePage() {
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
                <p className="text-[#7AC142] text-[10px] font-bold uppercase tracking-wider mb-1">Ventas Efectivo</p>
                <h3 className="text-2xl font-black text-[#7AC142]">+{formatMoney(shiftStats.cashSales)}</h3>
+            </div>
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
+               <p className="text-[#F59E0B] text-[10px] font-bold uppercase tracking-wider mb-1">Ventas Transferencia</p>
+               <h3 className="text-2xl font-black text-[#F59E0B]">+{formatMoney(shiftStats.transferSales)}</h3>
             </div>
             
             <div className="bg-[#0B3B68] p-5 rounded-2xl shadow-lg shadow-[#0B3B68]/30 text-white relative overflow-hidden">
