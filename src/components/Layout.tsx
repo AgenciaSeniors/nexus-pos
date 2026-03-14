@@ -92,7 +92,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
     { path: '/', icon: <img src={logo} alt="POS" className="w-6 h-6 object-contain opacity-90 group-hover:opacity-100 transition-opacity" />, label: 'Punto de Venta', show: true }, 
     { path: '/clientes', icon: <UsersIcon size={22} />, label: 'Clientes', show: true }, 
     { path: '/inventario', icon: <Package size={22} />, label: 'Inventario', show: isAdmin },
-    { path: '/finanzas', icon: <PieChart size={22} />, label: 'Finanzas', show: isAdmin },
+    { path: '/finanzas', icon: <PieChart size={22} />, label: 'Finanzas', show: true },
     { path: '/configuracion', icon: <Settings size={22} />, label: 'Configuración', show: isAdmin }
   ];
 

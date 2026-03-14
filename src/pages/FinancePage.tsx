@@ -29,6 +29,8 @@ const safeFloat = (val: any): number => {
 export function FinancePage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
 
+  const isAdmin = currentStaff?.role === 'admin';
+
   const [viewMode, setViewMode] = useState<'control' | 'history' | 'daily' | 'trends' | 'closing'>('control');
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
@@ -95,6 +97,13 @@ export function FinancePage() {
       setIsInitialLoad(false);
     }
   }, [activeShift]);
+
+  // Vendedores solo pueden ver 'control' y 'closing'
+  useEffect(() => {
+    if (!isAdmin && (viewMode === 'history' || viewMode === 'daily' || viewMode === 'trends')) {
+      setViewMode('control');
+    }
+  }, [isAdmin, viewMode]);
 
   const shiftStats = useMemo(() => {
     if (!activeShift || !shiftData || !shiftData.sales || !shiftData.movements) return null;
@@ -530,17 +539,21 @@ export function FinancePage() {
           <button onClick={() => setViewMode('control')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${viewMode === 'control' ? 'bg-[#0B3B68] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}>
             <Wallet size={16} /> Control
           </button>
-          <div className="w-px h-6 bg-gray-200 mx-1 self-center"></div>
-          <button onClick={() => setViewMode('history')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${viewMode === 'history' ? 'bg-[#0B3B68] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}>
-            <History size={16} /> Historial
-          </button>
-          <div className="w-px h-6 bg-gray-200 mx-1 self-center"></div>
-          <button onClick={() => setViewMode('daily')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${viewMode === 'daily' ? 'bg-[#0B3B68] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}>
-            <Calendar size={16} /> Reportes
-          </button>
-          <button onClick={() => setViewMode('trends')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${viewMode === 'trends' ? 'bg-[#0B3B68] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}>
-            <BarChart3 size={16} /> Tendencias
-          </button>
+          {isAdmin && (
+            <>
+              <div className="w-px h-6 bg-gray-200 mx-1 self-center"></div>
+              <button onClick={() => setViewMode('history')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${viewMode === 'history' ? 'bg-[#0B3B68] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}>
+                <History size={16} /> Historial
+              </button>
+              <div className="w-px h-6 bg-gray-200 mx-1 self-center"></div>
+              <button onClick={() => setViewMode('daily')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${viewMode === 'daily' ? 'bg-[#0B3B68] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}>
+                <Calendar size={16} /> Reportes
+              </button>
+              <button onClick={() => setViewMode('trends')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${viewMode === 'trends' ? 'bg-[#0B3B68] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}>
+                <BarChart3 size={16} /> Tendencias
+              </button>
+            </>
+          )}
           <div className="w-px h-6 bg-gray-200 mx-1 self-center"></div>
           <button onClick={() => setViewMode('closing')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${viewMode === 'closing' ? 'bg-[#1F2937] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}>
             <ClipboardCheck size={16} /> Corte Z
