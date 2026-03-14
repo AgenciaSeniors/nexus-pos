@@ -558,6 +558,7 @@ function BusinessApp() {
         isStaffLoadedRef.current = false;
         setSession(null);
         setCurrentStaff(null);
+        setShowStaffSelector(false);
       }
     });
 

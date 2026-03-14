@@ -1,7 +1,7 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Package, PieChart, Settings,
-  Cloud, AlertCircle, RefreshCw, LogOut, Menu, X, Users as UsersIcon, CheckCircle2,
+  Cloud, AlertCircle, RefreshCw, LogOut, Menu, X, Users as UsersIcon, CheckCircle2, Loader2,
   ArrowLeftRight
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
@@ -26,6 +26,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   useEffect(() => {
     const handleOnline = () => { setIsOnline(true); toast.success("Conexión restaurada"); };
@@ -77,11 +78,15 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   };
 
   const handleLogout = async () => {
-    // signOut dispara SIGNED_OUT en BusinessApp, que limpia el estado y muestra LoginScreen.
-    // No llamamos navigate() aquí porque el componente se desmonta tras el SIGNED_OUT
-    // y una llamada al router en ese momento causa errores de React Router.
-    localStorage.removeItem('nexus_business_id');
-    await supabase.auth.signOut();
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+    try {
+      localStorage.removeItem('nexus_business_id');
+      localStorage.removeItem('nexus_staff_id');
+      await supabase.auth.signOut();
+    } catch {
+      setIsLoggingOut(false);
+    }
   };
 
   const isAdmin = currentStaff?.role === 'admin';
@@ -170,8 +175,8 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
                     </span>
                 )}
             </button>
-            <button onClick={handleLogout} className="p-3 text-gray-400 hover:text-[#EF4444] hover:bg-[#EF4444]/10 rounded-xl transition-colors flex flex-col items-center justify-center" title="Cerrar Sesión">
-                <LogOut size={20}/>
+            <button onClick={handleLogout} disabled={isLoggingOut} className="p-3 text-gray-400 hover:text-[#EF4444] hover:bg-[#EF4444]/10 rounded-xl transition-colors flex flex-col items-center justify-center disabled:opacity-50" title="Cerrar Sesión">
+                {isLoggingOut ? <Loader2 size={20} className="animate-spin"/> : <LogOut size={20}/>}
             </button>
         </div>
       </aside>
@@ -261,8 +266,9 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
                             <ArrowLeftRight size={20} /> Cambiar Vendedor
                           </button>
                         )}
-                        <button onClick={handleLogout} className="flex items-center justify-center gap-3 text-[#EF4444] w-full p-4 hover:bg-[#EF4444]/5 rounded-xl font-bold transition-colors border border-[#EF4444]/20 hover:border-[#EF4444]">
-                            <LogOut size={20} /> Cerrar Sesión
+                        <button onClick={handleLogout} disabled={isLoggingOut} className="flex items-center justify-center gap-3 text-[#EF4444] w-full p-4 hover:bg-[#EF4444]/5 rounded-xl font-bold transition-colors border border-[#EF4444]/20 hover:border-[#EF4444] disabled:opacity-50">
+                            {isLoggingOut ? <Loader2 size={20} className="animate-spin"/> : <LogOut size={20}/>}
+                            {isLoggingOut ? 'Cerrando...' : 'Cerrar Sesión'}
                         </button>
                     </div>
                 </div>
