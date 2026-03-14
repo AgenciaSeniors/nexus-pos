@@ -18,6 +18,12 @@
     font-family: 'Roboto', sans-serif;
   }
 
+  /* Ocultar el ojito nativo del navegador en todos los campos de contraseña */
+  input[type="password"]::-ms-reveal,
+  input[type="password"]::-ms-clear {
+    display: none;
+  }
+
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
