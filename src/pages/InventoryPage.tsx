@@ -34,7 +34,7 @@ export function InventoryPage() {
   // --- DATOS FORMULARIO PRODUCTO ---
   const [formData, setFormData] = useState({
     name: '', price: '', sku: '', cost: '',
-    category: 'General', unit: 'un', expiration_date: ''
+    category: '', unit: '', expiration_date: '', low_stock_threshold: ''
   });
 
   // --- DATOS AJUSTE STOCK ---
@@ -71,7 +71,8 @@ export function InventoryPage() {
       return Math.ceil(diffTime / (1000 * 3600 * 24));
   };
 
-  const lowStockProducts = products.filter(p => p.stock <= 5);
+  const LOW_STOCK_DEFAULT = 5;
+  const lowStockProducts = products.filter(p => p.stock <= (p.low_stock_threshold ?? LOW_STOCK_DEFAULT));
   const expiringProducts = products.filter(p => {
       const days = getDaysUntilExpiration(p.expiration_date);
       return days !== null && days <= 90; // Vencidos o vencen en <= 90 días
@@ -99,14 +100,16 @@ export function InventoryPage() {
             }
         }
 
+        const thresholdVal = parseInt(formData.low_stock_threshold);
         const productData = {
             name: formData.name.trim(),
             price: parseFloat(formData.price) || 0,
             cost: parseFloat(formData.cost) || 0,
             sku: formData.sku.trim(),
             category: formData.category.trim() || 'General',
-            unit: formData.unit,
-            expiration_date: formData.expiration_date
+            unit: formData.unit.trim() || 'un',
+            expiration_date: formData.expiration_date,
+            low_stock_threshold: !isNaN(thresholdVal) && thresholdVal >= 0 ? thresholdVal : undefined
         };
 
         if (editingProduct) {
@@ -272,7 +275,8 @@ export function InventoryPage() {
       setFormData({
           name: p.name, price: p.price.toString(), cost: p.cost?.toString() || '',
           sku: p.sku || '', category: p.category || 'General', unit: p.unit || 'un',
-          expiration_date: p.expiration_date || ''
+          expiration_date: p.expiration_date || '',
+          low_stock_threshold: p.low_stock_threshold !== undefined ? p.low_stock_threshold.toString() : ''
       });
       setIsFormOpen(true);
   };
@@ -290,7 +294,7 @@ export function InventoryPage() {
 
   const resetForm = () => {
       setEditingProduct(null);
-      setFormData({ name: '', price: '', cost: '', sku: '', category: 'General', unit: 'un', expiration_date: '' });
+      setFormData({ name: '', price: '', cost: '', sku: '', category: '', unit: '', expiration_date: '', low_stock_threshold: '' });
   };
 
   return (
@@ -386,6 +390,8 @@ export function InventoryPage() {
                             {filteredProducts.map(product => {
                                 const daysToExpiry = getDaysUntilExpiration(product.expiration_date);
                                 const isExpiringSoon = daysToExpiry !== null && daysToExpiry <= 90;
+                                const threshold = product.low_stock_threshold ?? LOW_STOCK_DEFAULT;
+                                const isLowStock = product.stock <= threshold;
 
                                 return (
                                 <tr key={product.id} className="hover:bg-gray-50 transition-colors group">
@@ -412,14 +418,14 @@ export function InventoryPage() {
                                     <td className="p-4 text-center" data-label="Stock">
                                         <div className="flex flex-col items-end md:items-center w-full">
                                             <div className={`inline-flex flex-col items-center justify-center px-3 py-1 rounded-lg border ${
-                                                product.stock <= 5 
-                                                    ? 'bg-[#F59E0B]/10 border-[#F59E0B]/20 text-[#F59E0B]' 
+                                                isLowStock
+                                                    ? 'bg-[#F59E0B]/10 border-[#F59E0B]/20 text-[#F59E0B]'
                                                     : 'bg-[#7AC142]/10 border-[#7AC142]/20 text-[#7AC142]'
                                             }`}>
                                                 <span className="text-lg font-black leading-none">{product.stock}</span>
                                                 <span className="text-[9px] uppercase font-bold opacity-70">{product.unit}</span>
                                             </div>
-                                            {product.stock <= 5 && (
+                                            {isLowStock && (
                                                 <div className="text-[9px] font-bold text-[#F59E0B] flex items-center justify-center gap-1 mt-1">
                                                     <AlertTriangle size={10}/> BAJO STOCK
                                                 </div>
@@ -480,7 +486,7 @@ export function InventoryPage() {
                                     <div key={p.id} className="bg-white p-3 rounded-xl border border-red-100 shadow-sm flex justify-between items-center">
                                         <div>
                                             <p className="font-bold text-[#1F2937] text-sm">{p.name}</p>
-                                            <p className="text-xs text-gray-500">{p.sku || 'Sin código'}</p>
+                                            <p className="text-xs text-gray-500">{p.sku || 'Sin código'} · Umbral: {p.low_stock_threshold ?? LOW_STOCK_DEFAULT} {p.unit}</p>
                                         </div>
                                         <div className="flex items-center gap-3">
                                             <span className="bg-red-100 text-red-600 px-2 py-1 rounded text-xs font-bold border border-red-200">
@@ -567,33 +573,107 @@ export function InventoryPage() {
                <div className="grid grid-cols-2 gap-4">
                    <div>
                      <label className="text-xs font-bold text-[#6B7280] uppercase">Código / SKU</label>
-                     <input type="text" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none font-mono text-sm" 
+                     <input type="text" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none font-mono text-sm"
                        value={formData.sku} onChange={e => setFormData({...formData, sku: e.target.value})}/>
                    </div>
                    <div>
-                     <label className="text-xs font-bold text-[#6B7280] uppercase">Categoría</label>
-                     <input type="text" list="categories" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none" 
-                       value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}/>
-                     <datalist id="categories">
-                       <option value="General"/><option value="Bebidas"/><option value="Alimentos"/>
-                     </datalist>
-                   </div>
-               </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                   <div>
-                     <label className="text-xs font-bold text-[#6B7280] uppercase">Unidad</label>
-                     <select className="w-full p-3 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-[#0B3B68]" 
-                       value={formData.unit} onChange={e => setFormData({...formData, unit: e.target.value})}>
-                        <option value="un">Unidad</option><option value="kg">Kilos</option><option value="lt">Litros</option><option value="pq">Paquete</option>
-                     </select>
-                   </div>
-                   <div>
                      <label className="text-xs font-bold text-[#6B7280] uppercase">Vencimiento</label>
-                     <input type="date" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68]" 
+                     <input type="date" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68]"
                        value={formData.expiration_date} onChange={e => setFormData({...formData, expiration_date: e.target.value})}/>
                    </div>
                </div>
+
+               <div>
+                 <label className="text-xs font-bold text-[#6B7280] uppercase flex items-center gap-1">
+                   <Bell size={11} className="text-orange-400"/> Alerta de Stock Bajo
+                 </label>
+                 <div className="flex items-center gap-3 mt-1">
+                   <input
+                     type="number" min="0" step="1"
+                     placeholder={`Por defecto: 5 ${formData.unit || 'un'}`}
+                     className="flex-1 p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-300 outline-none text-sm"
+                     value={formData.low_stock_threshold}
+                     onChange={e => setFormData({...formData, low_stock_threshold: e.target.value})}
+                   />
+                   {formData.low_stock_threshold !== '' && (
+                     <span className="text-xs text-orange-500 font-bold whitespace-nowrap">
+                       Alerta al llegar a {formData.low_stock_threshold} {formData.unit || 'un'}
+                     </span>
+                   )}
+                 </div>
+                 <p className="text-[10px] text-[#6B7280] mt-1">Recibirás una alerta cuando el stock llegue a este número. Deja vacío para usar el valor por defecto (5).</p>
+               </div>
+
+               {/* ── CATEGORÍA ───────────────────────────────────────────── */}
+               <div>
+                 <label className="text-xs font-bold text-[#6B7280] uppercase">Categoría</label>
+                 <input type="text" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none mt-1"
+                   placeholder="Ej. Bebidas, Ropa..."
+                   value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}/>
+                 {(() => {
+                   const savedCats = [...new Set((products || []).map(p => p.category).filter(Boolean))].sort() as string[];
+                   if (savedCats.length === 0) return null;
+                   return (
+                     <div className="flex flex-wrap gap-1.5 mt-2">
+                       {savedCats.map(cat => (
+                         <button key={cat} type="button"
+                           onClick={() => setFormData(f => ({...f, category: cat}))}
+                           className={`px-3 py-1 rounded-full text-xs font-bold transition-all active:scale-95 border ${formData.category === cat ? 'bg-[#0B3B68] text-white border-[#0B3B68] shadow-sm' : 'bg-white text-[#6B7280] border-gray-200 hover:border-[#0B3B68] hover:text-[#0B3B68]'}`}>
+                           {cat}
+                         </button>
+                       ))}
+                     </div>
+                   );
+                 })()}
+               </div>
+
+               {/* ── UNIDAD ──────────────────────────────────────────────── */}
+               {(() => {
+                 const PRESET = [
+                   { value: 'un', label: 'Unidad' },
+                   { value: 'kg', label: 'Kilos' },
+                   { value: 'lt', label: 'Litros' },
+                   { value: 'pq', label: 'Paquete' },
+                   { value: 'cj', label: 'Caja' },
+                   { value: 'dz', label: 'Docena' },
+                 ];
+                 const presetValues = PRESET.map(p => p.value);
+                 const customUnits = [...new Set((products || []).map(p => p.unit).filter(u => u && !presetValues.includes(u)))] as string[];
+                 const isCustom = formData.unit && !presetValues.includes(formData.unit);
+                 return (
+                   <div>
+                     <label className="text-xs font-bold text-[#6B7280] uppercase">Unidad de Medida</label>
+                     <div className="flex flex-wrap gap-2 mt-2">
+                       {PRESET.map(opt => (
+                         <button key={opt.value} type="button"
+                           onClick={() => setFormData(f => ({...f, unit: opt.value}))}
+                           className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 border ${formData.unit === opt.value ? 'bg-[#0B3B68] text-white border-[#0B3B68] shadow-md' : 'bg-white text-[#6B7280] border-gray-200 hover:border-[#0B3B68] hover:text-[#0B3B68]'}`}>
+                           {opt.label}
+                         </button>
+                       ))}
+                       {customUnits.map(u => (
+                         <button key={u} type="button"
+                           onClick={() => setFormData(f => ({...f, unit: u}))}
+                           className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 border ${formData.unit === u ? 'bg-[#7AC142] text-white border-[#7AC142] shadow-md' : 'bg-white text-[#6B7280] border-gray-200 hover:border-[#7AC142] hover:text-[#7AC142]'}`}>
+                           {u}
+                         </button>
+                       ))}
+                     </div>
+                     <div className="mt-2 relative">
+                       <input type="text" autoComplete="off"
+                         placeholder="O escribe una unidad personalizada..."
+                         className={`w-full p-2.5 border rounded-xl text-sm outline-none transition-all focus:ring-2 ${isCustom ? 'border-[#7AC142] ring-[#7AC142]/30 bg-[#7AC142]/5 font-bold text-[#1F2937]' : 'border-gray-200 focus:ring-[#0B3B68] text-[#6B7280]'}`}
+                         value={isCustom ? formData.unit : ''}
+                         onChange={e => setFormData(f => ({...f, unit: e.target.value}))}
+                         onFocus={e => { if (!isCustom) e.target.value = ''; }}
+                       />
+                       {isCustom && (
+                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-[#7AC142] uppercase tracking-wide">Personalizada</span>
+                       )}
+                     </div>
+                   </div>
+                 );
+               })()}
 
                <div className="pt-4 flex gap-3">
                  <button type="button" onClick={() => setIsFormOpen(false)} className="flex-1 py-3 bg-white border border-[#0B3B68] text-[#0B3B68] font-bold rounded-xl hover:bg-[#0B3B68]/5">Cancelar</button>

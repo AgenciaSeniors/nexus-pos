@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Shield, Check, X, Search, RefreshCw, UserCheck, Inbox,
   CalendarPlus, Key, User, LogOut, Store, Trash2, AlertTriangle, Calendar, AlertOctagon,
-  History, TrendingUp, Award, KeyRound, Eye, EyeOff
+  History, TrendingUp, Award, KeyRound, Eye, EyeOff, DollarSign, CheckCircle2, Edit2, FlaskConical
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -52,12 +52,194 @@ export function SuperAdminPage() {
   const navigate = useNavigate();
   
   // --- ESTADOS DE LA INTERFAZ ---
-  const [activeTab, setActiveTab] = useState<'requests' | 'active' | 'history'>('requests');
+  const [activeTab, setActiveTab] = useState<'requests' | 'active' | 'history' | 'billing'>('requests');
   const [dataList, setDataList] = useState<Profile[]>([]);
   const [historyList, setHistoryList] = useState<LicenseEvent[]>([]);
   const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>('month');
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+
+  // --- BILLING ---
+  interface BillingRow {
+    business_id: string;
+    business_name: string;
+    owner_name: string;
+    total_sales: number;
+    rate: number;          // porcentaje, e.g. 1.5
+    fee: number;           // total_sales * rate / 100
+    paid_until: string | null;
+    billing_id: string | null;
+    period: string;        // 'YYYY-MM'
+  }
+  const [billingRows, setBillingRows] = useState<BillingRow[]>([]);
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [billingPeriod, setBillingPeriod] = useState(() => {
+    const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;
+  });
+  const [editingRate, setEditingRate] = useState<{id: string, value: string} | null>(null);
+
+  const fetchBilling = async (period: string) => {
+    setBillingLoading(true);
+    try {
+      // 1. Negocios activos
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, full_name, business_id')
+        .in('status', ['active', 'suspended'])
+        .not('business_id', 'is', null);
+
+      if (!profiles?.length) { setBillingRows([]); return; }
+
+      // 2. Totales de ventas del período (mes seleccionado) por business_id
+      const [year, month] = period.split('-').map(Number);
+      const from = new Date(year, month - 1, 1).toISOString();
+      const to   = new Date(year, month, 1).toISOString();
+
+      const { data: salesData } = await supabase
+        .from('sales')
+        .select('business_id, total, status')
+        .gte('date', from)
+        .lt('date', to)
+        .neq('status', 'voided');
+
+      // 3. Configuración de billing guardada
+      const bizIds = profiles.map(p => p.business_id!);
+      const { data: billingData } = await supabase
+        .from('billing')
+        .select('*')
+        .in('business_id', bizIds);
+
+      // 4. Nombres de negocios
+      const { data: businesses } = await supabase
+        .from('businesses')
+        .select('id, name')
+        .in('id', bizIds);
+
+      const salesByBiz: Record<string, number> = {};
+      (salesData || []).forEach(s => {
+        salesByBiz[s.business_id] = (salesByBiz[s.business_id] || 0) + Number(s.total || 0);
+      });
+
+      // Deduplicar por business_id (un negocio puede tener varios perfiles)
+      const seenBiz = new Set<string>();
+      const uniqueProfiles = profiles.filter(p => {
+        if (seenBiz.has(p.business_id!)) return false;
+        seenBiz.add(p.business_id!);
+        return true;
+      });
+
+      const rows: BillingRow[] = uniqueProfiles.map(p => {
+        const billing = (billingData || []).find(b => b.business_id === p.business_id);
+        const bizName = (businesses || []).find(b => b.id === p.business_id)?.name || p.full_name;
+        const rate = Number(billing?.rate ?? 1.0);
+        const totalSales = salesByBiz[p.business_id!] || 0;
+        return {
+          business_id: p.business_id!,
+          business_name: bizName,
+          owner_name: p.full_name,
+          total_sales: totalSales,
+          rate,
+          fee: totalSales * rate / 100,
+          paid_until: billing?.paid_until ?? null,
+          billing_id: billing?.id ?? null,
+          period,
+        };
+      });
+
+      setBillingRows(rows.sort((a, b) => b.total_sales - a.total_sales));
+    } catch (e) {
+      console.error(e);
+      toast.error('Error cargando facturación');
+    } finally {
+      setBillingLoading(false);
+    }
+  };
+
+  const handleSaveRate = async (bizId: string, rateStr: string, billingId: string | null) => {
+    const rate = parseFloat(rateStr);
+    if (isNaN(rate) || rate < 0 || rate > 100) return toast.error('Porcentaje inválido (0–100)');
+    try {
+      // Upsert evita el conflicto de UNIQUE si la fila ya existe
+      await supabase.from('billing').upsert(
+        { ...(billingId ? { id: billingId } : {}), business_id: bizId, rate, updated_at: new Date().toISOString() },
+        { onConflict: 'business_id' }
+      );
+      setEditingRate(null);
+      fetchBilling(billingPeriod);
+      toast.success('Porcentaje actualizado');
+    } catch { toast.error('Error guardando porcentaje'); }
+  };
+
+  const handleMarkPaid = async (row: BillingRow) => {
+    const [py, pm] = row.period.split('-').map(Number);
+    const d = new Date(py, pm, 0); // último día del mes en hora local
+    const paidUntil = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    try {
+      await supabase.from('billing').upsert(
+        { ...(row.billing_id ? { id: row.billing_id } : {}), business_id: row.business_id, rate: row.rate, paid_until: paidUntil, updated_at: new Date().toISOString() },
+        { onConflict: 'business_id' }
+      );
+      fetchBilling(billingPeriod);
+      toast.success(`Pago de ${row.business_name} confirmado`);
+    } catch { toast.error('Error confirmando pago'); }
+  };
+
+  const handleGrantTrial = async (profile: Profile, days = 7) => {
+    if (!profile.business_id) return toast.error("Este perfil no tiene un negocio asignado");
+    try {
+      const trialEnd = new Date();
+      trialEnd.setDate(trialEnd.getDate() + days);
+      const trialEndISO = trialEnd.toISOString();
+
+      // Actualizar tabla businesses (sincroniza a local vía syncCriticalData)
+      await supabase.from('businesses').update({
+        status: 'trial',
+        subscription_expires_at: trialEndISO,
+      }).eq('id', profile.business_id);
+
+      // Actualizar perfil para permitir el acceso
+      await supabase.from('profiles').update({
+        status: 'active',
+        license_expiry: trialEndISO,
+      }).eq('id', profile.id);
+
+      // Registrar en historial
+      const { id: adminId, name: adminName } = await getAdminInfo();
+      await supabase.from('license_history').insert({
+        profile_id: profile.id,
+        client_name: profile.full_name,
+        client_email: profile.email,
+        event_type: 'approval',
+        months_granted: 0,
+        new_expiry_at: trialEndISO,
+        performed_by: adminId,
+        performed_by_name: adminName,
+      });
+
+      toast.success(`Período de prueba de ${days} días activado para ${profile.full_name}`);
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      toast.error('Error activando período de prueba');
+    }
+  };
+
+  const handleRevertPaid = async (row: BillingRow) => {
+    if (!row.billing_id) return;
+    try {
+      await supabase.from('billing').update({ paid_until: null, updated_at: new Date().toISOString() }).eq('id', row.billing_id);
+      fetchBilling(billingPeriod);
+      toast.success(`Pago de ${row.business_name} revertido`);
+    } catch { toast.error('Error revirtiendo pago'); }
+  };
+
+  const isPaid = (row: BillingRow) => {
+    if (!row.paid_until) return false;
+    const [y, m] = row.period.split('-').map(Number);
+    const lastDay = new Date(y, m, 0).getDate();
+    const lastDayStr = `${row.period}-${String(lastDay).padStart(2,'0')}`;
+    return row.paid_until >= lastDayStr; // comparación de strings ISO es segura
+  };
 
   // --- MODALES ---
   const [approvingItem, setApprovingItem] = useState<Profile | null>(null);
@@ -138,6 +320,7 @@ export function SuperAdminPage() {
 
   useEffect(() => {
     if (activeTab === 'history') fetchHistory();
+    else if (activeTab === 'billing') fetchBilling(billingPeriod);
     else fetchData();
   }, [activeTab, fetchData, fetchHistory]);
 
@@ -166,6 +349,14 @@ export function SuperAdminPage() {
 
       const expiryDate = new Date();
       expiryDate.setMonth(expiryDate.getMonth() + monthsToGrant);
+
+      // Actualizar businesses → desactiva trial y aplica expiración real
+      if (approvingItem.business_id) {
+        await supabase.from('businesses').update({
+          status: 'active',
+          subscription_expires_at: expiryDate.toISOString(),
+        }).eq('id', approvingItem.business_id);
+      }
 
       // Registrar quién aprobó y cuándo
       await supabase.from('profiles').update({
@@ -396,18 +587,18 @@ export function SuperAdminPage() {
         
         {/* BARRA DE HERRAMIENTAS */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div className="bg-white p-1 rounded-xl shadow-sm border border-slate-200 flex w-full sm:w-auto">
+            <div className="bg-white p-1 rounded-xl shadow-sm border border-slate-200 grid grid-cols-4 sm:flex w-full sm:w-auto gap-0.5 sm:gap-0">
                 <button
                     onClick={() => setActiveTab('requests')}
-                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${activeTab === 'requests' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                    className={`flex items-center justify-center gap-1.5 px-3 sm:px-5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'requests' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
                 >
-                    <Inbox size={16} /> Solicitudes
+                    <Inbox size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Solicitudes</span><span className="sm:hidden">Solic.</span>
                 </button>
                 <button
                     onClick={() => setActiveTab('active')}
-                    className={`relative flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${activeTab === 'active' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                    className={`relative flex items-center justify-center gap-1.5 px-3 sm:px-5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'active' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
                 >
-                    <UserCheck size={16} /> Clientes
+                    <UserCheck size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Clientes</span><span className="sm:hidden">Client.</span>
                     {expiringCount > 0 && (
                         <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full animate-pulse border-2 border-white shadow-sm">
                             {expiringCount}
@@ -416,9 +607,15 @@ export function SuperAdminPage() {
                 </button>
                 <button
                     onClick={() => setActiveTab('history')}
-                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${activeTab === 'history' ? 'bg-violet-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                    className={`flex items-center justify-center gap-1.5 px-3 sm:px-5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'history' ? 'bg-violet-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
                 >
-                    <History size={16} /> Historial
+                    <History size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Historial</span><span className="sm:hidden">Hist.</span>
+                </button>
+                <button
+                    onClick={() => setActiveTab('billing')}
+                    className={`flex items-center justify-center gap-1.5 px-3 sm:px-5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'billing' ? 'bg-emerald-700 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                >
+                    <DollarSign size={14} className="sm:w-4 sm:h-4" /> Cobros
                 </button>
             </div>
 
@@ -435,6 +632,147 @@ export function SuperAdminPage() {
                 </div>
             )}
         </div>
+
+        {/* ===== PESTAÑA COBROS ===== */}
+        {activeTab === 'billing' && (
+          <div className="space-y-4">
+            {/* Cabecera: período + totales */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+              <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                <label className="text-xs sm:text-sm font-bold text-slate-600">Período:</label>
+                <input
+                  type="month"
+                  value={billingPeriod}
+                  onChange={e => { setBillingPeriod(e.target.value); fetchBilling(e.target.value); }}
+                  className="border border-slate-200 rounded-lg px-2 sm:px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500 bg-white flex-1 sm:flex-none min-w-0"
+                />
+                <button
+                  onClick={() => fetchBilling(billingPeriod)}
+                  className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors flex-shrink-0"
+                  title="Actualizar"
+                >
+                  <RefreshCw size={18} className={billingLoading ? 'animate-spin' : ''} />
+                </button>
+              </div>
+              {billingRows.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-3 gap-2 text-center">
+                  <div>
+                    <p className="text-xs text-slate-400 font-medium">Negocios</p>
+                    <p className="text-lg font-black text-slate-700">{billingRows.length}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400 font-medium">Total ventas</p>
+                    <p className="text-lg font-black text-emerald-700">${billingRows.reduce((s,r)=>s+r.total_sales,0).toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400 font-medium">A cobrar</p>
+                    <p className="text-lg font-black text-amber-600">${billingRows.reduce((s,r)=>s+r.fee,0).toFixed(2)}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {billingLoading ? (
+              <div className="flex justify-center py-16"><RefreshCw className="animate-spin text-emerald-500" size={32}/></div>
+            ) : billingRows.length === 0 ? (
+              <div className="bg-white rounded-2xl p-12 text-center text-slate-400 border border-slate-100">
+                <DollarSign size={40} className="mx-auto mb-3 opacity-30"/>
+                <p className="font-bold">No hay negocios activos</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {billingRows.map(row => {
+                  const paid = isPaid(row);
+                  return (
+                    <div key={row.business_id} className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${paid ? 'border-emerald-100' : row.total_sales > 0 ? 'border-amber-200' : 'border-slate-100'}`}>
+                      {/* Fila superior: nombre + estado */}
+                      <div className={`flex items-center justify-between px-4 py-3 ${paid ? 'bg-emerald-50/60' : row.total_sales > 0 ? 'bg-amber-50/60' : 'bg-slate-50/60'}`}>
+                        <div>
+                          <p className="font-black text-slate-800 text-sm">{row.business_name}</p>
+                          <p className="text-xs text-slate-400">{row.owner_name}</p>
+                        </div>
+                        <div>
+                          {paid ? (
+                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-black uppercase">
+                              <CheckCircle2 size={12}/> Pagado
+                            </span>
+                          ) : row.total_sales === 0 ? (
+                            <span className="inline-flex px-3 py-1 bg-slate-100 text-slate-400 rounded-full text-xs font-bold uppercase">Sin ventas</span>
+                          ) : (
+                            <span className="inline-flex px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-black uppercase">Pendiente</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Fila inferior: métricas + acciones */}
+                      <div className="px-4 py-3">
+                        <div className="grid grid-cols-3 gap-2 mb-3">
+                          {/* Ventas */}
+                          <div>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase">Ventas</p>
+                            <p className="font-black text-slate-700 text-sm font-mono">${row.total_sales.toFixed(2)}</p>
+                          </div>
+
+                          {/* % editable */}
+                          <div>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">% Cobro</p>
+                            {editingRate?.id === row.business_id ? (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number" step="0.1" min="0" max="100"
+                                  value={editingRate.value}
+                                  onChange={e => setEditingRate({id: row.business_id, value: e.target.value})}
+                                  onKeyDown={e => { if(e.key==='Enter') handleSaveRate(row.business_id, editingRate.value, row.billing_id); if(e.key==='Escape') setEditingRate(null); }}
+                                  className="w-12 border border-emerald-300 rounded-lg px-1 py-1 text-center font-bold text-xs outline-none focus:ring-2 focus:ring-emerald-400"
+                                  autoFocus
+                                />
+                                <button onClick={() => handleSaveRate(row.business_id, editingRate.value, row.billing_id)} className="text-emerald-600 p-0.5"><Check size={14}/></button>
+                                <button onClick={() => setEditingRate(null)} className="text-slate-400 p-0.5"><X size={14}/></button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setEditingRate({id: row.business_id, value: String(row.rate)})}
+                                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 font-bold text-slate-600 text-sm transition-colors"
+                              >
+                                {row.rate}% <Edit2 size={11}/>
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Monto a pagar */}
+                          <div>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase">A pagar</p>
+                            <p className={`font-black text-base font-mono ${row.fee > 0 ? 'text-emerald-700' : 'text-slate-300'}`}>${row.fee.toFixed(2)}</p>
+                          </div>
+                        </div>
+
+                        {/* Botón acción */}
+                        <div className="flex justify-end">
+                          {!paid && row.total_sales > 0 && (
+                            <button
+                              onClick={() => handleMarkPaid(row)}
+                              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all active:scale-95 shadow-sm flex items-center gap-1.5 w-full sm:w-auto justify-center"
+                            >
+                              <CheckCircle2 size={13}/> Confirmar pago
+                            </button>
+                          )}
+                          {paid && (
+                            <button
+                              onClick={() => handleRevertPaid(row)}
+                              className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
+                            >
+                              Revertir
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ===== PESTAÑA HISTORIAL ===== */}
         {activeTab === 'history' && (
@@ -695,6 +1033,13 @@ export function SuperAdminPage() {
                                                         <Check size={14} /> Aprobar
                                                     </button>
                                                     <button
+                                                        onClick={() => handleGrantTrial(item)}
+                                                        className="flex items-center gap-1 bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg shadow-sm transition-colors text-xs font-bold"
+                                                        title="Dar 7 días de prueba gratuita"
+                                                    >
+                                                        <FlaskConical size={14} /> Prueba
+                                                    </button>
+                                                    <button
                                                         onClick={() => setConfirmModal({ type: 'delete', item })}
                                                         className="flex items-center gap-1 bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-slate-500 px-3 py-1.5 rounded-lg transition-colors text-xs font-bold"
                                                     >
@@ -709,6 +1054,13 @@ export function SuperAdminPage() {
                                                         title="Extender Licencia"
                                                     >
                                                         <CalendarPlus size={18} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleGrantTrial(item)}
+                                                        className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                                        title="Dar Prueba 7 días"
+                                                    >
+                                                        <FlaskConical size={18} />
                                                     </button>
                                                     <button
                                                         onClick={() => { setResetPasswordItem(item); setNewPassword(''); setShowNewPassword(false); }}

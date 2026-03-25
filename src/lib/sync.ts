@@ -342,17 +342,114 @@ export async function syncManualFull() {
     await syncPull();
 }
 
+// ─── SYNC LIVE: pull periódico para multi-dispositivo ───────────────────────
+// Descarga el turno activo, sus ventas, movimientos de caja y stock actualizado.
+// Diseñado para correr cada 30s sin sobrecargar ni sobreescribir datos locales pendientes.
+export async function syncLiveData() {
+    if (!isOnline() || !db.isOpen()) return;
+
+    const settings = await db.settings.toArray();
+    if (settings.length === 0) return;
+    const businessId = settings[0].id;
+
+    try {
+        // 1. Turno abierto actual (puede haber sido abierto/cerrado desde otro dispositivo)
+        const { data: shiftData } = await supabase
+            .from('cash_shifts')
+            .select('*')
+            .eq('business_id', businessId)
+            .eq('status', 'open')
+            .limit(1);
+
+        if (shiftData && shiftData.length > 0) {
+            const remoteShift = { ...shiftData[0], sync_status: 'synced' as const };
+            // Solo actualizar si no tenemos cambios pendientes en este turno
+            const localShift = await db.cash_shifts.get(remoteShift.id);
+            if (!localShift || localShift.sync_status === 'synced') {
+                await db.cash_shifts.put(remoteShift);
+            }
+
+            // 2. Ventas de este turno (las que hicieron otros dispositivos)
+            const { data: salesData } = await supabase
+                .from('sales')
+                .select('*')
+                .eq('shift_id', remoteShift.id)
+                .eq('business_id', businessId);
+
+            if (salesData && salesData.length > 0) {
+                const cleanSales = salesData.map((s: any) => ({ ...s, sync_status: 'synced' as const }));
+                await safeBulkPut(db.sales as never, cleanSales);
+            }
+
+            // 3. Movimientos de caja de este turno
+            const { data: cashMovData } = await supabase
+                .from('cash_movements')
+                .select('*')
+                .eq('shift_id', remoteShift.id)
+                .eq('business_id', businessId);
+
+            if (cashMovData && cashMovData.length > 0) {
+                const cleanMovs = cashMovData.map((m: any) => ({ ...m, sync_status: 'synced' as const }));
+                await safeBulkPut(db.cash_movements as never, cleanMovs);
+            }
+        } else {
+            // No hay turno abierto en la nube: si tenemos uno local marcado como synced, cerrarlo
+            const localOpenShifts = await db.cash_shifts
+                .where({ business_id: businessId, status: 'open' })
+                .filter(s => s.sync_status === 'synced')
+                .toArray();
+            for (const s of localOpenShifts) {
+                // El turno fue cerrado desde otro dispositivo — buscar el estado real
+                const { data: realShift } = await supabase.from('cash_shifts').select('*').eq('id', s.id).single();
+                if (realShift && realShift.status === 'closed') {
+                    await db.cash_shifts.put({ ...realShift, sync_status: 'synced' });
+                }
+            }
+        }
+
+        // 4. Stock actualizado (productos pueden haber sido vendidos desde otro dispositivo)
+        const { data: productsData } = await supabase
+            .from('products')
+            .select('id, stock, price, cost, name, category, unit, sku, business_id, deleted_at')
+            .eq('business_id', businessId);
+
+        if (productsData && productsData.length > 0) {
+            const cleanProducts = productsData.map((p: any) => ({ ...p, sync_status: 'synced' as const }));
+            await safeBulkPut(db.products as never, cleanProducts);
+
+            // Alertar sobre stock negativo (conflicto de ventas simultáneas offline)
+            const negativeStock = productsData.filter((p: any) => p.stock < 0 && !p.deleted_at);
+            if (negativeStock.length > 0) {
+                const names = negativeStock.map((p: any) => p.name).slice(0, 3).join(', ');
+                console.warn(`⚠️ Stock negativo detectado: ${names}`);
+                // Dispara evento personalizado para que la UI lo muestre
+                window.dispatchEvent(new CustomEvent('nexus-stock-alert', {
+                  detail: { products: negativeStock.map((p: any) => ({ id: p.id, name: p.name, stock: p.stock })) }
+                }));
+            }
+        }
+    } catch (error) {
+        // Silencioso: no interrumpir la app si falla el pull en background
+        console.error('syncLiveData error:', error);
+    }
+}
+
 if (typeof window !== 'undefined') {
     window.addEventListener('online', () => {
         resetProcessingItems()
             .then(() => processQueue())
+            .then(() => syncLiveData())
             .catch(err => console.error("Error al procesar cola tras reconexión:", err));
     });
     resetProcessingItems();
+    // Push + Pull cada 30 segundos para mantener dispositivos sincronizados
     setInterval(() => {
         if (isOnline() && db.isOpen()) {
             processQueue().catch(err => {
-                if (err?.name !== 'DatabaseClosedError') console.error("Error en sync periódico:", err);
+                if (err?.name !== 'DatabaseClosedError') console.error("Error en sync push periódico:", err);
+            });
+            syncLiveData().catch(err => {
+                if (err?.name !== 'DatabaseClosedError') console.error("Error en sync pull periódico:", err);
             });
         }
     }, 30000);

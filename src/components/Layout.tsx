@@ -2,7 +2,7 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Package, PieChart, Settings,
   Cloud, AlertCircle, RefreshCw, LogOut, Menu, X, Users as UsersIcon, CheckCircle2, Loader2,
-  ArrowLeftRight
+  ArrowLeftRight, WifiOff, Wifi, Clock, HelpCircle
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -27,10 +27,39 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [showGuidePrompt, setShowGuidePrompt] = useState(
+    () => !localStorage.getItem('nexus_guide_seen')
+  );
+
+  const [justReconnected, setJustReconnected] = useState(false);
+
+  // Escuchar alertas de stock negativo (conflicto multi-dispositivo offline)
+  useEffect(() => {
+    const handleStockAlert = (e: Event) => {
+      const { products } = (e as CustomEvent).detail;
+      const names = products.map((p: any) => p.name).join(', ');
+      toast.error(`Stock negativo detectado: ${names}. Revisa el inventario.`, { duration: 8000 });
+    };
+    window.addEventListener('nexus-stock-alert', handleStockAlert);
+    return () => window.removeEventListener('nexus-stock-alert', handleStockAlert);
+  }, []);
 
   useEffect(() => {
-    const handleOnline = () => { setIsOnline(true); toast.success("Conexión restaurada"); };
-    const handleOffline = () => { setIsOnline(false); toast.error("Sin conexión a internet"); };
+    const handleOnline = () => {
+      setIsOnline(true);
+      setJustReconnected(true);
+      toast.success("Conexión restaurada");
+      // Auto-sync al reconectar
+      setIsSyncing(true);
+      syncManualFull()
+        .then(() => toast.success('Datos sincronizados automáticamente'))
+        .catch(() => {})
+        .finally(() => {
+          setIsSyncing(false);
+          setTimeout(() => setJustReconnected(false), 3000);
+        });
+    };
+    const handleOffline = () => { setIsOnline(false); setJustReconnected(false); };
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     return () => {
@@ -39,6 +68,15 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
     };
   }, []);
 
+  const trialInfo = useLiveQuery(async () => {
+    const settings = await db.settings.toArray();
+    const s = settings[0];
+    if (!s || s.status !== 'trial' || !s.subscription_expires_at) return null;
+    const msLeft = new Date(s.subscription_expires_at).getTime() - Date.now();
+    const daysLeft = Math.max(0, Math.ceil(msLeft / (1000 * 60 * 60 * 24)));
+    return { daysLeft };
+  }, []) ?? null;
+
   const multipleStaff = useLiveQuery(async () => {
     const bId = localStorage.getItem('nexus_business_id');
     if (!bId) return false;
@@ -46,17 +84,38 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
     return count > 1;
   }, []) || false;
 
-  const pendingCount = useLiveQuery(async () => {
-    const sales = await db.sales.where('sync_status').equals('pending_create').count();
-    const movements = await db.movements.where('sync_status').equals('pending_create').count();
-    const audits = await db.audit_logs.where('sync_status').equals('pending_create').count();
-    const products = await db.products.filter(p => p.sync_status !== 'synced').count();
-    const customers = await db.customers.filter(c => c.sync_status !== 'synced').count();
-    const settings = await db.settings.filter(s => s.sync_status !== 'synced').count();
-    const shifts = await db.cash_shifts.filter(s => s.sync_status !== 'synced').count();
-    const cashMovements = await db.cash_movements.filter(m => m.sync_status !== 'synced').count();
+  const inventoryAlertCount = useLiveQuery(async () => {
+    const bId = localStorage.getItem('nexus_business_id');
+    if (!bId) return 0;
+    const products = await db.products
+      .where('business_id').equals(bId)
+      .filter(p => !p.deleted_at)
+      .toArray();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let count = 0;
+    for (const p of products) {
+      const threshold = (p as any).low_stock_threshold ?? 5;
+      if (p.stock <= threshold) count++;
+      if (p.expiration_date) {
+        const exp = new Date(p.expiration_date);
+        exp.setHours(0, 0, 0, 0);
+        const days = Math.ceil((exp.getTime() - today.getTime()) / 86400000);
+        if (days <= 90) count++;
+      }
+    }
+    return count;
+  }, []) || 0;
 
-    return sales + movements + audits + products + customers + settings + shifts + cashMovements;
+  const pendingCount = useLiveQuery(async () => {
+    // La action_queue es la fuente de verdad: si está vacía, todo está sincronizado
+    const pending = await db.action_queue.where('status').equals('pending').count();
+    const processing = await db.action_queue.where('status').equals('processing').count();
+    return pending + processing;
+  }, []) || 0;
+
+  const failedCount = useLiveQuery(async () => {
+    return await db.action_queue.where('status').equals('failed').count();
   }, []) || 0;
 
   const handleManualSync = async () => {
@@ -104,13 +163,16 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   const getButtonState = () => {
     if (isSyncing) {
       return { className: "bg-amber-50 text-amber-600 ring-1 ring-amber-200", icon: <RefreshCw size={20} className="animate-spin"/>, title: "Sincronizando..." };
-    } 
-    if (!isOnline && pendingCount > 0) {
-      return { className: "bg-red-50 text-[#EF4444] ring-1 ring-red-200 animate-pulse", icon: <AlertCircle size={20} />, title: "¡ADVERTENCIA! Cambios sin guardar en la nube" };
-    } 
+    }
+    if (!isOnline && (pendingCount > 0 || failedCount > 0)) {
+      return { className: "bg-red-50 text-[#EF4444] ring-1 ring-red-200 animate-pulse", icon: <AlertCircle size={20} />, title: "Sin conexión — cambios pendientes de subir" };
+    }
     if (pendingCount > 0) {
       return { className: "bg-amber-50 text-[#F59E0B] ring-1 ring-amber-200", icon: <RefreshCw size={20} />, title: "Hay cambios pendientes de subir" };
-    } 
+    }
+    if (failedCount > 0) {
+      return { className: "bg-orange-50 text-orange-500 ring-1 ring-orange-200", icon: <AlertCircle size={20} />, title: `${failedCount} elemento(s) con error — toca para reintentar` };
+    }
     return { className: "bg-[#7AC142]/10 text-[#7AC142] ring-1 ring-[#7AC142]/30 hover:bg-[#7AC142]/20", icon: <CheckCircle2 size={20} />, title: "Sistema actualizado y seguro" };
   };
 
@@ -154,11 +216,18 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
         <nav className="flex-1 flex flex-col gap-4 w-full px-3">
           {menuItems.filter(i => i.show).map((item) => {
             const isActive = location.pathname === item.path;
+            const showInventoryBadge = item.path === '/inventario' && inventoryAlertCount > 0;
             return (
               <Link key={item.path} to={item.path} className={`flex flex-col items-center justify-center p-3 rounded-xl transition-all duration-200 group relative ${isActive ? 'bg-[#7AC142] text-[#0B3B68] shadow-lg shadow-[#7AC142]/20 font-bold translate-x-1' : 'text-gray-300 hover:text-white hover:bg-white/10'}`}>
                 {item.icon}
+                {showInventoryBadge && (
+                  <span className="absolute top-1.5 right-1.5 flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500 border border-white/50"></span>
+                  </span>
+                )}
                 <span className="absolute left-full ml-4 px-3 py-2 bg-[#1F2937] text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 shadow-xl font-bold uppercase tracking-wide border border-gray-700">
-                  {item.label}
+                  {item.label}{showInventoryBadge ? ` (${inventoryAlertCount})` : ''}
                 </span>
               </Link>
             );
@@ -166,12 +235,12 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
         </nav>
 
         <div className="flex flex-col gap-3 w-full px-3 mt-4 border-t border-white/10 pt-6">
-            <button onClick={handleManualSync} disabled={!isOnline || isSyncing} className={`p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group bg-white/5 hover:bg-white/10 border border-white/5 ${pendingCount > 0 ? 'text-[#F59E0B] border-[#F59E0B]/50' : 'text-[#7AC142]'}`} title={buttonState.title}>
-                {buttonState.icon}
-                {pendingCount > 0 && (
+            <button onClick={handleManualSync} disabled={!isOnline || isSyncing} className={`p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group border ${!isOnline ? 'bg-red-500/20 text-red-400 border-red-500/50' : pendingCount > 0 ? 'bg-white/5 hover:bg-white/10 text-[#F59E0B] border-[#F59E0B]/50' : failedCount > 0 ? 'bg-white/5 hover:bg-white/10 text-orange-400 border-orange-400/50' : 'bg-white/5 hover:bg-white/10 text-[#7AC142] border-white/5'}`} title={!isOnline ? 'Sin conexión' : buttonState.title}>
+                {!isOnline ? <WifiOff size={20} /> : buttonState.icon}
+                {(pendingCount > 0 || failedCount > 0) && (
                     <span className="absolute top-2 right-2 flex h-2.5 w-2.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#F59E0B] opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#F59E0B]"></span>
+                      <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${failedCount > 0 && pendingCount === 0 ? 'bg-orange-400' : 'bg-[#F59E0B]'}`}></span>
+                      <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${failedCount > 0 && pendingCount === 0 ? 'bg-orange-400' : 'bg-[#F59E0B]'}`}></span>
                     </span>
                 )}
             </button>
@@ -200,14 +269,55 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
             </div>
 
             <div className="flex items-center gap-3">
-                <button onClick={handleManualSync} className={`flex items-center justify-center w-9 h-9 rounded-full transition-all ${isSyncing || pendingCount > 0 ? 'bg-[#F59E0B] text-[#0B3B68] animate-pulse' : 'bg-[#7AC142] text-[#0B3B68]'}`}>
-                    {isSyncing ? <RefreshCw size={18} className="animate-spin"/> : pendingCount > 0 ? <Cloud size={18}/> : <CheckCircle2 size={18}/>}
+                <button onClick={handleManualSync} disabled={!isOnline || isSyncing} className={`flex items-center justify-center w-9 h-9 rounded-full transition-all ${!isOnline ? 'bg-red-500 text-white' : isSyncing || pendingCount > 0 ? 'bg-[#F59E0B] text-[#0B3B68] animate-pulse' : 'bg-[#7AC142] text-[#0B3B68]'}`}>
+                    {!isOnline ? <WifiOff size={18}/> : isSyncing ? <RefreshCw size={18} className="animate-spin"/> : pendingCount > 0 ? <Cloud size={18}/> : <CheckCircle2 size={18}/>}
                 </button>
             </div>
         </header>
 
+        {/* BANNER OFFLINE / RECONEXIÓN */}
+        {!isOnline && (
+          <div className="bg-red-600 text-white px-4 py-2 flex items-center justify-between gap-3 z-20 animate-in slide-in-from-top duration-300">
+            <div className="flex items-center gap-2 min-w-0">
+              <WifiOff size={16} className="flex-shrink-0" />
+              <span className="text-xs sm:text-sm font-bold truncate">
+                Sin conexión — modo offline activo
+              </span>
+            </div>
+            {pendingCount > 0 && (
+              <span className="bg-white/20 text-white px-2.5 py-0.5 rounded-full text-xs font-black flex-shrink-0">
+                {pendingCount} pendiente{pendingCount !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+        )}
+        {justReconnected && isOnline && (
+          <div className="bg-emerald-600 text-white px-4 py-2 flex items-center gap-2 z-20 animate-in slide-in-from-top duration-300">
+            <Wifi size={16} className="flex-shrink-0" />
+            <span className="text-xs sm:text-sm font-bold">
+              {isSyncing ? 'Reconectado — sincronizando datos...' : 'Reconectado — todo sincronizado'}
+            </span>
+            {isSyncing && <RefreshCw size={14} className="animate-spin flex-shrink-0" />}
+          </div>
+        )}
+
+        {/* BANNER PERÍODO DE PRUEBA */}
+        {trialInfo !== null && (
+          <div className={`px-4 py-2 flex items-center justify-between gap-3 z-20 ${trialInfo.daysLeft <= 2 ? 'bg-red-500' : trialInfo.daysLeft <= 5 ? 'bg-orange-500' : 'bg-amber-500'} text-white`}>
+            <div className="flex items-center gap-2 min-w-0">
+              <Clock size={15} className="flex-shrink-0" />
+              <span className="text-xs sm:text-sm font-bold truncate">
+                Período de prueba
+              </span>
+            </div>
+            <span className={`flex-shrink-0 px-3 py-0.5 rounded-full text-xs font-black border border-white/30 ${trialInfo.daysLeft <= 2 ? 'bg-red-600' : trialInfo.daysLeft <= 5 ? 'bg-orange-600' : 'bg-amber-600'}`}>
+              {trialInfo.daysLeft === 0 ? 'Vence hoy' : `${trialInfo.daysLeft} día${trialInfo.daysLeft !== 1 ? 's' : ''} restante${trialInfo.daysLeft !== 1 ? 's' : ''}`}
+            </span>
+          </div>
+        )}
+
         <main className="flex-1 overflow-y-auto overflow-x-hidden relative bg-[#F3F4F6] scroll-smooth pb-safe">
-            <Outlet context={{ currentStaff }} /> 
+            <Outlet context={{ currentStaff, onChangeStaff }} />
         </main>
 
         <nav
@@ -216,9 +326,16 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
         >
             {menuItems.filter(i => i.show).slice(0, 4).map((item) => {
               const isActive = location.pathname === item.path;
+              const showInventoryBadge = item.path === '/inventario' && inventoryAlertCount > 0;
               return (
-                <Link key={item.path} to={item.path} className={`flex-1 p-2 rounded-xl flex flex-col items-center transition-all duration-200 ${isActive ? 'text-[#0B3B68] bg-[#0B3B68]/5 transform -translate-y-1' : 'text-gray-400 hover:text-[#0B3B68]'}`}>
+                <Link key={item.path} to={item.path} className={`flex-1 p-2 rounded-xl flex flex-col items-center transition-all duration-200 relative ${isActive ? 'text-[#0B3B68] bg-[#0B3B68]/5 transform -translate-y-1' : 'text-gray-400 hover:text-[#0B3B68]'}`}>
                     <div className={isActive ? 'drop-shadow-sm' : ''}>{item.icon}</div>
+                    {showInventoryBadge && (
+                      <span className="absolute top-1 right-[calc(50%-12px)] flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                      </span>
+                    )}
                     <span className={`text-[9px] font-bold mt-1 uppercase tracking-wider ${isActive ? 'opacity-100' : 'opacity-0'}`}>{item.label}</span>
                 </Link>
               )
@@ -274,6 +391,42 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
                 </div>
             </div>
         )}
+
+      {/* Modal de bienvenida → guía rápida (solo primera vez) */}
+      {showGuidePrompt && (
+        <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm z-50 animate-in slide-in-from-bottom-4 fade-in duration-300">
+          <div className="bg-[#0B3B68] text-white rounded-2xl shadow-2xl p-4 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center flex-shrink-0">
+              <HelpCircle size={22} className="text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-sm leading-tight">¿Primera vez aquí?</p>
+              <p className="text-xs text-white/70 mt-0.5">Tenemos una guía rápida para empezar</p>
+            </div>
+            <div className="flex gap-2 flex-shrink-0">
+              <button
+                onClick={() => {
+                  localStorage.setItem('nexus_guide_seen', '1');
+                  setShowGuidePrompt(false);
+                  navigate('/settings?tab=help');
+                }}
+                className="bg-[#7AC142] text-[#0B3B68] text-xs font-black px-3 py-2 rounded-xl hover:bg-[#7AC142]/90 transition-colors whitespace-nowrap"
+              >
+                Ver guía
+              </button>
+              <button
+                onClick={() => {
+                  localStorage.setItem('nexus_guide_seen', '1');
+                  setShowGuidePrompt(false);
+                }}
+                className="w-8 h-8 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );

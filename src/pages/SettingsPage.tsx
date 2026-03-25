@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff, type BusinessConfig } from '../lib/db';
 import { syncPush, syncPull, isOnline, addToQueue } from '../lib/sync';
@@ -10,14 +10,19 @@ import {
   Trash2, Loader2, Smartphone,
   Wifi, WifiOff, AlertTriangle, Key,
   Download, Upload, Database,
-  Users, Plus, Edit2, UserCheck, UserX, X, Lock
+  Users, Plus, Edit2, UserCheck, UserX, X, Lock, DollarSign, CheckCircle2, Clock,
+  HelpCircle, ShoppingCart, Package, BarChart2, Settings, UserCircle, ChevronRight, Repeat
 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 export function SettingsPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
   const businessId = localStorage.getItem('nexus_business_id');
   
-  const [activeTab, setActiveTab] = useState<'general' | 'devices' | 'data' | 'team'>('general');
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<'general' | 'devices' | 'data' | 'team' | 'help'>(
+    searchParams.get('tab') === 'help' ? 'help' : 'general'
+  );
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const onlineStatus = isOnline();
@@ -71,7 +76,7 @@ export function SettingsPage() {
         pin: staffForm.pin,
         active: editingStaff?.active ?? true,
         business_id: businessId,
-        sync_status: 'pending_create'
+        sync_status: editingStaff ? 'pending_update' : 'pending_create'
       };
       await db.staff.put(staffRecord);
       await addToQueue('STAFF_SYNC', staffRecord);
@@ -252,6 +257,39 @@ export function SettingsPage() {
       reader.readAsText(file);
   };
 
+  // ── BILLING ────────────────────────────────────────────────────────────────
+  const [billingMeta, setBillingMeta] = useState<{rate: number; paid_until: string | null}>({ rate: 1.0, paid_until: null });
+
+  // Ventas del mes desde Dexie (reactivo — se actualiza al vender)
+  const localMonthSalesTotal = useLiveQuery(async () => {
+    if (!businessId) return 0;
+    const now = new Date();
+    const fromLocal = new Date(now.getFullYear(), now.getMonth(), 1);
+    const toLocal   = new Date(now.getFullYear(), now.getMonth()+1, 1);
+    const allSales = await db.sales.where('business_id').equals(businessId).toArray();
+    return allSales
+      .filter(s => s.status !== 'voided' && new Date(s.date) >= fromLocal && new Date(s.date) < toLocal)
+      .reduce((sum, s) => sum + Number(s.total || 0), 0);
+  }, [businessId]) ?? 0;
+
+  // Rate y paid_until desde Supabase (se consulta una vez)
+  useEffect(() => {
+    if (!businessId) return;
+    supabase.from('billing').select('rate, paid_until').eq('business_id', businessId).maybeSingle()
+      .then(({ data }) => {
+        if (data) setBillingMeta({ rate: Number(data.rate ?? 1.0), paid_until: data.paid_until ?? null });
+      })
+      .catch(() => {});
+  }, [businessId]);
+
+  const billing = {
+    rate: billingMeta.rate,
+    total_sales: localMonthSalesTotal,
+    fee: localMonthSalesTotal * billingMeta.rate / 100,
+    paid_until: billingMeta.paid_until,
+  };
+  // ──────────────────────────────────────────────────────────────────────────
+
   return (
     <div className="p-4 md:p-6 pb-24 max-w-6xl mx-auto min-h-screen bg-[#F3F4F6]">
       
@@ -276,6 +314,7 @@ export function SettingsPage() {
             )}
             <button onClick={() => setActiveTab('devices')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'devices' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Printer size={20}/> Hardware</button>
             <button onClick={() => setActiveTab('data')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'data' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Shield size={20}/> Datos y Respaldo</button>
+            <button onClick={() => setActiveTab('help')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'help' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><HelpCircle size={20}/> Guía Rápida</button>
         </div>
 
         <div className="flex-1">
@@ -321,12 +360,80 @@ export function SettingsPage() {
                         </div>
                         
                         <div className="pt-4 border-t border-gray-100 flex justify-end">
-                            <button type="submit" disabled={isLoading} 
+                            <button type="submit" disabled={isLoading}
                                 className="bg-[#7AC142] hover:bg-[#7AC142]/90 text-white font-bold py-3 px-8 rounded-xl shadow-lg shadow-[#7AC142]/20 flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50">
                                 {isLoading ? <Loader2 className="animate-spin"/> : <><Save size={20}/> Guardar Cambios</>}
                             </button>
                         </div>
                     </form>
+
+                    {/* ── CARD FACTURACIÓN ─────────────────────────────── */}
+                    {(() => {
+                      const now = new Date();
+                      const y = now.getFullYear(), m = now.getMonth() + 1;
+                      const lastDay = new Date(y, m, 0).getDate();
+                      const lastDayStr = `${y}-${String(m).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+                      const billingPaid = !!billing.paid_until && billing.paid_until >= lastDayStr;
+                      return (
+                      <div className={`mt-6 rounded-2xl border p-5 flex items-center gap-4 ${billingPaid ? 'bg-[#7AC142]/5 border-[#7AC142]/20' : billing.fee > 0 ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'}`}>
+                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${billingPaid ? 'bg-[#7AC142]/10 text-[#7AC142]' : billing.fee > 0 ? 'bg-amber-100 text-amber-600' : 'bg-gray-100 text-gray-400'}`}>
+                          <DollarSign size={22}/>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-[#6B7280] uppercase tracking-wide mb-1">Servicio Bisne con Talla — {now.toLocaleString('es',{month:'long',year:'numeric'})}</p>
+                          <div className="flex flex-wrap gap-x-6 gap-y-1">
+                            <span className="text-sm text-[#1F2937]">Ventas del mes: <strong className="font-black">${billing.total_sales.toFixed(2)}</strong></span>
+                            <span className="text-sm text-[#1F2937]">Tarifa: <strong className="font-black">{billing.rate}%</strong></span>
+                            <span className="text-sm text-[#1F2937]">A pagar: <strong className={`font-black text-base ${billing.fee > 0 ? 'text-amber-600' : 'text-[#6B7280]'}`}>${billing.fee.toFixed(2)}</strong></span>
+                          </div>
+                        </div>
+                        <div className="shrink-0">
+                          {billingPaid ? (
+                            <span className="flex items-center gap-1.5 px-3 py-1.5 bg-[#7AC142]/10 text-[#7AC142] rounded-full text-xs font-black uppercase">
+                              <CheckCircle2 size={13}/> Al día
+                            </span>
+                          ) : billing.fee > 0 ? (
+                            <span className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 text-amber-700 rounded-full text-xs font-black uppercase">
+                              <Clock size={13}/> Pendiente
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                      );
+                    })()}
+
+                    {/* ── TARJETA PERÍODO DE PRUEBA ────────────────────── */}
+                    {settings?.status === 'trial' && (() => {
+                      const msLeft = settings.subscription_expires_at
+                        ? new Date(settings.subscription_expires_at).getTime() - Date.now()
+                        : -1;
+                      const daysLeft = msLeft > 0 ? Math.ceil(msLeft / (1000 * 60 * 60 * 24)) : 0;
+                      const expired = msLeft <= 0;
+                      return (
+                        <div className={`mt-4 rounded-2xl border p-5 flex items-center gap-4 ${expired ? 'bg-red-50 border-red-200' : daysLeft <= 2 ? 'bg-red-50 border-red-200' : daysLeft <= 5 ? 'bg-orange-50 border-orange-200' : 'bg-amber-50 border-amber-200'}`}>
+                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${expired ? 'bg-red-100 text-red-500' : daysLeft <= 2 ? 'bg-red-100 text-red-500' : daysLeft <= 5 ? 'bg-orange-100 text-orange-500' : 'bg-amber-100 text-amber-600'}`}>
+                            <Clock size={22}/>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${expired ? 'text-red-600' : daysLeft <= 2 ? 'text-red-600' : daysLeft <= 5 ? 'text-orange-600' : 'text-amber-700'}`}>
+                              Período de Prueba Gratuita
+                            </p>
+                            <p className={`text-sm font-medium ${expired ? 'text-red-700' : 'text-slate-700'}`}>
+                              {expired
+                                ? 'Tu período de prueba ha vencido. Contacta al administrador para activar tu cuenta.'
+                                : daysLeft === 0
+                                  ? 'Tu período de prueba vence hoy.'
+                                  : `Te quedan ${daysLeft} día${daysLeft !== 1 ? 's' : ''} de prueba gratuita.`}
+                            </p>
+                          </div>
+                          {!expired && (
+                            <span className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-black uppercase border ${daysLeft <= 2 ? 'bg-red-100 text-red-700 border-red-200' : daysLeft <= 5 ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-amber-100 text-amber-700 border-amber-200'}`}>
+                              {daysLeft === 0 ? 'Vence hoy' : `${daysLeft}d restantes`}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                 </div>
             )}
 
@@ -614,6 +721,149 @@ export function SettingsPage() {
                   </form>
               </div>
           </div>
+      )}
+
+      {activeTab === 'help' && (
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 animate-in fade-in slide-in-from-right-4 duration-300">
+          <h2 className="text-xl font-bold text-[#1F2937] mb-1 flex items-center gap-2">
+            <HelpCircle size={22} className="text-[#0B3B68]" /> Guía Rápida
+          </h2>
+          <p className="text-sm text-[#6B7280] mb-6">Aprende a sacarle el máximo provecho a Bisne con Talla</p>
+
+          {/* Flujo diario */}
+          <div className="mb-8">
+            <h3 className="text-sm font-black text-[#0B3B68] uppercase tracking-wider mb-3">Flujo diario recomendado</h3>
+            <div className="flex flex-col sm:flex-row items-stretch gap-2">
+              {[
+                { icon: <DollarSign size={18}/>, label: 'Abre turno', sub: 'Finanzas → Abrir turno', color: 'bg-green-100 text-green-700' },
+                { icon: <ShoppingCart size={18}/>, label: 'Vende', sub: 'POS → cobra a clientes', color: 'bg-blue-100 text-blue-700' },
+                { icon: <BarChart2 size={18}/>, label: 'Revisa', sub: 'Finanzas → ver resumen', color: 'bg-purple-100 text-purple-700' },
+                { icon: <Lock size={18}/>, label: 'Cierra turno', sub: 'Finanzas → cerrar turno', color: 'bg-slate-100 text-slate-700' },
+              ].map((step, i, arr) => (
+                <div key={i} className="flex sm:flex-col items-center gap-2 flex-1">
+                  <div className="flex-1 sm:w-full bg-gray-50 border border-gray-200 rounded-2xl p-3 flex sm:flex-col items-center gap-3 sm:gap-1 sm:text-center">
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${step.color}`}>
+                      {step.icon}
+                    </div>
+                    <div>
+                      <p className="font-bold text-[#1F2937] text-sm">{step.label}</p>
+                      <p className="text-[11px] text-[#6B7280]">{step.sub}</p>
+                    </div>
+                  </div>
+                  {i < arr.length - 1 && (
+                    <ChevronRight size={16} className="text-gray-300 flex-shrink-0 sm:rotate-90" />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Secciones */}
+          <div className="space-y-4">
+            {[
+              {
+                icon: <ShoppingCart size={20} className="text-[#0B3B68]"/>,
+                title: 'Punto de Venta (POS)',
+                steps: [
+                  'Busca productos por nombre o código, o filtra por categoría',
+                  'Toca un producto para agregarlo al carrito; toca de nuevo para sumar más unidades',
+                  'Ajusta cantidades con + / − o toca el número para escribirlo directamente',
+                  'Descuentos: toca el ícono de etiqueta (🏷) en el carrito — puedes aplicar % o monto fijo',
+                  'Pago mixto: al cobrar elige "Mixto" para dividir entre efectivo y transferencia en una sola venta',
+                  'Selecciona un cliente antes de cobrar para que acumule puntos de lealtad automáticamente',
+                  'Cambio de vendedor: si hay varios en el equipo, toca el badge con el nombre en la parte superior del carrito',
+                  'Notas por ítem: toca el lápiz ✏️ en cualquier producto del carrito para agregar una nota (ej: "variada con extra queso") y/o cambiar el precio de ese ítem específico',
+                  'Toca "Cobrar" → elige método → confirma → el ticket se genera automáticamente con las notas incluidas',
+                ],
+              },
+              {
+                icon: <Package size={20} className="text-[#0B3B68]"/>,
+                title: 'Inventario',
+                steps: [
+                  'Crea el producto con nombre, precio y categoría',
+                  'Al crearlo, pon la cantidad disponible (existencia) — si la dejas en 0 el producto NO aparecerá en el POS',
+                  'Para agregar existencia después: toca el producto → "Ajustar Stock" → ingresa la cantidad a sumar',
+                  'El stock se descuenta automáticamente con cada venta realizada',
+                  'Edita precio, nombre o categoría tocando el lápiz en cualquier momento',
+                ],
+              },
+              {
+                icon: <BarChart2 size={20} className="text-[#0B3B68]"/>,
+                title: 'Finanzas',
+                steps: [
+                  'Abre un turno al inicio del día indicando el efectivo inicial en caja',
+                  'Durante el turno puedes registrar entradas y salidas de efectivo (ej: gastos, depósitos)',
+                  'El resumen separa ventas en efectivo, transferencia y mixto — el efectivo de ventas mixtas se suma al efectivo total',
+                  'Cierra el turno al final del día para cuadrar la caja',
+                  'Las ventas anuladas no se suman a los totales del resumen',
+                  'Solo los administradores pueden ver Finanzas; los vendedores solo acceden al POS y Clientes',
+                ],
+              },
+              {
+                icon: <UserCircle size={20} className="text-[#0B3B68]"/>,
+                title: 'Clientes y Puntos de Lealtad',
+                steps: [
+                  'Agrega clientes con nombre, teléfono y correo desde la sección Clientes',
+                  'Cada cliente acumula 1 punto por cada $1.00 de compra',
+                  'Selecciona el cliente en el POS antes de cobrar para que los puntos se sumen',
+                  'Para canjear puntos: selecciona el cliente → en la pantalla de cobro activa "Canjear puntos"',
+                  '10 puntos = $1.00 de descuento (el máximo canjeable no puede exceder el total de la venta)',
+                  'El historial completo de compras y puntos de cada cliente está en la sección Clientes',
+                ],
+              },
+              {
+                icon: <Repeat size={20} className="text-[#0B3B68]"/>,
+                title: 'Sincronización y conexión',
+                steps: [
+                  'Todo se guarda en el dispositivo primero — la app funciona completamente sin internet',
+                  'Cuando hay conexión, cada acción se sube a la nube automáticamente en segundos',
+                  'El ícono en la barra lateral indica el estado: 🟢 todo sincronizado · 🟡 subiendo · 🟠 error al subir',
+                  'Sin internet: la app funciona igual, los cambios quedan en cola y suben solos al reconectarse',
+                  'Si el ícono queda en 🟠 (error), toca el botón de sync para reintentar manualmente',
+                  'La sincronización manual solo es necesaria si hay errores que no se resolvieron automáticamente',
+                  'Todos tus datos están en la nube: si cambias de dispositivo, solo inicia sesión y todo aparece',
+                ],
+              },
+            ].map((section) => (
+              <details key={section.title} className="group border border-gray-200 rounded-2xl overflow-hidden">
+                <summary className="flex items-center gap-3 p-4 cursor-pointer select-none hover:bg-gray-50 transition-colors list-none">
+                  <div className="w-9 h-9 rounded-xl bg-[#0B3B68]/8 flex items-center justify-center flex-shrink-0">
+                    {section.icon}
+                  </div>
+                  <span className="font-bold text-[#1F2937] flex-1">{section.title}</span>
+                  <ChevronRight size={16} className="text-[#6B7280] transition-transform group-open:rotate-90" />
+                </summary>
+                <div className="px-4 pb-4 pt-1">
+                  <ul className="space-y-2">
+                    {section.steps.map((step, i) => (
+                      <li key={i} className="flex items-start gap-2.5 text-sm text-[#374151]">
+                        <CheckCircle2 size={15} className="text-[#7AC142] mt-0.5 flex-shrink-0" />
+                        {step}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </details>
+            ))}
+          </div>
+
+          {/* Footer contacto */}
+          <div className="mt-6 bg-[#0B3B68]/5 rounded-2xl p-4 flex items-center gap-3">
+            <HelpCircle size={20} className="text-[#0B3B68] flex-shrink-0" />
+            <div>
+              <p className="text-sm font-bold text-[#0B3B68]">¿Necesitas ayuda adicional?</p>
+              <p className="text-xs text-[#6B7280]">Contáctanos por WhatsApp y te asistimos en minutos</p>
+            </div>
+            <a
+              href="https://wa.me/5359887863?text=Hola,%20necesito%20ayuda%20con%20Bisne%20con%20Talla"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-auto flex-shrink-0 bg-[#25D366] text-white text-xs font-bold px-3 py-2 rounded-xl hover:bg-[#25D366]/90 transition-colors"
+            >
+              WhatsApp
+            </a>
+          </div>
+        </div>
       )}
 
       {showResetDbConfirm && (

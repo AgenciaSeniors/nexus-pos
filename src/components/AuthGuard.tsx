@@ -3,8 +3,45 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { db } from '../lib/db';
 import { syncCriticalData, syncHeavyData, isOnline } from '../lib/sync';
-import { Loader2, AlertTriangle, RefreshCw, LogOut } from 'lucide-react';
+import { Loader2, AlertTriangle, RefreshCw, LogOut, Clock, MessageCircle } from 'lucide-react';
 import { toast } from 'sonner';
+
+const ADMIN_PHONE = "5359887863";
+
+function TrialExpiredScreen({ onSignOut }: { onSignOut: () => void }) {
+  const waMsg = encodeURIComponent("Hola, mi período de prueba de Bisne con Talla ha vencido y deseo activar mi cuenta.");
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-6 animate-in fade-in duration-500">
+      <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full text-center border border-amber-100">
+        <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-6">
+          <Clock className="text-amber-500 w-10 h-10" />
+        </div>
+        <h3 className="text-2xl font-black text-slate-800 mb-2">Prueba Vencida</h3>
+        <p className="text-slate-500 mb-2 text-sm leading-relaxed">
+          Tu período de prueba gratuito ha terminado.
+        </p>
+        <p className="text-slate-500 mb-8 text-sm leading-relaxed">
+          Contacta al administrador para activar tu cuenta y seguir usando <strong>Bisne con Talla</strong>.
+        </p>
+        <div className="space-y-3">
+          <a
+            href={`https://wa.me/${ADMIN_PHONE}?text=${waMsg}`}
+            target="_blank" rel="noopener noreferrer"
+            className="flex items-center justify-center gap-2 w-full py-3.5 bg-[#25D366] text-white rounded-xl font-bold hover:bg-[#1fba59] transition-all shadow-lg active:scale-95"
+          >
+            <MessageCircle size={20} /> Contactar por WhatsApp
+          </a>
+          <button
+            onClick={onSignOut}
+            className="flex items-center justify-center gap-2 w-full py-3.5 bg-white text-slate-600 border border-slate-200 rounded-xl font-bold hover:bg-slate-50 transition-all"
+          >
+            <LogOut size={18} /> Cerrar Sesión
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -15,8 +52,21 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const [loading, setLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState('Conectando con el servidor...');
   const [error, setError] = useState<string | null>(null);
-  
+  const [trialExpired, setTrialExpired] = useState(false);
+
   const isChecking = useRef(false);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    navigate('/super-admin-login');
+  };
+
+  /** Retorna true si el trial está vencido */
+  function checkTrialExpired(status?: string, subscriptionExpiresAt?: string): boolean {
+    if (status !== 'trial') return false;
+    if (!subscriptionExpiresAt) return true;
+    return new Date() > new Date(subscriptionExpiresAt);
+  }
 
   useEffect(() => {
     if (isChecking.current) return;
@@ -55,8 +105,14 @@ export function AuthGuard({ children }: AuthGuardProps) {
              throw new Error("Cuenta suspendida. Contacta a soporte.");
           }
 
+          if (checkTrialExpired(localSettings.status, localSettings.subscription_expires_at)) {
+            if (isMounted) { setTrialExpired(true); setLoading(false); }
+            return;
+          }
+
           if (isMounted) setLoading(false);
 
+          // Sync en background — puede actualizar estado del trial
           if (isOnline()) {
             syncCriticalData(localSettings.id)
                 .then(() => syncHeavyData(localSettings.id))
@@ -68,7 +124,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
         // Si es la primera instalación o se borró la memoria
         if (isOnline()) {
             if (isMounted) setLoadingMessage('Descargando tu perfil (esto puede tardar unos segundos)...');
-            
+
             const { data: profile, error: profileError } = await supabase
               .from('profiles')
               .select('business_id, status')
@@ -85,10 +141,18 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
             if (isMounted) setLoadingMessage('Sincronizando configuración y catálogo...');
             await syncCriticalData(profile.business_id);
-            
+
+            // Verificar trial después de sincronizar (businesses.status se habrá descargado)
+            const freshSettings = await db.settings.toArray();
+            const freshConfig = freshSettings[0];
+            if (freshConfig && checkTrialExpired(freshConfig.status, freshConfig.subscription_expires_at)) {
+              if (isMounted) { setTrialExpired(true); setLoading(false); }
+              return;
+            }
+
             toast.info("Descargando inventario de fondo...", { duration: 5000 });
             syncHeavyData(profile.business_id);
-            
+
             if (isMounted) setLoading(false);
 
         } else {
@@ -121,6 +185,10 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
     return () => { isMounted = false; };
   }, [navigate]);
+
+  if (trialExpired) {
+    return <TrialExpiredScreen onSignOut={handleSignOut} />;
+  }
 
   if (loading) {
     return (

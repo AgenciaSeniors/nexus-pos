@@ -78,9 +78,10 @@ function UpdatePasswordScreen({ onComplete }: { onComplete: () => void }) {
 interface LoginScreenProps {
   onRegistrationStart: () => void;
   onRegistrationEnd: () => void;
+  onEnterApp: (userId: string) => void;
 }
 
-function LoginScreen({ onRegistrationStart, onRegistrationEnd }: LoginScreenProps) {
+function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: LoginScreenProps) {
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const navigate = useNavigate();
 
@@ -116,31 +117,56 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd }: LoginScreenProp
     try {
       const { data: authData, error: authError } = await supabase.auth.signUp({ email, password });
       if (authError) throw authError;
-      if (!authData.user) {
-        throw new Error("No se pudo crear la cuenta. Intenta nuevamente.");
-      }
+      if (!authData.user) throw new Error("No se pudo crear la cuenta. Intenta nuevamente.");
+
       if (!authData.session) {
-        toast.info("Confirma tu correo electrónico y luego vuelve para completar el registro.");
+        // Supabase requiere confirmación de correo (configuración del proyecto)
+        toast.info("Confirma tu correo electrónico y luego inicia sesión.");
         setMode('login');
+        onRegistrationEnd();
+        setLoading(false);
         return;
       }
+
+      // Crear perfil + negocio en Supabase
       const { error: rpcError } = await supabase.rpc('submit_registration_request', {
-        p_owner_name: fullName, p_business_name: businessName, p_phone: phone, p_months_requested: monthsRequested
+        p_owner_name: fullName, p_business_name: businessName, p_phone: phone, p_months_requested: 0
       });
       if (rpcError) throw rpcError;
-      await supabase.auth.signOut();
 
-      toast.success("Solicitud enviada. Toca el botón de WhatsApp abajo para pedir tu aprobación.", { duration: 8000 });
-      setMode('login');
-      setEmail('');
-      setPassword('');
+      // Obtener el business_id recién creado
+      const { data: profile, error: profileErr } = await supabase
+        .from('profiles')
+        .select('business_id')
+        .eq('id', authData.user.id)
+        .single();
+      if (profileErr || !profile?.business_id) throw new Error("No se pudo obtener el negocio creado.");
+
+      // Activar trial de 7 días
+      const trialEnd = new Date();
+      trialEnd.setDate(trialEnd.getDate() + 7);
+      const trialEndISO = trialEnd.toISOString();
+
+      await supabase.from('businesses').update({
+        status: 'trial',
+        subscription_expires_at: trialEndISO,
+      }).eq('id', profile.business_id);
+
+      // Activar el perfil para que pueda entrar
+      await supabase.from('profiles').update({ status: 'active' }).eq('id', authData.user.id);
+
+      toast.success('¡Bienvenido a Bisne con Talla! Tienes 7 días de prueba gratuita.', { duration: 6000 });
+
+      // Entrar a la app directamente sin volver al login
+      onRegistrationEnd();
+      onEnterApp(authData.user.id);
+
     } catch (error: any) {
       console.error(error);
       await supabase.auth.signOut();
-      toast.error(error.message || "Error al enviar solicitud.");
-    } finally {
-      setLoading(false);
+      toast.error(error.message || "Error al crear la cuenta.");
       onRegistrationEnd();
+      setLoading(false);
     }
   };
 
@@ -239,15 +265,11 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd }: LoginScreenProp
                       <input type="tel" className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="+53 5555 5555" value={phone} onChange={e => setPhone(e.target.value)} />
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">¿Cuántos meses deseas contratar?</label>
-                    <div className="grid grid-cols-4 gap-2">
-                      {[1, 3, 6, 12].map(m => (
-                        <button key={m} type="button" onClick={() => setMonthsRequested(m)}
-                          className={`py-2.5 text-sm font-bold rounded-xl border transition-all ${monthsRequested === m ? 'bg-[#0B3B68] text-white border-[#0B3B68] shadow-md' : 'bg-[#F3F4F6] text-[#6B7280] hover:bg-gray-200 border-gray-200'}`}>
-                          {m}M
-                        </button>
-                      ))}
+                  <div className="bg-[#7AC142]/10 border border-[#7AC142]/30 rounded-xl px-4 py-3 flex items-center gap-3">
+                    <span className="text-2xl">🎁</span>
+                    <div>
+                      <p className="text-sm font-black text-[#0B3B68]">7 días de prueba gratuita</p>
+                      <p className="text-xs text-[#6B7280]">Sin costo. Sin tarjeta. Cancela cuando quieras.</p>
                     </div>
                   </div>
                 </div>
@@ -422,6 +444,17 @@ function BusinessApp() {
 
         // Sincronización secundaria silenciosa
         await syncCriticalData(data.business_id);
+
+        // Deduplicar: el sync puede traer un registro admin desde Supabase con UUID distinto
+        // al que fetchProfileAndSync crea con id=data.id. Eliminar los duplicados.
+        const duplicateAdmins = await db.staff
+          .where('business_id').equals(data.business_id)
+          .filter(s => s.role === 'admin' && s.id !== data.id)
+          .toArray();
+        if (duplicateAdmins.length > 0) {
+          await db.staff.bulkDelete(duplicateAdmins.map(s => s.id));
+        }
+
         syncHeavyData(data.business_id).catch(() => {});
       }
     } catch (error: any) {
@@ -596,6 +629,17 @@ function BusinessApp() {
     <LoginScreen
       onRegistrationStart={() => { isRegisteringRef.current = true; }}
       onRegistrationEnd={() => { isRegisteringRef.current = false; }}
+      onEnterApp={async (userId: string) => {
+        // Llamado justo después de que el registro con trial está completo.
+        // isRegisteringRef ya es false, la sesión sigue activa → cargar perfil.
+        isStaffLoadedRef.current = false;
+        setLoading(true);
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        if (currentSession) {
+          setSession(currentSession);
+          await fetchProfileAndSync(userId, false);
+        }
+      }}
     />
   );
 

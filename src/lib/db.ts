@@ -12,7 +12,8 @@ export interface Product {
   category?: string;
   unit?: string;
   expiration_date?: string;
-  created_at?: string; 
+  low_stock_threshold?: number;
+  created_at?: string;
   sync_status: 'synced' | 'pending_create' | 'pending_update' | 'pending_delete';
   deleted_at?: string | null;
 }
@@ -24,6 +25,8 @@ export interface SaleItem {
   price: number;
   unit?: string;
   cost?: number;
+  note?: string;
+  custom_price?: number;
 }
 
 export interface Sale {
@@ -40,7 +43,16 @@ export interface Sale {
   payment_method: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto';
   amount_tendered?: number;
   change?: number;
-  status?: 'completed' | 'voided'; // ✅ ESTADO DE LA VENTA
+  status?: 'completed' | 'voided';
+  // Descuento
+  discount_amount?: number;
+  discount_type?: 'percentage' | 'fixed';
+  discount_input?: number;
+  // Pago mixto (efectivo + transferencia)
+  cash_amount?: number;
+  transfer_amount?: number;
+  // Puntos canjeados
+  redeemed_points?: number;
   sync_status: 'synced' | 'pending_create' | 'pending_update';
 }
 
@@ -64,7 +76,7 @@ export interface BusinessConfig {
   master_pin?: string; // ✅ PIN MAESTRO AÑADIDO
   subscription_expires_at?: string;
   last_check?: string;
-  status?: 'active' | 'suspended' | 'pending';
+  status?: 'active' | 'suspended' | 'pending' | 'trial';
   sync_status?: 'synced' | 'pending_create' | 'pending_update'; 
 }
 
@@ -119,6 +131,9 @@ export interface CashShift {
   end_amount?: number;
   expected_amount?: number;
   difference?: number;
+  transfer_expected?: number;
+  transfer_count?: number;
+  transfer_difference?: number;
   opened_at: string;
   closed_at?: string;
   status: 'open' | 'closed';
@@ -194,7 +209,7 @@ export class NexusDB extends Dexie {
   constructor() {
     super('NexusPOS_DB');
 
-    this.version(8).stores({
+    this.version(9).stores({
       businesses: 'id',
       products: 'id, business_id, sku, name, sync_status, [business_id+sync_status], [business_id+deleted_at]',
       sales: 'id, business_id, shift_id, date, sync_status, [shift_id+business_id], [business_id+date]',
@@ -211,7 +226,7 @@ export class NexusDB extends Dexie {
       cash_movements: 'id, shift_id, business_id, [shift_id+business_id], created_at'
     });
 
-    this.version(8).upgrade(async (trans) => {
+    this.version(9).upgrade(async (trans) => {
       console.log('🔄 Migrando base de datos a versión 8...');
       const shifts = await trans.table('cash_shifts').toArray();
       for (const shift of shifts) {

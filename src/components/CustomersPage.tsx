@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { db, type Customer, type Staff } from '../lib/db';
+import { db, type Customer, type Staff, type Sale } from '../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
     UserPlus, Search, Edit2, Trash2, Users, Loader2, Phone, Mail, MapPin, 
@@ -42,15 +42,14 @@ export function CustomersPage() {
   const deleteConfirmCustomer = customers.find(c => c.id === deleteConfirmId) ?? null;
 
   // Historial del cliente seleccionado
-  const customerHistory = useLiveQuery(async () => {
+  const customerHistory = useLiveQuery(async (): Promise<{ sales: Sale[]; totalSpent: number; lastVisit: string | null }> => {
       if (!selectedCustomer || !businessId) return { sales: [], totalSpent: 0, lastVisit: null };
-      
+
       const sales = await db.sales
         .where('business_id').equals(businessId)
         .filter(s => s.customer_id === selectedCustomer.id && s.status !== 'voided')
         .toArray();
 
-      // Ordenar por fecha descendente
       sales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
       const totalSpent = sales.reduce((sum, s) => sum + s.total, 0);
@@ -428,8 +427,14 @@ export function CustomersPage() {
                                                           ))}
                                                       </ul>
                                                   </td>
-                                                  <td className="p-4 align-top text-right font-bold text-[#1F2937]">
-                                                      {currency.format(sale.total)}
+                                                  <td className="p-4 align-top text-right">
+                                                      <span className="font-bold text-[#1F2937]">{currency.format(sale.total)}</span>
+                                                      {(sale.discount_amount && sale.discount_amount > 0) ? (
+                                                          <div className="text-[10px] text-amber-600 font-bold mt-0.5">Desc. -{currency.format(sale.discount_amount)}</div>
+                                                      ) : null}
+                                                      {(sale.redeemed_points && sale.redeemed_points > 0) ? (
+                                                          <div className="text-[10px] text-indigo-600 font-bold mt-0.5">{sale.redeemed_points} pts canjeados</div>
+                                                      ) : null}
                                                   </td>
                                               </tr>
                                           ))}

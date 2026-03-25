@@ -1,21 +1,22 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff, type InventoryMovement } from '../lib/db';
-import { addToQueue, syncPull, syncPush } from '../lib/sync';
+import { addToQueue, syncPull, syncPush, isOnline } from '../lib/sync';
+import { supabase } from '../lib/supabase';
 import { logAuditAction } from '../lib/audit';
 import { currency } from '../lib/currency';
 import { TicketModal } from '../components/TicketModal';
 import { toast } from 'sonner';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  PieChart, Pie, Cell, Legend 
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend, LineChart, Line, Area, AreaChart
 } from 'recharts';
 import { 
   Calendar, TrendingUp, ArrowLeft, ArrowRight, RefreshCw,
   BarChart3, DollarSign, Wallet, PieChart as PieChartIcon, ClipboardCheck,
   Printer, Trophy, Lock, Unlock, PlusCircle, MinusCircle, ShoppingBag, Loader2, X,
-  ArrowRightLeft, History, Ban
+  ArrowRightLeft, History, Ban, TrendingDown, Users, Hash
 } from 'lucide-react';
 
 const EMPTY_ARRAY: never[] = [];
@@ -25,6 +26,20 @@ const safeFloat = (val: any): number => {
   const num = parseFloat(val);
   return isNaN(num) ? 0 : num;
 };
+
+// Devuelve la fecha LOCAL en formato YYYY-MM-DD (no UTC).
+// Crítico para Cuba (UTC-5/-4): una venta a las 11pm local se guarda como
+// el día siguiente en UTC, así que nunca comparar sale.date (UTC) con hoy en UTC.
+const localDateStr = (d: Date = new Date()): string => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+// Compara la fecha LOCAL de una venta (guardada en UTC ISO) con un string YYYY-MM-DD local.
+const saleMatchesLocalDate = (saleDate: string, localDay: string): boolean =>
+  localDateStr(new Date(saleDate)) === localDay;
 
 export function FinancePage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
@@ -36,6 +51,7 @@ export function FinancePage() {
   const [reason, setReason] = useState('');
   const [movementType, setMovementType] = useState<'in' | 'out' | null>(null);
   const [isClosing, setIsClosing] = useState(false);
+  const [transferCount, setTransferCount] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
@@ -43,7 +59,23 @@ export function FinancePage() {
   const [pinModal, setPinModal] = useState<{isOpen: boolean, action: 'out' | 'close' | 'void_sale' | null, data?: any}>({isOpen: false, action: null});
   const [pinInput, setPinInput] = useState('');
 
-  const today = new Date().toISOString().split('T')[0];
+  // PROTECCIÓN BRUTE-FORCE: máx 3 intentos, bloqueo 5 min
+  const pinAttemptsRef = useRef(0);
+  const pinLockedUntilRef = useRef(0);
+  const [pinLockSecondsLeft, setPinLockSecondsLeft] = useState(0);
+
+  // Actualizar contador de segundos restantes del bloqueo
+  useEffect(() => {
+    if (pinLockSecondsLeft <= 0) return;
+    const timer = setInterval(() => {
+      const left = Math.max(0, Math.ceil((pinLockedUntilRef.current - Date.now()) / 1000));
+      setPinLockSecondsLeft(left);
+      if (left === 0) pinAttemptsRef.current = 0;
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [pinLockSecondsLeft]);
+
+  const today = localDateStr(); // fecha local, no UTC
   const [selectedDate, setSelectedDate] = useState(today);
   const [selectedTicket, setSelectedTicket] = useState<Sale | null>(null);
   const [trendFilter, setTrendFilter] = useState<'week' | 'month'>('week');
@@ -113,8 +145,18 @@ export function FinancePage() {
     const validSales = shiftData.sales.filter(s => s.status !== 'voided');
 
     const totalSales = validSales.reduce((sum, s) => sum + safeFloat(s.total), 0);
-    const cashSales = validSales.filter(s => ['efectivo', 'mixto'].includes(s.payment_method?.toLowerCase() || 'efectivo')).reduce((sum, s) => sum + safeFloat(s.total), 0);
-    const transferSales = validSales.filter(s => ['transferencia', 'transfer'].includes(s.payment_method?.toLowerCase() || '')).reduce((sum, s) => sum + safeFloat(s.total), 0);
+    const cashSales = validSales.reduce((sum, s) => {
+      const m = s.payment_method?.toLowerCase() || 'efectivo';
+      if (m === 'efectivo') return sum + safeFloat(s.total);
+      if (m === 'mixto') return sum + safeFloat(s.cash_amount || 0);
+      return sum;
+    }, 0);
+    const transferSales = validSales.reduce((sum, s) => {
+      const m = s.payment_method?.toLowerCase() || 'efectivo';
+      if (m === 'transferencia' || m === 'transfer') return sum + safeFloat(s.total);
+      if (m === 'mixto') return sum + safeFloat(s.transfer_amount || 0);
+      return sum;
+    }, 0);
 
     const cashIn = shiftData.movements.filter(m => m.type === 'in').reduce((sum, m) => sum + safeFloat(m.amount), 0);
     const cashOut = shiftData.movements.filter(m => m.type === 'out').reduce((sum, m) => sum + safeFloat(m.amount), 0);
@@ -130,7 +172,22 @@ export function FinancePage() {
     });
     const staffList = Object.entries(byStaff).map(([name, d]) => ({ name, ...d })).sort((a, b) => b.total - a.total);
 
-    return { startAmount, cashSales, transferSales, totalSales, cashIn, cashOut, expectedCash, staffList };
+    // Mini gráfico por hora del turno actual
+    const shiftHourly: Record<string, number> = {};
+    for (let i = 0; i <= 23; i++) shiftHourly[i.toString().padStart(2, '0')] = 0;
+    validSales.forEach(s => {
+      const h = new Date(s.date).getHours().toString().padStart(2, '0');
+      shiftHourly[h] = (shiftHourly[h] || 0) + safeFloat(s.total);
+    });
+    // Solo mostrar horas con actividad o rango relevante
+    const openHour = new Date(activeShift.opened_at).getHours();
+    const nowHour = new Date().getHours();
+    const hourlyChart = Array.from({ length: nowHour - openHour + 1 }, (_, i) => {
+      const h = (openHour + i).toString().padStart(2, '0');
+      return { h: h + ':00', v: shiftHourly[h] || 0 };
+    });
+
+    return { startAmount, cashSales, transferSales, totalSales, cashIn, cashOut, expectedCash, staffList, hourlyChart };
   }, [activeShift, shiftData]);
 
   const productMeta = useMemo(() => {
@@ -144,7 +201,7 @@ export function FinancePage() {
   }, [products]);
 
   const dailyStats = useMemo(() => {
-    const salesForDay = allSales.filter((sale) => sale.date.startsWith(selectedDate) && sale.status !== 'voided');
+    const salesForDay = allSales.filter((sale) => saleMatchesLocalDate(sale.date, selectedDate) && sale.status !== 'voided');
     let revenue = 0, cost = 0;
     const hourlyCounts: Record<string, number> = {};
     const categoryCounts: Record<string, number> = {};
@@ -160,7 +217,7 @@ export function FinancePage() {
           const h = saleDate.getHours().toString().padStart(2, '0') + ":00";
           if (hourlyCounts[h] !== undefined) hourlyCounts[h] += saleTotal;
       }
-      sale.items.forEach((item) => {
+      (sale.items || []).forEach((item) => {
         const itemQty = safeFloat(item.quantity);
         const itemPrice = safeFloat(item.price);
         const historicalCost = item.cost !== undefined ? safeFloat(item.cost) : (productMeta.costs.get(item.product_id) || 0);
@@ -179,7 +236,26 @@ export function FinancePage() {
     const chartData = Object.entries(hourlyCounts).map(([time, total]) => ({ time, total }));
     const pieData = Object.entries(categoryCounts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
 
-    return { sales: salesForDay, revenue, profit, cost, margin, chartData, pieData, bestSeller };
+    // Top 5 productos por cantidad
+    const topProducts = Object.entries(productCounts)
+      .map(([name, qty]) => ({ name, qty, revenue: categoryCounts[name] || 0 }))
+      .sort((a, b) => b.qty - a.qty)
+      .slice(0, 5);
+
+    // Desglose por método de pago
+    const paymentBreakdown = { efectivo: 0, transferencia: 0, tarjeta: 0 };
+    salesForDay.forEach(s => {
+      const m = s.payment_method?.toLowerCase() || 'efectivo';
+      if (m === 'efectivo') paymentBreakdown.efectivo += safeFloat(s.total);
+      else if (m === 'transferencia' || m === 'transfer') paymentBreakdown.transferencia += safeFloat(s.total);
+      else if (m === 'tarjeta') paymentBreakdown.tarjeta += safeFloat(s.total);
+      else if (m === 'mixto') {
+        paymentBreakdown.efectivo += safeFloat(s.cash_amount || 0);
+        paymentBreakdown.transferencia += safeFloat(s.transfer_amount || 0);
+      }
+    });
+
+    return { sales: salesForDay, revenue, profit, cost, margin, chartData, pieData, bestSeller, topProducts, paymentBreakdown };
   }, [allSales, selectedDate, productMeta]);
 
   const closingStats = useMemo(() => {
@@ -194,7 +270,7 @@ export function FinancePage() {
       else if (method === 'tarjeta') cardTotal += saleTotal;
       else transferTotal += saleTotal;
 
-      sale.items.forEach((item) => {
+      (sale.items || []).forEach((item) => {
         if (!productSummary[item.name]) productSummary[item.name] = { quantity: 0, total: 0 };
         productSummary[item.name].quantity += safeFloat(item.quantity);
         productSummary[item.name].total += (safeFloat(item.price) * safeFloat(item.quantity));
@@ -225,7 +301,7 @@ export function FinancePage() {
       const saleTotal = safeFloat(sale.total);
       totalRevenue += saleTotal;
       let saleCost = 0;
-      sale.items.forEach((i) => {
+      (sale.items || []).forEach((i) => {
           const historicalCost = i.cost !== undefined ? safeFloat(i.cost) : (productMeta.costs.get(i.product_id) || 0);
           saleCost += historicalCost * safeFloat(i.quantity);
       });
@@ -238,7 +314,21 @@ export function FinancePage() {
     const totalMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
     const chartData = Object.entries(salesByDate).map(([date, total]) => ({ date, total }));
 
-    return { totalRevenue, totalCost, totalProfit, totalMargin, chartData, count: filteredSales.length };
+    // Top 5 productos del período
+    const productAgg: Record<string, { qty: number; revenue: number }> = {};
+    filteredSales.forEach(sale => {
+      (sale.items || []).forEach(item => {
+        if (!productAgg[item.name]) productAgg[item.name] = { qty: 0, revenue: 0 };
+        productAgg[item.name].qty += safeFloat(item.quantity);
+        productAgg[item.name].revenue += safeFloat(item.custom_price ?? item.price) * safeFloat(item.quantity);
+      });
+    });
+    const topProducts = Object.entries(productAgg)
+      .map(([name, d]) => ({ name, ...d }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5);
+
+    return { totalRevenue, totalCost, totalProfit, totalMargin, chartData, count: filteredSales.length, topProducts };
   }, [allSales, trendFilter, productMeta]);
 
   const formatMoney = (val: number) => {
@@ -368,35 +458,44 @@ export function FinancePage() {
   const handleCloseShift = async () => {
     const currentShift = activeShift;
     if (!currentShift || !shiftStats) return;
-    const finalCount = safeFloat(amount);
-    
+    const finalCashCount = safeFloat(amount);
+    const finalTransferCount = safeFloat(transferCount);
+
     setIsLoading(true);
     try {
         const { bId, sId } = await getActiveCredentials();
         const safeBid = bId || currentShift.business_id;
-        const difference = finalCount - shiftStats.expectedCash;
+        const cashDiff = finalCashCount - shiftStats.expectedCash;
+        const transferDiff = finalTransferCount - shiftStats.transferSales;
         const closedAt = new Date().toISOString();
 
         const staffPayload = { id: sId, name: currentStaff?.name || 'Cajero', business_id: safeBid };
 
         await db.transaction('rw', [db.cash_shifts, db.action_queue, db.audit_logs], async () => {
             await db.cash_shifts.update(currentShift.id, {
-                end_amount: finalCount, 
-                difference: difference, 
+                end_amount: finalCashCount,
+                difference: cashDiff,
                 expected_amount: shiftStats.expectedCash,
-                closed_at: closedAt, 
-                status: 'closed', 
+                transfer_expected: shiftStats.transferSales,
+                transfer_count: finalTransferCount,
+                transfer_difference: transferDiff,
+                closed_at: closedAt,
+                status: 'closed',
                 sync_status: 'pending_update'
             });
 
             const closedShift = await db.cash_shifts.get(currentShift.id);
             if(closedShift) await addToQueue('SHIFT', closedShift);
-            
-            await logAuditAction('CLOSE_SHIFT', { expected: shiftStats.expectedCash, real: finalCount, diff: difference }, staffPayload as any);
+
+            await logAuditAction('CLOSE_SHIFT', {
+              expected_cash: shiftStats.expectedCash, real_cash: finalCashCount, cash_diff: cashDiff,
+              expected_transfer: shiftStats.transferSales, real_transfer: finalTransferCount, transfer_diff: transferDiff,
+            }, staffPayload as any);
         });
 
-        toast.success(`Caja cerrada. Diferencia: ${formatMoney(difference)}`);
-        setIsClosing(false); setAmount('');
+        const totalDiff = cashDiff + transferDiff;
+        toast.success(`Caja cerrada. Diferencia total: ${formatMoney(totalDiff)}`);
+        setIsClosing(false); setAmount(''); setTransferCount('');
         syncPush().catch(() => {});
     } catch (error) {
         console.error(error);
@@ -413,13 +512,25 @@ export function FinancePage() {
           const { bId, sId } = await getActiveCredentials();
           const safeBid = bId || sale.business_id;
 
-          await db.transaction('rw', [db.sales, db.products, db.movements, db.cash_movements, db.action_queue, db.audit_logs], async () => {
+          await db.transaction('rw', [db.sales, db.products, db.movements, db.cash_movements, db.customers, db.action_queue, db.audit_logs], async () => {
               // 1. Marcar venta como anulada
               await db.sales.update(sale.id, { status: 'voided', sync_status: 'pending_update' });
               await addToQueue('VOID_SALE', { saleId: sale.id });
 
-              // 2. Devolver stock de cada producto
-              for (const item of sale.items) {
+              // 2. Revertir puntos de lealtad si la venta tenía cliente
+              if (sale.customer_id) {
+                  const customer = await db.customers.get(sale.customer_id);
+                  if (customer) {
+                      const pointsToRemove = Math.floor(safeFloat(sale.total) / 10);
+                      await db.customers.update(sale.customer_id, {
+                          loyalty_points: Math.max(0, (customer.loyalty_points || 0) - pointsToRemove),
+                          sync_status: 'pending_update'
+                      });
+                  }
+              }
+
+              // 3. Devolver stock de cada producto
+              for (const item of (sale.items || [])) {
                   const product = await db.products.get(item.product_id);
                   if (product) {
                       const newStock = product.stock + item.quantity;
@@ -461,8 +572,11 @@ export function FinancePage() {
   };
 
   const changeDate = (days: number) => {
-    const d = new Date(selectedDate); d.setDate(d.getDate() + days);
-    const newStr = d.toISOString().split('T')[0]; if (newStr <= today) setSelectedDate(newStr);
+    // Parsear YYYY-MM-DD como fecha local (agregar T00:00 evita que JS lo interprete como UTC)
+    const d = new Date(selectedDate + 'T00:00');
+    d.setDate(d.getDate() + days);
+    const newStr = localDateStr(d);
+    if (newStr <= today) setSelectedDate(newStr);
   };
   
   const handlePrint = () => window.print();
@@ -663,24 +777,61 @@ export function FinancePage() {
             </div>
           </div>
 
+          {/* MINI GRÁFICO ACTIVIDAD DEL TURNO */}
+          {shiftStats.hourlyChart.length > 1 && shiftStats.totalSales > 0 && (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
+              <h3 className="font-bold text-[#1F2937] text-sm flex items-center gap-2 mb-4">
+                <BarChart3 size={16} className="text-[#0B3B68]"/> Actividad del Turno por Hora
+              </h3>
+              <div className="h-40">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={shiftStats.hourlyChart} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                    <defs>
+                      <linearGradient id="shiftGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#0B3B68" stopOpacity={0.15}/>
+                        <stop offset="95%" stopColor="#0B3B68" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
+                    <XAxis dataKey="h" fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }}/>
+                    <YAxis fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} tickFormatter={v => v === 0 ? '' : `$${v}`} width={36}/>
+                    <Tooltip
+                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }}
+                      formatter={(v: number) => [formatMoney(v), 'Ventas']}
+                    />
+                    <Area type="monotone" dataKey="v" stroke="#0B3B68" strokeWidth={2} fill="url(#shiftGrad)" dot={false} activeDot={{ r: 4, fill: '#0B3B68' }}/>
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
           {shiftStats.staffList.length > 1 && (
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
               <h3 className="font-bold text-[#1F2937] text-sm flex items-center gap-2 mb-4">
                 <Trophy size={16} className="text-[#7AC142]"/> Ventas por Vendedor (Turno Actual)
               </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {shiftStats.staffList.map((s, i) => (
-                  <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
-                    <div className="w-9 h-9 rounded-lg bg-[#0B3B68]/10 text-[#0B3B68] flex items-center justify-center text-xs font-black flex-shrink-0">
-                      {s.name.substring(0, 2).toUpperCase()}
+              <div className="space-y-2">
+                {shiftStats.staffList.map((s, i) => {
+                  const pct = shiftStats.totalSales > 0 ? (s.total / shiftStats.totalSales) * 100 : 0;
+                  return (
+                    <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                      <div className="w-7 h-7 rounded-lg bg-[#0B3B68]/10 text-[#0B3B68] flex items-center justify-center text-[10px] font-black flex-shrink-0">
+                        {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : s.name.substring(0, 2).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-center mb-1">
+                          <p className="text-xs font-bold text-[#1F2937] truncate">{s.name}</p>
+                          <span className="font-black text-xs text-[#7AC142] flex-shrink-0 ml-2">{formatMoney(s.total)}</span>
+                        </div>
+                        <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-[#7AC142] transition-all" style={{ width: `${pct}%` }}/>
+                        </div>
+                        <p className="text-[9px] text-[#6B7280] mt-0.5">{s.count} venta{s.count !== 1 ? 's' : ''} · {pct.toFixed(0)}%</p>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-[#1F2937] truncate">{s.name}</p>
-                      <p className="text-[10px] text-[#6B7280]">{s.count} venta{s.count !== 1 ? 's' : ''}</p>
-                    </div>
-                    <span className="font-black text-sm text-[#7AC142] flex-shrink-0">{formatMoney(s.total)}</span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -754,66 +905,209 @@ export function FinancePage() {
              <button onClick={() => syncPull()} className="p-2 bg-white text-[#0B3B68] border border-gray-200 rounded-lg shadow-sm hover:bg-[#0B3B68]/10 transition-colors" title="Sincronizar Nube"><RefreshCw size={20}/></button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 relative overflow-hidden group">
-               <div className="relative">
-                  <p className="text-[#6B7280] text-xs font-bold uppercase mb-1 flex items-center gap-1"><DollarSign size={14} /> Ventas (Neto)</p>
-                  <h3 className="text-2xl font-bold text-[#1F2937]">{formatMoney(dailyStats.revenue)}</h3>
-               </div>
+          {/* KPIs */}
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+            <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+              <p className="text-[#6B7280] text-[10px] font-bold uppercase mb-1 flex items-center gap-1"><Hash size={11}/> Tickets</p>
+              <h3 className="text-2xl font-black text-[#0B3B68]">{dailyStats.sales.length}</h3>
+              <p className="text-[10px] text-[#6B7280]">ventas del día</p>
             </div>
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 relative overflow-hidden group">
-               <div className="relative">
-                  <p className="text-[#6B7280] text-xs font-bold uppercase mb-1 flex items-center gap-1"><Wallet size={14} /> Costos</p>
-                  <h3 className="text-2xl font-bold text-[#1F2937]">{formatMoney(dailyStats.cost)}</h3>
-               </div>
+            <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+              <p className="text-[#6B7280] text-[10px] font-bold uppercase mb-1 flex items-center gap-1"><DollarSign size={11}/> Ingresos</p>
+              <h3 className="text-2xl font-black text-[#1F2937]">{formatMoney(dailyStats.revenue)}</h3>
+              <p className="text-[10px] text-[#6B7280]">neto del día</p>
             </div>
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 relative overflow-hidden group">
-               <div className="relative">
-                  <p className="text-[#6B7280] text-xs font-bold uppercase mb-1 flex items-center gap-1"><TrendingUp size={14} /> Ganancia</p>
-                  <h3 className="text-2xl font-bold text-[#7AC142]">{formatMoney(dailyStats.profit)}</h3>
-                  <span className="text-[10px] bg-[#7AC142]/10 text-[#7AC142] px-2 py-0.5 rounded-full font-bold inline-block border border-[#7AC142]/20">Margen: {dailyStats.margin.toFixed(0)}%</span>
-               </div>
+            <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+              <p className="text-[#6B7280] text-[10px] font-bold uppercase mb-1 flex items-center gap-1"><TrendingDown size={11}/> Costos</p>
+              <h3 className="text-2xl font-black text-[#1F2937]">{formatMoney(dailyStats.cost)}</h3>
+              <p className="text-[10px] text-[#6B7280]">costo de lo vendido</p>
             </div>
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 relative overflow-hidden group">
-               <div className="relative">
-                  <p className="text-[#6B7280] text-xs font-bold uppercase mb-1 flex items-center gap-1"><Trophy size={14} className="text-[#F59E0B]"/> Más Vendido</p>
-                  <h3 className="text-lg font-bold text-[#1F2937] truncate">{dailyStats.bestSeller.name}</h3>
-                  <p className="text-xs text-[#6B7280]">{dailyStats.bestSeller.count} unidades</p>
-               </div>
+            <div className="col-span-2 lg:col-span-2 bg-gradient-to-br from-[#7AC142] to-[#5a9d2e] p-4 rounded-2xl shadow-lg shadow-[#7AC142]/20 text-white">
+              <p className="text-white/70 text-[10px] font-bold uppercase mb-1 flex items-center gap-1"><TrendingUp size={11}/> Ganancia Neta</p>
+              <h3 className="text-3xl font-black">{formatMoney(dailyStats.profit)}</h3>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">Margen {dailyStats.margin.toFixed(0)}%</span>
+                <span className="text-[10px] text-white/70">· Mejor: {dailyStats.bestSeller.name} ({dailyStats.bestSeller.count} un.)</span>
+              </div>
             </div>
           </div>
 
+          {/* DESGLOSE PAGOS */}
           {dailyStats.sales.length > 0 && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 h-72">
-                   <h4 className="font-bold text-[#1F2937] text-sm mb-4 flex items-center gap-2"><BarChart3 size={16}/> Ventas por Hora</h4>
-                   <ResponsiveContainer width="100%" height="90%">
-                     <BarChart data={dailyStats.chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="time" fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} /><YAxis fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} tickFormatter={v => `$${v}`} /><Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="total" fill="#0B3B68" radius={[4,4,0,0]} /></BarChart>
-                   </ResponsiveContainer>
+            <div className="grid grid-cols-3 gap-3 mb-6">
+              {[
+                { label: 'Efectivo', value: dailyStats.paymentBreakdown.efectivo, color: 'text-[#7AC142]', bg: 'bg-[#7AC142]/10 border-[#7AC142]/20' },
+                { label: 'Transferencia', value: dailyStats.paymentBreakdown.transferencia, color: 'text-[#F59E0B]', bg: 'bg-[#F59E0B]/10 border-[#F59E0B]/20' },
+                { label: 'Tarjeta', value: dailyStats.paymentBreakdown.tarjeta, color: 'text-[#0B3B68]', bg: 'bg-[#0B3B68]/10 border-[#0B3B68]/20' },
+              ].map(item => (
+                <div key={item.label} className={`p-3 rounded-xl border ${item.bg}`}>
+                  <p className="text-[10px] font-bold text-[#6B7280] uppercase mb-1">{item.label}</p>
+                  <p className={`text-lg font-black ${item.color}`}>{formatMoney(item.value)}</p>
+                  {dailyStats.revenue > 0 && <p className="text-[10px] text-[#6B7280]">{((item.value / dailyStats.revenue) * 100).toFixed(0)}% del total</p>}
                 </div>
-                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 h-72">
-                   <h4 className="font-bold text-[#1F2937] text-sm mb-4 flex items-center gap-2"><PieChartIcon size={16}/> Categorías</h4>
-                   <ResponsiveContainer width="100%" height="90%">
-                     <PieChart><Pie data={dailyStats.pieData} cx="50%" cy="50%" innerRadius={40} outerRadius={60} paddingAngle={5} dataKey="value" stroke="none">{dailyStats.pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Pie><Tooltip contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Legend iconType="circle" wrapperStyle={{fontSize:'10px', fontFamily: 'sans-serif'}} /></PieChart>
-                   </ResponsiveContainer>
+              ))}
+            </div>
+          )}
+
+          {dailyStats.sales.length > 0 && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+              {/* GRÁFICO HORAS */}
+              <div className="lg:col-span-2 bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+                <h4 className="font-bold text-[#1F2937] text-sm mb-4 flex items-center gap-2"><BarChart3 size={16}/> Ventas por Hora</h4>
+                <div className="h-56">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={dailyStats.chartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
+                      <XAxis dataKey="time" fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} interval={1}/>
+                      <YAxis fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} tickFormatter={v => v === 0 ? '' : `$${v}`} width={36}/>
+                      <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }} formatter={(v: number) => [formatMoney(v), 'Ventas']}/>
+                      <Bar dataKey="total" fill="#0B3B68" radius={[4,4,0,0]}/>
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
+              </div>
+
+              {/* TOP 5 PRODUCTOS */}
+              <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+                <h4 className="font-bold text-[#1F2937] text-sm mb-4 flex items-center gap-2"><Trophy size={16} className="text-[#F59E0B]"/> Top 5 Productos</h4>
+                {dailyStats.topProducts.length === 0 ? (
+                  <p className="text-xs text-[#6B7280] text-center py-8">Sin datos</p>
+                ) : (
+                  <div className="space-y-3">
+                    {dailyStats.topProducts.map((p, i) => {
+                      const maxQty = dailyStats.topProducts[0].qty;
+                      const pct = maxQty > 0 ? (p.qty / maxQty) * 100 : 0;
+                      return (
+                        <div key={i}>
+                          <div className="flex justify-between items-center mb-1">
+                            <span className="text-xs font-bold text-[#1F2937] truncate flex-1 mr-2">
+                              {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`} {p.name}
+                            </span>
+                            <span className="text-[10px] font-black text-[#6B7280] flex-shrink-0">{p.qty} un.</span>
+                          </div>
+                          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div className="h-full rounded-full bg-[#0B3B68] transition-all" style={{ width: `${pct}%` }}/>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* PIE CATEGORÍAS */}
+          {dailyStats.pieData.length > 0 && (
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 h-72 mb-6">
+              <h4 className="font-bold text-[#1F2937] text-sm mb-4 flex items-center gap-2"><PieChartIcon size={16}/> Ingresos por Categoría</h4>
+              <ResponsiveContainer width="100%" height="90%">
+                <PieChart>
+                  <Pie data={dailyStats.pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={4} dataKey="value" stroke="none">
+                    {dailyStats.pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
+                  </Pie>
+                  <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }} formatter={(v: number) => [formatMoney(v), 'Ingresos']}/>
+                  <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: '11px' }}/>
+                </PieChart>
+              </ResponsiveContainer>
             </div>
           )}
         </div>
       )}
 
       {viewMode === 'trends' && (
-        <div className="animate-in fade-in zoom-in-95 duration-300">
-          <div className="flex gap-2 mb-6">
-             <button onClick={() => setTrendFilter('week')} className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${trendFilter === 'week' ? 'bg-[#0B3B68] text-white shadow-md' : 'bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50'}`}>Últimos 7 días</button>
-             <button onClick={() => setTrendFilter('month')} className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${trendFilter === 'month' ? 'bg-[#0B3B68] text-white shadow-md' : 'bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50'}`}>Últimos 30 días</button>
+        <div className="animate-in fade-in zoom-in-95 duration-300 space-y-6">
+          {/* FILTRO */}
+          <div className="flex gap-2">
+            <button onClick={() => setTrendFilter('week')} className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${trendFilter === 'week' ? 'bg-[#0B3B68] text-white shadow-md' : 'bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50'}`}>Últimos 7 días</button>
+            <button onClick={() => setTrendFilter('month')} className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${trendFilter === 'month' ? 'bg-[#0B3B68] text-white shadow-md' : 'bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50'}`}>Últimos 30 días</button>
           </div>
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
-             <h4 className="font-bold text-[#1F2937] mb-4 text-sm">Evolución de Ingresos Netos</h4>
-             <ResponsiveContainer width="100%" height="100%">
-                 <BarChart data={trendStats.chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="date" fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} /><YAxis fontSize={10} axisLine={false} tickLine={false} tickFormatter={v => `$${v}`} tick={{fill: '#94a3b8'}} /><Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="total" fill="#7AC142" radius={[4,4,0,0]} barSize={40} /></BarChart>
-             </ResponsiveContainer>
+
+          {/* KPIs */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+              <p className="text-[#6B7280] text-[10px] font-bold uppercase mb-1 flex items-center gap-1"><Hash size={11}/> Ventas</p>
+              <h3 className="text-3xl font-black text-[#0B3B68]">{trendStats.count}</h3>
+              <p className="text-[10px] text-[#6B7280]">tickets procesados</p>
+            </div>
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+              <p className="text-[#6B7280] text-[10px] font-bold uppercase mb-1 flex items-center gap-1"><DollarSign size={11}/> Ingresos</p>
+              <h3 className="text-2xl font-black text-[#1F2937]">{formatMoney(trendStats.totalRevenue)}</h3>
+              <p className="text-[10px] text-[#6B7280]">total del período</p>
+            </div>
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+              <p className="text-[#6B7280] text-[10px] font-bold uppercase mb-1 flex items-center gap-1"><TrendingDown size={11}/> Costos</p>
+              <h3 className="text-2xl font-black text-[#1F2937]">{formatMoney(trendStats.totalCost)}</h3>
+              <p className="text-[10px] text-[#6B7280]">costo del período</p>
+            </div>
+            <div className="bg-gradient-to-br from-[#7AC142] to-[#5a9d2e] p-5 rounded-2xl shadow-lg shadow-[#7AC142]/20 text-white">
+              <p className="text-white/70 text-[10px] font-bold uppercase mb-1 flex items-center gap-1"><TrendingUp size={11}/> Ganancia</p>
+              <h3 className="text-2xl font-black">{formatMoney(trendStats.totalProfit)}</h3>
+              <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">Margen {trendStats.totalMargin.toFixed(0)}%</span>
+            </div>
           </div>
+
+          {/* GRÁFICO EVOLUCIÓN */}
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <h4 className="font-bold text-[#1F2937] mb-1 text-sm">Evolución de Ingresos Netos</h4>
+            <p className="text-[10px] text-[#6B7280] mb-4">
+              {trendStats.count === 0 ? 'Sin ventas en el período' : `${trendStats.count} venta${trendStats.count !== 1 ? 's' : ''} · Prom. diario: ${formatMoney(trendStats.totalRevenue / (trendFilter === 'week' ? 7 : 30))}`}
+            </p>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={trendStats.chartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                  <defs>
+                    <linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#7AC142" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#7AC142" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
+                  <XAxis dataKey="date" fontSize={10} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }}/>
+                  <YAxis fontSize={10} axisLine={false} tickLine={false} tickFormatter={v => v === 0 ? '' : `$${v}`} tick={{ fill: '#94a3b8' }} width={40}/>
+                  <Tooltip
+                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }}
+                    formatter={(v: number) => [formatMoney(v), 'Ingresos']}
+                  />
+                  <Area type="monotone" dataKey="total" stroke="#7AC142" strokeWidth={2.5} fill="url(#trendGrad)" dot={{ r: 3, fill: '#7AC142', strokeWidth: 0 }} activeDot={{ r: 5, fill: '#7AC142' }}/>
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* TOP 5 PRODUCTOS DEL PERÍODO */}
+          {trendStats.topProducts.length > 0 && (
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+              <h4 className="font-bold text-[#1F2937] text-sm mb-5 flex items-center gap-2">
+                <Trophy size={16} className="text-[#F59E0B]"/> Top Productos del Período
+              </h4>
+              <div className="space-y-4">
+                {trendStats.topProducts.map((p, i) => {
+                  const maxRev = trendStats.topProducts[0].revenue;
+                  const pct = maxRev > 0 ? (p.revenue / maxRev) * 100 : 0;
+                  return (
+                    <div key={i} className="flex items-center gap-4">
+                      <div className="w-7 flex-shrink-0 text-center text-sm font-black text-[#6B7280]">
+                        {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : <span className="text-xs">{i+1}</span>}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-center mb-1.5">
+                          <span className="text-sm font-bold text-[#1F2937] truncate">{p.name}</span>
+                          <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                            <span className="text-[10px] text-[#6B7280]">{p.qty} un.</span>
+                            <span className="text-xs font-black text-[#7AC142]">{formatMoney(p.revenue)}</span>
+                          </div>
+                        </div>
+                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full transition-all ${i === 0 ? 'bg-[#0B3B68]' : i === 1 ? 'bg-[#7AC142]' : i === 2 ? 'bg-[#F59E0B]' : 'bg-gray-400'}`} style={{ width: `${pct}%` }}/>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -899,42 +1193,89 @@ export function FinancePage() {
                           <div key={i} className={`w-4 h-4 rounded-full transition-all ${pinInput.length > i ? 'bg-[#0B3B68] scale-110' : 'bg-gray-200'}`}></div>
                       ))}
                   </div>
+                  {pinAttemptsRef.current > 0 && pinLockSecondsLeft === 0 && (
+                      <p className="text-center text-xs text-orange-500 font-bold mt-1">
+                          {3 - pinAttemptsRef.current} intento{3 - pinAttemptsRef.current !== 1 ? 's' : ''} restante{3 - pinAttemptsRef.current !== 1 ? 's' : ''}
+                      </p>
+                  )}
+                  {pinLockSecondsLeft > 0 && (
+                      <p className="text-center text-xs text-red-500 font-bold mt-1">
+                          🔒 Bloqueado — espera {Math.floor(pinLockSecondsLeft / 60)}:{String(pinLockSecondsLeft % 60).padStart(2, '0')}
+                      </p>
+                  )}
               </div>
 
               <div className="grid grid-cols-3 gap-3 mb-6">
                   {[1,2,3,4,5,6,7,8,9].map(num => (
-                      <button key={num} onClick={() => { if(pinInput.length < 4) setPinInput(pinInput + num) }} className="py-4 bg-gray-50 hover:bg-gray-100 rounded-xl text-xl font-black text-[#1F2937] transition-colors active:scale-95">
+                      <button key={num} disabled={pinLockSecondsLeft > 0} onClick={() => { if(pinInput.length < 4) setPinInput(pinInput + num) }} className="py-4 bg-gray-50 hover:bg-gray-100 rounded-xl text-xl font-black text-[#1F2937] transition-colors active:scale-95 disabled:opacity-30">
                           {num}
                       </button>
                   ))}
-                  <button onClick={() => { setPinModal({isOpen: false, action: null}); setPinInput(''); }} className="py-4 bg-red-50 hover:bg-red-100 rounded-xl text-red-500 font-bold transition-colors flex items-center justify-center">
+                  <button onClick={() => { setPinModal({isOpen: false, action: null}); setPinInput(''); pinAttemptsRef.current = 0; pinLockedUntilRef.current = 0; setPinLockSecondsLeft(0); }} className="py-4 bg-red-50 hover:bg-red-100 rounded-xl text-red-500 font-bold transition-colors flex items-center justify-center">
                       <X size={24}/>
                   </button>
-                  <button onClick={() => { if(pinInput.length < 4) setPinInput(pinInput + '0') }} className="py-4 bg-gray-50 hover:bg-gray-100 rounded-xl text-xl font-black text-[#1F2937] transition-colors active:scale-95">
+                  <button disabled={pinLockSecondsLeft > 0} onClick={() => { if(pinInput.length < 4) setPinInput(pinInput + '0') }} className="py-4 bg-gray-50 hover:bg-gray-100 rounded-xl text-xl font-black text-[#1F2937] transition-colors active:scale-95 disabled:opacity-30">
                       0
                   </button>
-                  <button onClick={() => setPinInput(pinInput.slice(0, -1))} className="py-4 bg-gray-50 hover:bg-gray-100 rounded-xl text-[#6B7280] font-bold transition-colors flex items-center justify-center">
+                  <button disabled={pinLockSecondsLeft > 0} onClick={() => setPinInput(pinInput.slice(0, -1))} className="py-4 bg-gray-50 hover:bg-gray-100 rounded-xl text-[#6B7280] font-bold transition-colors flex items-center justify-center disabled:opacity-30">
                       <ArrowLeft size={24}/>
                   </button>
               </div>
 
-              <button 
-                  onClick={() => {
-                      if (pinInput === masterPin) {
+              <button
+                  onClick={async () => {
+                      if (pinLockSecondsLeft > 0) return;
+
+                      const handleSuccess = () => {
+                          pinAttemptsRef.current = 0;
                           if (pinModal.action === 'out') { setMovementType('out'); setAmount(''); }
                           if (pinModal.action === 'close') { setIsClosing(true); setAmount(''); }
                           if (pinModal.action === 'void_sale' && pinModal.data) { handleVoidSale(pinModal.data); }
-                          setPinModal({isOpen: false, action: null, data: null}); 
+                          setPinModal({isOpen: false, action: null, data: null});
                           setPinInput('');
+                      };
+
+                      const handleFailure = (msg?: string) => {
+                          pinAttemptsRef.current += 1;
+                          setPinInput('');
+                          if (pinAttemptsRef.current >= 3) {
+                              pinLockedUntilRef.current = Date.now() + 5 * 60 * 1000;
+                              setPinLockSecondsLeft(300);
+                              toast.error('PIN bloqueado 5 minutos por demasiados intentos fallidos');
+                          } else {
+                              toast.error(msg || `PIN incorrecto — ${3 - pinAttemptsRef.current} intento${3 - pinAttemptsRef.current !== 1 ? 's' : ''} restante${3 - pinAttemptsRef.current !== 1 ? 's' : ''}`);
+                          }
+                      };
+
+                      if (isOnline()) {
+                          // Verificación server-side: registra el intento y valida el PIN en Supabase
+                          const bId = localStorage.getItem('nexus_business_id');
+                          if (!bId) { handleFailure(); return; }
+                          const { data, error } = await supabase.rpc('verify_master_pin', {
+                              p_pin: pinInput,
+                              p_business_id: bId,
+                          });
+                          if (error) {
+                              // El servidor puede devolver error de bloqueo (rate limit)
+                              handleFailure(error.message?.includes('bloqueado') ? error.message : undefined);
+                          } else if (data === true) {
+                              handleSuccess();
+                          } else {
+                              handleFailure();
+                          }
                       } else {
-                          toast.error('PIN Incorrecto');
-                          setPinInput('');
+                          // Sin internet: verificación local con lockout cliente
+                          if (pinInput === masterPin) {
+                              handleSuccess();
+                          } else {
+                              handleFailure();
+                          }
                       }
                   }}
-                  disabled={pinInput.length < 4}
+                  disabled={pinInput.length < 4 || pinLockSecondsLeft > 0}
                   className="w-full py-4 bg-[#0B3B68] text-white font-bold rounded-xl shadow-lg transition-all active:scale-[0.98] disabled:opacity-50"
               >
-                  VERIFICAR
+                  {pinLockSecondsLeft > 0 ? `BLOQUEADO (${Math.floor(pinLockSecondsLeft/60)}:${String(pinLockSecondsLeft%60).padStart(2,'0')})` : 'VERIFICAR'}
               </button>
            </div>
         </div>
@@ -968,31 +1309,84 @@ export function FinancePage() {
       )}
 
       {/* MODAL CIERRE */}
-      {isClosing && shiftStats && (
+      {isClosing && shiftStats && (() => {
+        const cashDiffPreview = amount !== '' ? safeFloat(amount) - shiftStats.expectedCash : null;
+        const transferDiffPreview = transferCount !== '' ? safeFloat(transferCount) - shiftStats.transferSales : null;
+        return (
         <div className="fixed inset-0 bg-[#0B3B68]/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-            <div className="bg-white rounded-2xl p-0 max-w-md w-full shadow-2xl overflow-hidden">
-                <div className="bg-[#0B3B68] p-6 text-white flex justify-between items-center">
+            <div className="bg-white rounded-2xl p-0 max-w-md w-full shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
+                <div className="bg-[#0B3B68] p-6 text-white flex justify-between items-center sticky top-0 z-10">
                     <h2 className="text-xl font-black flex items-center gap-2"><Lock className="text-[#7AC142]"/> CORTE DE CAJA</h2>
-                    <button onClick={() => setIsClosing(false)}><X className="text-gray-400 hover:text-white"/></button>
+                    <button onClick={() => { setIsClosing(false); setAmount(''); setTransferCount(''); }}><X className="text-gray-400 hover:text-white"/></button>
                 </div>
-                <div className="p-6">
-                    <div className="bg-gray-50 p-4 rounded-xl mb-6 border">
-                        <div className="flex justify-between items-center mb-1">
-                            <span className="text-xs font-bold text-[#6B7280] uppercase">Efectivo Esperado</span>
-                            <span className="text-lg font-black text-[#1F2937]">{formatMoney(shiftStats.expectedCash)}</span>
+                <div className="p-6 space-y-5">
+                    {/* SECCIÓN EFECTIVO */}
+                    <div>
+                      <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mb-3">
+                          <div className="flex justify-between items-center">
+                              <span className="text-xs font-bold text-blue-600 uppercase flex items-center gap-1.5"><Wallet size={14}/> Efectivo Esperado</span>
+                              <span className="text-lg font-black text-[#0B3B68]">{formatMoney(shiftStats.expectedCash)}</span>
+                          </div>
+                          <p className="text-[10px] text-blue-400 mt-1">Apertura {formatMoney(shiftStats.startAmount)} + Ventas {formatMoney(shiftStats.cashSales)} + Ingresos {formatMoney(shiftStats.cashIn)} − Retiros {formatMoney(shiftStats.cashOut)}</p>
+                      </div>
+                      <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Conteo real de efectivo</label>
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6B7280] text-xl font-bold">$</span>
+                        <input type="number" step="0.01" autoFocus value={amount} onChange={e => setAmount(e.target.value)} className="w-full pl-10 pr-4 py-3.5 text-2xl font-black border-2 rounded-xl focus:border-[#0B3B68] outline-none transition-colors" placeholder="0.00" />
+                      </div>
+                      {cashDiffPreview !== null && (
+                        <div className={`mt-2 px-3 py-2 rounded-lg text-sm font-bold flex justify-between ${cashDiffPreview === 0 ? 'bg-green-50 text-green-700' : cashDiffPreview > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>
+                          <span>Diferencia</span>
+                          <span>{cashDiffPreview >= 0 ? '+' : ''}{formatMoney(cashDiffPreview)}</span>
                         </div>
+                      )}
                     </div>
-                    <div className="mb-6">
-                        <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Dinero en Caja (Conteo Real)</label>
-                        <input type="number" step="0.01" autoFocus value={amount} onChange={e => setAmount(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter') handleCloseShift(); }} className="w-full pl-12 pr-4 py-4 text-3xl font-black border-2 rounded-xl" />
+
+                    {/* SEPARADOR */}
+                    <div className="border-t border-dashed border-gray-200" />
+
+                    {/* SECCIÓN TRANSFERENCIAS */}
+                    <div>
+                      <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 mb-3">
+                          <div className="flex justify-between items-center">
+                              <span className="text-xs font-bold text-purple-600 uppercase flex items-center gap-1.5"><ArrowRightLeft size={14}/> Transferencias Esperadas</span>
+                              <span className="text-lg font-black text-purple-800">{formatMoney(shiftStats.transferSales)}</span>
+                          </div>
+                          <p className="text-[10px] text-purple-400 mt-1">{shiftData?.sales.filter(s => s.status !== 'voided' && ['transferencia','transfer'].includes(s.payment_method?.toLowerCase() || '')).length || 0} venta(s) por transferencia</p>
+                      </div>
+                      <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Monto verificado en transferencias</label>
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6B7280] text-xl font-bold">$</span>
+                        <input type="number" step="0.01" value={transferCount} onChange={e => setTransferCount(e.target.value)} className="w-full pl-10 pr-4 py-3.5 text-2xl font-black border-2 rounded-xl focus:border-purple-500 outline-none transition-colors" placeholder="0.00" />
+                      </div>
+                      {transferDiffPreview !== null && (
+                        <div className={`mt-2 px-3 py-2 rounded-lg text-sm font-bold flex justify-between ${transferDiffPreview === 0 ? 'bg-green-50 text-green-700' : transferDiffPreview > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>
+                          <span>Diferencia</span>
+                          <span>{transferDiffPreview >= 0 ? '+' : ''}{formatMoney(transferDiffPreview)}</span>
+                        </div>
+                      )}
                     </div>
-                    <button type="button" onClick={handleCloseShift} disabled={isLoading || amount === ''} className="w-full py-4 bg-[#0B3B68] text-white font-bold rounded-xl">
-                        FINALIZAR TURNO
+
+                    {/* RESUMEN TOTAL */}
+                    {amount !== '' && transferCount !== '' && (
+                      <div className={`p-4 rounded-xl border-2 ${(cashDiffPreview! + transferDiffPreview!) === 0 ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm font-black text-[#1F2937] uppercase">Diferencia Total</span>
+                          <span className={`text-xl font-black ${(cashDiffPreview! + transferDiffPreview!) === 0 ? 'text-green-700' : (cashDiffPreview! + transferDiffPreview!) > 0 ? 'text-amber-700' : 'text-red-600'}`}>
+                            {(cashDiffPreview! + transferDiffPreview!) >= 0 ? '+' : ''}{formatMoney(cashDiffPreview! + transferDiffPreview!)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    <button type="button" onClick={handleCloseShift} disabled={isLoading || amount === '' || transferCount === ''} className="w-full py-4 bg-[#0B3B68] text-white font-black rounded-xl text-lg hover:bg-[#092b4d] transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-[#0B3B68]/20">
+                        {isLoading ? <Loader2 className="animate-spin mx-auto" /> : 'FINALIZAR TURNO'}
                     </button>
                 </div>
             </div>
         </div>
-      )}
+        );
+      })()}
 
       {selectedTicket && <TicketModal sale={selectedTicket} onClose={() => setSelectedTicket(null)} />}
     </div>

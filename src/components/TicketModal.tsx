@@ -27,8 +27,11 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
   if (!doc) return null;
   const isPreBill = !!order;
 
-  // 2. Calcular Puntos Ganados (Solo si es venta final)
+  // 2. Calcular Puntos Ganados (Solo si es venta final, sobre el total final pagado)
   const pointsEarned = (!isPreBill && doc.customer_id) ? Math.floor(doc.total / 10) : 0;
+
+  // Subtotal antes de descuento (suma de ítems)
+  const itemsSubtotal = doc.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
   const handlePrint = () => {
     if (window.electronAPI) {
@@ -123,6 +126,9 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
                     <td className="py-2 align-top font-bold">{item.quantity}</td>
                     <td className="py-2 align-top pr-2">
                         <div className="uppercase">{item.name}</div>
+                        {item.note && (
+                            <div className="text-[10px] text-slate-600 italic mt-0.5">↳ {item.note}</div>
+                        )}
                         {item.quantity > 1 && (
                             <div className="text-[10px] text-slate-500">
                                 {item.quantity} x ${item.price.toFixed(2)}
@@ -139,29 +145,72 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
 
           {/* 4. TOTALES */}
           <div className="border-t-2 border-black pt-2 mb-4 space-y-1">
-            <div className="flex justify-between text-lg font-black">
+            {/* Subtotal si hay descuento o puntos */}
+            {!isPreBill && sale && (sale.discount_amount || sale.redeemed_points) ? (
+              <div className="flex justify-between text-xs">
+                <span>SUBTOTAL</span>
+                <span>${itemsSubtotal.toFixed(2)}</span>
+              </div>
+            ) : null}
+
+            {/* Descuento */}
+            {!isPreBill && sale?.discount_amount && sale.discount_amount > 0 && (
+              <div className="flex justify-between text-xs text-slate-600">
+                <span>DESCUENTO{sale.discount_type === 'percentage' && sale.discount_input ? ` (${sale.discount_input}%)` : ''}</span>
+                <span>-${sale.discount_amount.toFixed(2)}</span>
+              </div>
+            )}
+
+            {/* Puntos canjeados */}
+            {!isPreBill && sale?.redeemed_points && sale.redeemed_points > 0 && (
+              <div className="flex justify-between text-xs text-indigo-600 font-bold">
+                <span>PUNTOS CANJEADOS ({sale.redeemed_points} pts)</span>
+                <span>-${(sale.redeemed_points * 0.10).toFixed(2)}</span>
+              </div>
+            )}
+
+            <div className="flex justify-between text-lg font-black border-t border-dashed border-slate-300 pt-1 mt-1">
                 <span>TOTAL</span>
                 <span>${doc.total.toFixed(2)}</span>
             </div>
-            
+
             {/* Desglose de Pago (SOLO SI ES VENTA FINAL) */}
             {!isPreBill && sale && (
-                <div className="pt-2 mt-2 border-t border-dashed border-slate-300 text-xs">
-                    <div className="flex justify-between">
-                        <span>FORMA DE PAGO:</span>
-                        <span className="uppercase font-bold">{sale.payment_method}</span>
-                    </div>
-                    {sale.payment_method === 'efectivo' && (
-                        <>
-                            <div className="flex justify-between">
-                                <span>EFECTIVO:</span>
-                                <span>${sale.amount_tendered?.toFixed(2) || sale.total.toFixed(2)}</span>
-                            </div>
-                            <div className="flex justify-between font-bold">
-                                <span>CAMBIO:</span>
-                                <span>${sale.change?.toFixed(2) || '0.00'}</span>
-                            </div>
-                        </>
+                <div className="pt-2 mt-1 border-t border-dashed border-slate-300 text-xs">
+                    {sale.payment_method === 'mixto' ? (
+                      <>
+                        <div className="flex justify-between font-bold">
+                          <span>FORMA DE PAGO:</span>
+                          <span>MIXTO</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>EFECTIVO:</span>
+                          <span>${(sale.cash_amount || 0).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>TRANSFERENCIA:</span>
+                          <span>${(sale.transfer_amount || 0).toFixed(2)}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex justify-between">
+                            <span>FORMA DE PAGO:</span>
+                            <span className="uppercase font-bold">{sale.payment_method}</span>
+                        </div>
+                        {sale.payment_method === 'efectivo' && (
+                            <>
+                                <div className="flex justify-between">
+                                    <span>EFECTIVO:</span>
+                                    <span>${sale.amount_tendered?.toFixed(2) || sale.total.toFixed(2)}</span>
+                                </div>
+                                <div className="flex justify-between font-bold">
+                                    <span>CAMBIO:</span>
+                                    <span>${sale.change?.toFixed(2) || '0.00'}</span>
+                                </div>
+                            </>
+                        )}
+                      </>
                     )}
                 </div>
             )}

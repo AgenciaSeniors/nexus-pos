@@ -1,3 +1,9 @@
+# Variables de entorno — NUNCA subir al repositorio
+.env
+.env.local
+.env.*.local
+.env.production
+
 # Dependencias
 node_modules
 .pnp

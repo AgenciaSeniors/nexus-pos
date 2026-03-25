@@ -55,7 +55,7 @@ export function ParkedOrdersModal({ onRestore, onClose }: Props) {
                      Total: ${order.total.toFixed(2)}
                   </p>
                   <p className="text-xs text-slate-400 font-mono mt-1">
-                    {new Date(order.date).toLocaleTimeString()} • {order.items.length} productos
+                    {new Date(order.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} • {order.items.length} productos
                   </p>
                   <div className="text-xs text-slate-500 mt-2 line-clamp-1">
                     {order.items.map(i => i.name).join(', ')}

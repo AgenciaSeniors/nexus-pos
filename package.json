@@ -11,7 +11,9 @@
         "build": "tsc && vite build",
         "preview": "vite preview",
         "electron:dev": "concurrently \"vite\" \"wait-on tcp:5173 && electron .\"",
-        "electron:build": "vite build && electron-builder"
+        "electron:build": "vite build && electron-builder",
+        "version:patch": "node -e \"const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));const [ma,mi,pa]=p.version.split('.').map(Number);p.version=ma+'.'+(mi)+'.'+(pa+1);fs.writeFileSync('package.json',JSON.stringify(p,null,4));console.log('Version:',p.version)\"",
+        "version:minor": "node -e \"const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));const [ma,mi]=p.version.split('.').map(Number);p.version=ma+'.'+(mi+1)+'.0';fs.writeFileSync('package.json',JSON.stringify(p,null,4));console.log('Version:',p.version)\""
     },
     "build": {
         "appId": "com.bisne.contalla",
