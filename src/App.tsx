@@ -417,41 +417,17 @@ function BusinessApp() {
           business_id: data.business_id
         };
 
-        // Primer put: mostrar la UI lo antes posible
+        // Poner admin en DB local
         await db.staff.put(adminStaff);
 
         isStaffLoadedRef.current = true;
         if (!isBackgroundSync) setLoading(false);
 
-        // Sincronización: descarga staff, shifts, etc. desde la nube
-        // IMPORTANTE: syncCriticalData puede sobreescribir el registro del admin
-        // si la tabla staff en Supabase tiene un registro con el mismo UUID.
-        await syncCriticalData(data.business_id);
-
-        // Segundo put DESPUÉS del sync: garantiza que el admin siempre esté
-        // en la DB local con los datos correctos, independientemente de lo que
-        // haya bajado del servidor. El PIN se re-lee por si cambió localmente.
-        const adminAfterSync = await db.staff.get(data.id);
-        const adminStaffFinal: Staff = {
-          ...adminStaff,
-          pin: adminAfterSync?.pin || adminStaff.pin,
-          active: true,
-          role: 'admin',
-        };
-        await db.staff.put(adminStaffFinal);
-
-        // Deduplicar: eliminar cualquier otro registro admin con UUID distinto
-        const duplicateAdmins = await db.staff
-          .where('business_id').equals(data.business_id)
-          .filter(s => s.role === 'admin' && s.id !== data.id)
-          .toArray();
-        if (duplicateAdmins.length > 0) {
-          await db.staff.bulkDelete(duplicateAdmins.map(s => s.id));
-        }
-
         if (!isBackgroundSync) {
-          // Determinar qué vendedor mostrar en este dispositivo
-          // Se evalúa DESPUÉS del sync para tener la lista de vendedores actualizada
+          // Decidir qué mostrar ANTES del sync para respuesta inmediata de la UI.
+          // syncCriticalData ya no sobreescribe el registro del admin (ver sync.ts),
+          // y los vendedores que llegan del sync aparecen reactivamente en el selector
+          // gracias a useLiveQuery.
           const savedStaffId = localStorage.getItem('nexus_staff_id');
           const allActive = await db.staff
             .where('business_id').equals(data.business_id)
@@ -464,10 +440,21 @@ function BusinessApp() {
           } else if (allActive.length > 1) {
             setShowStaffSelector(true); // Admin + vendedores → seleccionar
           } else {
-            setCurrentStaff(adminStaffFinal); // Solo admin → entrar directo
+            setCurrentStaff(adminStaff); // Solo admin → entrar directo
           }
         }
-        // En background: no tocamos currentStaff para no interrumpir al vendedor activo
+
+        // Sync en segundo plano — no afecta al registro del admin (filtrado en sync.ts)
+        await syncCriticalData(data.business_id);
+
+        // Deduplicar: eliminar cualquier otro registro admin con UUID distinto
+        const duplicateAdmins = await db.staff
+          .where('business_id').equals(data.business_id)
+          .filter(s => s.role === 'admin' && s.id !== data.id)
+          .toArray();
+        if (duplicateAdmins.length > 0) {
+          await db.staff.bulkDelete(duplicateAdmins.map(s => s.id));
+        }
 
         syncHeavyData(data.business_id).catch(() => {});
       }

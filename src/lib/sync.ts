@@ -257,8 +257,15 @@ export async function syncCriticalData(businessId: string) {
     }
 
     if (staffResult.data) {
+      // Excluir el registro del usuario autenticado: su staff record se gestiona
+      // desde fetchProfileAndSync (basado en profiles), no desde la tabla staff.
+      // Si se permite sobreescribir, el admin puede desaparecer del selector.
+      const { data: { user } } = await supabase.auth.getUser();
+      const adminId = user?.id;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cleanStaff = staffResult.data.map((s: any) => ({ ...s, sync_status: 'synced' }));
+      const cleanStaff = staffResult.data
+        .filter((s: any) => !adminId || s.id !== adminId)
+        .map((s: any) => ({ ...s, sync_status: 'synced' }));
       await safeBulkPut(db.staff as never, cleanStaff);
     }
 
