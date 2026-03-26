@@ -506,7 +506,7 @@ export function PosPage() {
                                     <span className="text-[10px] font-bold uppercase text-text-secondary bg-gray-100 px-2 py-0.5 rounded-md truncate max-w-[70%] font-heading">
                                         {product.category || 'General'}
                                     </span>
-                                    {product.stock <= 5 && (
+                                    {product.stock <= (product.low_stock_threshold ?? 5) && (
                                         <div className="text-state-warning flex items-center gap-1 bg-state-warning/10 px-1.5 py-0.5 rounded text-[10px] font-bold">
                                             <AlertTriangle size={10} /> Bajo
                                         </div>
