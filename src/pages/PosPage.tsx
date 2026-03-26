@@ -22,6 +22,14 @@ interface CartItem extends Product {
   custom_price?: number;
 }
 
+// Unidades que permiten cantidades decimales (peso, volumen, longitud)
+const DECIMAL_UNITS = ['kg', 'lb', 'g', 'gr', 'lt', 'l', 'ml', 'oz', 'm', 'cm', 'kilo', 'litro'];
+const isDecimalUnit = (unit?: string) =>
+  !!unit && DECIMAL_UNITS.some(u => unit.toLowerCase().startsWith(u));
+
+const fmtQty = (qty: number) =>
+  qty % 1 === 0 ? qty.toString() : qty.toFixed(2).replace(/\.?0+$/, '');
+
 export function PosPage() {
   const { currentStaff, onChangeStaff } = useOutletContext<{ currentStaff: Staff; onChangeStaff?: () => void }>();
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -49,6 +57,10 @@ export function PosPage() {
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editNote, setEditNote] = useState('');
   const [editPrice, setEditPrice] = useState('');
+
+  // --- EDITOR INLINE DE CANTIDAD ---
+  const [editingQtyId, setEditingQtyId] = useState<string | null>(null);
+  const [editQtyValue, setEditQtyValue] = useState('');
 
   // --- ESTADO VISUAL MÓVIL ---
   const [mobileView, setMobileView] = useState<'catalog' | 'cart'>('catalog');
@@ -129,15 +141,30 @@ export function PosPage() {
   const updateQuantity = (id: string, delta: number) => {
     setCart(prev => prev.map(item => {
       if (item.id === id) {
-        const newQty = Math.max(1, item.quantity + delta);
+        const step = isDecimalUnit(item.unit) ? 0.1 : 1;
+        const newQty = Math.max(step, parseFloat((item.quantity + delta * step).toFixed(3)));
         if (delta > 0 && newQty > item.stock) {
-            toast.warning(`Solo hay ${item.stock} en stock`);
-            return item;
+          toast.warning(`Solo hay ${item.stock} en stock`);
+          return item;
         }
         return { ...item, quantity: newQty };
       }
       return item;
     }));
+  };
+
+  const setDirectQuantity = (id: string, raw: string) => {
+    const val = parseFloat(raw);
+    if (isNaN(val) || val <= 0) return;
+    setCart(prev => prev.map(item => {
+      if (item.id === id) {
+        const capped = Math.min(val, item.stock);
+        if (val > item.stock) toast.warning(`Solo hay ${item.stock} en stock`);
+        return { ...item, quantity: parseFloat(capped.toFixed(3)) };
+      }
+      return item;
+    }));
+    setEditingQtyId(null);
   };
 
   const removeFromCart = (id: string) => {
@@ -306,7 +333,7 @@ export function PosPage() {
             if (selectedCustomer?.id) {
                 const pointsEarned = Math.floor(saleTotal / 10);
                 const freshCustomer = await db.customers.get(selectedCustomer.id);
-                if (freshCustomer) {
+                if (freshCustomer && !freshCustomer.deleted_at) {
                     const currentPoints = freshCustomer.loyalty_points || 0;
                     const newPoints = Math.max(0, currentPoints - (redeemedPoints || 0) + pointsEarned);
                     await db.customers.update(selectedCustomer.id, {
@@ -361,7 +388,7 @@ export function PosPage() {
         : Math.min(discount.value, subtotal))
     : 0;
   const finalTotal = Math.max(0, Math.round((subtotal - discountAmount) * 100) / 100);
-  const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const cartCount = parseFloat(cart.reduce((sum, item) => sum + item.quantity, 0).toFixed(3));
 
   // --- EDITOR INLINE: abrir/guardar/cancelar ---
   const openItemEditor = (item: CartItem) => {
@@ -666,11 +693,35 @@ export function PosPage() {
                                 <button onClick={() => updateQuantity(item.id, -1)} className="w-9 h-9 flex items-center justify-center bg-surface rounded-md text-text-main shadow-sm hover:bg-gray-100 border border-gray-200 active:scale-95 transition-all">
                                     <Minus size={16}/>
                                 </button>
-                                <span className="font-bold text-lg text-bisne-navy w-10 text-center tabular-nums font-body">{item.quantity}</span>
+                                {editingQtyId === item.id ? (
+                                    <input
+                                        autoFocus
+                                        type="number"
+                                        min="0.001"
+                                        step={isDecimalUnit(item.unit) ? '0.1' : '1'}
+                                        value={editQtyValue}
+                                        onChange={e => setEditQtyValue(e.target.value)}
+                                        onBlur={() => { setDirectQuantity(item.id, editQtyValue); }}
+                                        onKeyDown={e => {
+                                            if (e.key === 'Enter') setDirectQuantity(item.id, editQtyValue);
+                                            if (e.key === 'Escape') setEditingQtyId(null);
+                                        }}
+                                        className="w-14 text-center font-bold text-base text-bisne-navy border-b-2 border-bisne-navy outline-none bg-transparent tabular-nums"
+                                    />
+                                ) : (
+                                    <button
+                                        onClick={() => { setEditingQtyId(item.id); setEditQtyValue(fmtQty(item.quantity)); }}
+                                        className="font-bold text-lg text-bisne-navy w-10 text-center tabular-nums font-body hover:text-talla-growth transition-colors"
+                                        title="Toca para editar cantidad"
+                                    >
+                                        {fmtQty(item.quantity)}
+                                    </button>
+                                )}
                                 <button onClick={() => updateQuantity(item.id, 1)} className="w-9 h-9 flex items-center justify-center bg-bisne-navy text-white rounded-md shadow-sm hover:bg-bisne-navy/90 active:scale-95 transition-all">
                                     <Plus size={16}/>
                                 </button>
                             </div>
+                            {item.unit && <span className="text-[10px] text-gray-400 font-medium">{item.unit}</span>}
                             <button onClick={() => removeFromCart(item.id)} className="p-2 text-gray-400 hover:text-state-error hover:bg-red-50 rounded-lg transition-colors">
                                 <X size={18} />
                             </button>

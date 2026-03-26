@@ -43,7 +43,10 @@ export function StaffSelectorModal({ businessId, onSelect, onClose }: Props) {
 
   const validatePin = (enteredPin: string) => {
     if (!selected) return;
-    if (enteredPin === selected.pin) {
+    // Asegurar que el PIN almacenado sea numérico antes de comparar
+    const storedPin = selected.pin?.replace(/\D/g, '') || '';
+    const cleanEntered = enteredPin.replace(/\D/g, '');
+    if (storedPin && cleanEntered === storedPin) {
       localStorage.setItem('nexus_staff_id', selected.id);
       onSelect(selected);
     } else {

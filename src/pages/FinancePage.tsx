@@ -81,7 +81,9 @@ export function FinancePage() {
   const [trendFilter, setTrendFilter] = useState<'week' | 'month'>('week');
 
   const businessSettings = useLiveQuery(() => db.settings.toArray());
-  const masterPin = businessSettings && businessSettings.length > 0 ? (businessSettings[0].master_pin || '1234') : '1234';
+  // null si no está configurado → nunca coincide con entrada del usuario
+  // (evita que todos los negocios sin PIN usen el mismo '1234' por defecto)
+  const masterPin = businessSettings?.[0]?.master_pin || null;
 
   const activeShift = useLiveQuery(async () => {
     let bId = localStorage.getItem('nexus_business_id');
@@ -1265,7 +1267,9 @@ export function FinancePage() {
                           }
                       } else {
                           // Sin internet: verificación local con lockout cliente
-                          if (pinInput === masterPin) {
+                          if (!masterPin) {
+                              handleFailure('PIN maestro no configurado. Ve a Ajustes para establecerlo.');
+                          } else if (pinInput === masterPin) {
                               handleSuccess();
                           } else {
                               handleFailure();
