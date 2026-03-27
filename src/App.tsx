@@ -147,13 +147,15 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
       trialEnd.setDate(trialEnd.getDate() + 7);
       const trialEndISO = trialEnd.toISOString();
 
-      await supabase.from('businesses').update({
+      const { error: trialError } = await supabase.from('businesses').update({
         status: 'trial',
         subscription_expires_at: trialEndISO,
       }).eq('id', profile.business_id);
+      if (trialError) throw new Error(`No se pudo activar el período de prueba: ${trialError.message}`);
 
       // Activar el perfil para que pueda entrar
-      await supabase.from('profiles').update({ status: 'active' }).eq('id', authData.user.id);
+      const { error: profileActivateError } = await supabase.from('profiles').update({ status: 'active' }).eq('id', authData.user.id);
+      if (profileActivateError) console.warn('profiles.status update:', profileActivateError.message);
 
       toast.success('¡Bienvenido a Bisne con Talla! Tienes 7 días de prueba gratuita.', { duration: 6000 });
 

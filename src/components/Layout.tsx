@@ -437,7 +437,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
                 onClick={() => {
                   localStorage.setItem('nexus_guide_seen', '1');
                   setShowGuidePrompt(false);
-                  navigate('/settings?tab=help');
+                  navigate('/configuracion?tab=help');
                 }}
                 className="bg-[#7AC142] text-[#0B3B68] text-xs font-black px-3 py-2 rounded-xl hover:bg-[#7AC142]/90 transition-colors whitespace-nowrap"
               >
