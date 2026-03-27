@@ -43,7 +43,7 @@ export interface Sale {
   payment_method: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto';
   amount_tendered?: number;
   change?: number;
-  status?: 'completed' | 'voided';
+  status?: 'completed' | 'voided' | 'stock_conflict';
   // Descuento
   discount_amount?: number;
   discount_type?: 'percentage' | 'fixed';

@@ -862,14 +862,16 @@ export function FinancePage() {
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                           {allSales.map(sale => (
-                              <tr key={sale.id} className={`transition-colors ${sale.status === 'voided' ? 'bg-red-50/50 opacity-60' : 'hover:bg-gray-50'}`}>
+                              <tr key={sale.id} className={`transition-colors ${sale.status === 'voided' ? 'bg-red-50/50 opacity-60' : sale.status === 'stock_conflict' ? 'bg-orange-50/60' : 'hover:bg-gray-50'}`}>
                                   <td className="p-4 font-mono text-[#6B7280]">
                                       {new Date(sale.date).toLocaleDateString()} <span className="ml-2">{new Date(sale.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
                                   </td>
                                   <td className="p-4 uppercase text-xs font-bold text-[#1F2937]">{sale.payment_method}</td>
                                   <td className="p-4 text-center">
-                                      {sale.status === 'voided' 
+                                      {sale.status === 'voided'
                                           ? <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full text-[10px] font-black uppercase">Anulada</span>
+                                          : sale.status === 'stock_conflict'
+                                          ? <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-[10px] font-black uppercase">⚠ Stock Insuficiente</span>
                                           : <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-[10px] font-black uppercase">Completada</span>
                                       }
                                   </td>
@@ -877,7 +879,19 @@ export function FinancePage() {
                                   <td className="p-4">
                                       <div className="flex justify-center gap-2">
                                           <button onClick={() => setSelectedTicket(sale)} className="px-3 py-1.5 bg-gray-100 text-[#1F2937] rounded-lg font-bold text-xs hover:bg-gray-200 transition-colors">Ver</button>
-                                          {sale.status !== 'voided' && (
+                                          {sale.status === 'stock_conflict' && (
+                                              <button
+                                                onClick={async () => {
+                                                  await db.sales.update(sale.id, { status: 'completed', sync_status: 'pending_update' });
+                                                  toast.success('Venta marcada como completada. Revisa el inventario manualmente.');
+                                                }}
+                                                className="px-3 py-1.5 bg-orange-50 text-orange-700 rounded-lg font-bold text-xs hover:bg-orange-100 transition-colors flex items-center gap-1"
+                                                title="Marcar como completada (el stock NO fue descontado automáticamente — ajústalo manualmente)"
+                                              >
+                                                ✓ Resolver
+                                              </button>
+                                          )}
+                                          {sale.status !== 'voided' && sale.status !== 'stock_conflict' && (
                                               <button onClick={() => setPinModal({isOpen: true, action: 'void_sale', data: sale})} className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg font-bold text-xs hover:bg-red-100 transition-colors flex items-center gap-1">
                                                   <Ban size={12}/> Anular
                                               </button>

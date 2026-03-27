@@ -59,12 +59,22 @@ async function processItem(item: QueueItem) {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...saleClean } = sale;
 
-      const { error } = await supabase.rpc('process_sale_transaction', {
+      const { data: rpcData, error } = await supabase.rpc('process_sale_transaction', {
         p_sale: saleClean, p_items: items || []
       });
 
       if (error && error.code !== '23505') throw new Error(`Fallo venta: ${error.message}`);
-      await db.sales.update(sale.id, { sync_status: 'synced' });
+
+      if (rpcData?.conflict) {
+        await db.sales.update(sale.id, { status: 'stock_conflict', sync_status: 'synced' });
+        const names = (rpcData.conflict_items as string[] || []).join(', ');
+        // Dispatch event for Layout to show toast
+        window.dispatchEvent(new CustomEvent('nexus-stock-conflict', {
+          detail: { saleId: sale.id, items: names }
+        }));
+      } else {
+        await db.sales.update(sale.id, { sync_status: 'synced' });
+      }
       break;
     }
     case 'MOVEMENT': {

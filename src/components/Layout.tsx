@@ -40,8 +40,21 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
       const names = products.map((p: any) => p.name).join(', ');
       toast.error(`Stock negativo detectado: ${names}. Revisa el inventario.`, { duration: 8000 });
     };
+    const handleStockConflict = (e: Event) => {
+      const { items } = (e as CustomEvent).detail;
+      toast.warning(
+        items
+          ? `Conflicto de stock al sincronizar: ${items}. La venta quedó marcada para revisión.`
+          : 'Conflicto de stock al sincronizar. Revisa Finanzas > Historial.',
+        { duration: 10000 }
+      );
+    };
     window.addEventListener('nexus-stock-alert', handleStockAlert);
-    return () => window.removeEventListener('nexus-stock-alert', handleStockAlert);
+    window.addEventListener('nexus-stock-conflict', handleStockConflict);
+    return () => {
+      window.removeEventListener('nexus-stock-alert', handleStockAlert);
+      window.removeEventListener('nexus-stock-conflict', handleStockConflict);
+    };
   }, []);
 
   useEffect(() => {
@@ -105,6 +118,15 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
       }
     }
     return count;
+  }, []) || 0;
+
+  const conflictCount = useLiveQuery(async () => {
+    const bId = localStorage.getItem('nexus_business_id');
+    if (!bId) return 0;
+    return await db.sales
+      .where('business_id').equals(bId)
+      .filter(s => s.status === 'stock_conflict')
+      .count();
   }, []) || 0;
 
   const pendingCount = useLiveQuery(async () => {
@@ -217,6 +239,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
           {menuItems.filter(i => i.show).map((item) => {
             const isActive = location.pathname === item.path;
             const showInventoryBadge = item.path === '/inventario' && inventoryAlertCount > 0;
+            const showConflictBadge = item.path === '/finanzas' && conflictCount > 0;
             return (
               <Link key={item.path} to={item.path} className={`flex flex-col items-center justify-center p-3 rounded-xl transition-all duration-200 group relative ${isActive ? 'bg-[#7AC142] text-[#0B3B68] shadow-lg shadow-[#7AC142]/20 font-bold translate-x-1' : 'text-gray-300 hover:text-white hover:bg-white/10'}`}>
                 {item.icon}
@@ -226,8 +249,14 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
                     <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500 border border-white/50"></span>
                   </span>
                 )}
+                {showConflictBadge && (
+                  <span className="absolute top-1.5 right-1.5 flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-orange-500 border border-white/50"></span>
+                  </span>
+                )}
                 <span className="absolute left-full ml-4 px-3 py-2 bg-[#1F2937] text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 shadow-xl font-bold uppercase tracking-wide border border-gray-700">
-                  {item.label}{showInventoryBadge ? ` (${inventoryAlertCount})` : ''}
+                  {item.label}{showInventoryBadge ? ` (${inventoryAlertCount})` : ''}{showConflictBadge ? ` — ${conflictCount} conflicto(s)` : ''}
                 </span>
               </Link>
             );
