@@ -142,20 +142,8 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
         .single();
       if (profileErr || !profile?.business_id) throw new Error("No se pudo obtener el negocio creado.");
 
-      // Activar trial de 7 días
-      const trialEnd = new Date();
-      trialEnd.setDate(trialEnd.getDate() + 7);
-      const trialEndISO = trialEnd.toISOString();
-
-      const { error: trialError } = await supabase.from('businesses').update({
-        status: 'trial',
-        subscription_expires_at: trialEndISO,
-      }).eq('id', profile.business_id);
-      if (trialError) throw new Error(`No se pudo activar el período de prueba: ${trialError.message}`);
-
-      // Activar el perfil para que pueda entrar
-      const { error: profileActivateError } = await supabase.from('profiles').update({ status: 'active' }).eq('id', authData.user.id);
-      if (profileActivateError) console.warn('profiles.status update:', profileActivateError.message);
+      // La RPC ya crea el negocio con status='trial' y el perfil como 'active'.
+      // No es necesario actualizar nada más desde el cliente.
 
       toast.success('¡Bienvenido a Bisne con Talla! Tienes 7 días de prueba gratuita.', { duration: 6000 });
 
