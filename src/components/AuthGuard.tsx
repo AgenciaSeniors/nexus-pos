@@ -5,8 +5,7 @@ import { db } from '../lib/db';
 import { syncCriticalData, syncHeavyData, isOnline } from '../lib/sync';
 import { Loader2, AlertTriangle, RefreshCw, LogOut, Clock, MessageCircle } from 'lucide-react';
 import { toast } from 'sonner';
-
-const ADMIN_PHONE = "5359887863";
+import { ADMIN_WHATSAPP_PHONE } from '../lib/config';
 
 function TrialExpiredScreen({ onSignOut }: { onSignOut: () => void }) {
   const waMsg = encodeURIComponent("Hola, mi período de prueba de Bisne con Talla ha vencido y deseo activar mi cuenta.");
@@ -25,7 +24,7 @@ function TrialExpiredScreen({ onSignOut }: { onSignOut: () => void }) {
         </p>
         <div className="space-y-3">
           <a
-            href={`https://wa.me/${ADMIN_PHONE}?text=${waMsg}`}
+            href={`https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=${waMsg}`}
             target="_blank" rel="noopener noreferrer"
             className="flex items-center justify-center gap-2 w-full py-3.5 bg-[#25D366] text-white rounded-xl font-bold hover:bg-[#1fba59] transition-all shadow-lg active:scale-95"
           >

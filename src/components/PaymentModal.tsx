@@ -62,6 +62,8 @@ export function PaymentModal({ total, customer, onConfirm, onCancel }: PaymentMo
 
   const handleConfirm = useCallback(() => {
     if (!isValid) return;
+    // Quitar foco del input activo en móvil (cierra el teclado virtual)
+    (document.activeElement as HTMLElement)?.blur();
     if (method === 'efectivo') {
       onConfirm('efectivo', tenderedValue, Math.max(0, change), undefined, undefined, redeemedPoints || undefined);
     } else if (method === 'transferencia') {

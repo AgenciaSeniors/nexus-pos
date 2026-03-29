@@ -354,6 +354,19 @@ export async function syncPull() {
     }
 }
 
+// Reintentar solo los ítems fallidos (sin hacer pull completo)
+// Útil para el botón "Reintentar fallidos" en Ajustes → Datos
+export async function retryFailedItems() {
+    if (!isOnline()) throw new Error("Sin conexión a internet");
+    if (!db.isOpen()) return;
+    const count = await db.action_queue.where('status').equals('failed').count();
+    if (count === 0) throw new Error("No hay elementos fallidos que reintentar");
+    await db.action_queue
+        .where('status').equals('failed')
+        .modify({ status: 'pending', retries: 0, error: undefined });
+    await processQueue();
+}
+
 export async function syncManualFull() {
     if (!isOnline()) throw new Error("Sin conexión a internet");
     // Reintentar ítems que fallaron previamente (en sync automático solo se reintenta hasta 5 veces)
@@ -471,9 +484,17 @@ if (typeof window !== 'undefined') {
     setInterval(() => {
         if (document.hidden) return; // app en background → no consumir batería/datos
         if (isOnline() && db.isOpen()) {
-            processQueue().catch(err => {
-                if (err?.name !== 'DatabaseClosedError') console.error("Error en sync push periódico:", err);
-            });
+            // Push inteligente: solo ejecutar si hay elementos pendientes
+            db.action_queue.where('status').anyOf('pending', 'processing').count()
+                .then(count => {
+                    if (count > 0) {
+                        processQueue().catch(err => {
+                            if (err?.name !== 'DatabaseClosedError') console.error("Error en sync push periódico:", err);
+                        });
+                    }
+                })
+                .catch(() => {});
+            // Pull siempre: el stock o turno puede haber cambiado desde otro dispositivo
             syncLiveData().catch(err => {
                 if (err?.name !== 'DatabaseClosedError') console.error("Error en sync pull periódico:", err);
             });

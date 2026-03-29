@@ -133,7 +133,7 @@ export function CustomerSelect({ onSelect, selectedCustomer }: Props) {
 
       {/* 3. DROPDOWN DE RESULTADOS */}
       {isOpen && search.length > 1 && !selectedCustomer && (
-        <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-xl border border-slate-100 z-50 overflow-hidden">
+        <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-xl border border-slate-100 z-50 overflow-hidden max-h-64 overflow-y-auto">
           {customers && customers.length > 0 ? (
             <ul className="divide-y divide-slate-50">
               {customers.map((c) => (

@@ -6,6 +6,7 @@ import { type Session } from '@supabase/supabase-js';
 import { Toaster, toast } from 'sonner';
 import { syncCriticalData, syncHeavyData } from './lib/sync';
 
+import { ADMIN_WHATSAPP_PHONE } from './lib/config';
 import { Layout } from './components/Layout';
 import { PosPage } from './pages/PosPage';
 import { InventoryPage } from './pages/InventoryPage';
@@ -84,9 +85,6 @@ interface LoginScreenProps {
 function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: LoginScreenProps) {
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const navigate = useNavigate();
-
-  // ✅ NÚMERO DE WHATSAPP OFICIAL GUARDADO
-  const ADMIN_PHONE = "5359887863"; 
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -167,14 +165,14 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
       e.preventDefault();
       if (!email) return toast.error("Por favor, ingresa tu correo electrónico");
       const msg = `Hola, olvidé mi contraseña de Bisne con Talla.\nMi correo es: ${email}\nNecesito que me la restablezcan. Gracias.`;
-      window.open(`https://wa.me/${ADMIN_PHONE}?text=${encodeURIComponent(msg)}`, '_blank');
+      window.open(`https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
   // ✅ MENSAJE DINÁMICO DE WHATSAPP
   const defaultWhatsAppMessage = mode === 'register' 
         ? "Hola administrador, acabo de registrar mi negocio en Bisne con Talla y necesito que aprueben mi cuenta."
         : "Hola soporte de Bisne con Talla, necesito ayuda para acceder a mi cuenta.";
-  const whatsappUrl = `https://wa.me/${ADMIN_PHONE}?text=${encodeURIComponent(defaultWhatsAppMessage)}`;
+  const whatsappUrl = `https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=${encodeURIComponent(defaultWhatsAppMessage)}`;
 
   return (
     <div className="min-h-screen bg-[#F3F4F6] flex items-center justify-center p-4">

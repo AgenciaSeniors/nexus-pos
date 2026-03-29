@@ -46,6 +46,12 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
     }
   }, [currentStaff]);
 
+  // Atajos de teclado F1/F2/F4/F5 desde Electron (main process → preload → renderer)
+  useEffect(() => {
+    if (!window.electronAPI?.onNavigate) return;
+    window.electronAPI.onNavigate((path: string) => navigate(path));
+  }, [navigate]);
+
   // Escuchar alertas de stock negativo (conflicto multi-dispositivo offline)
   useEffect(() => {
     const handleStockAlert = (e: Event) => {

@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff, type BusinessConfig } from '../lib/db';
-import { syncManualFull, syncPush, isOnline, addToQueue } from '../lib/sync';
+import { syncManualFull, syncPush, isOnline, addToQueue, retryFailedItems } from '../lib/sync';
+import { ADMIN_WHATSAPP_PHONE } from '../lib/config';
 import { logAuditAction } from '../lib/audit';
 import { toast } from 'sonner';
 import {
@@ -26,7 +27,13 @@ export function SettingsPage() {
   );
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
   const onlineStatus = isOnline();
+
+  const failedCount = useLiveQuery(
+    () => db.action_queue.where('status').equals('failed').count(),
+    []
+  ) || 0;
 
   // ✅ REF PARA EL SELECTOR DE ARCHIVOS DE RESPALDO
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -184,6 +191,19 @@ export function SettingsPage() {
           toast.error(isTimeout ? 'La sincronización tardó demasiado. Reintenta más tarde.' : 'Error de sincronización');
       } finally {
           setIsSyncing(false);
+      }
+  };
+
+  const handleRetryFailed = async () => {
+      if (!onlineStatus) { toast.error('Sin conexión a internet'); return; }
+      setIsRetrying(true);
+      try {
+          await retryFailedItems();
+          toast.success('Elementos fallidos reenviados al servidor');
+      } catch (error: any) {
+          toast.error(error.message || 'Error al reintentar');
+      } finally {
+          setIsRetrying(false);
       }
   };
 
@@ -617,6 +637,16 @@ export function SettingsPage() {
                             </span>
                             <span className="text-xs font-bold bg-[#0B3B68] text-white px-3 py-1 rounded-full group-hover:shadow-md transition-all">Sincronizar</span>
                         </button>
+                        {failedCount > 0 && (
+                            <button onClick={handleRetryFailed} disabled={!onlineStatus || isRetrying}
+                                className="w-full p-4 flex items-center justify-between bg-orange-50 border border-orange-200 rounded-xl hover:bg-orange-100 transition-colors group">
+                                <span className="flex items-center gap-3 font-bold text-orange-700">
+                                    <Repeat className={`text-orange-500 ${isRetrying ? 'animate-spin' : ''}`}/> Reintentar Fallidos
+                                    <span className="bg-orange-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">{failedCount}</span>
+                                </span>
+                                <span className="text-xs font-bold bg-orange-500 text-white px-3 py-1 rounded-full group-hover:shadow-md transition-all">Reintentar</span>
+                            </button>
+                        )}
 
                         {/* ✅ NUEVA ZONA DE COPIAS DE SEGURIDAD LOCALES */}
                         <div className="border-t border-gray-100 my-6 pt-6">
@@ -865,7 +895,7 @@ export function SettingsPage() {
               <div className="flex items-center gap-2 text-white/80"><MapPin size={14}/> <span>Sancti Spíritus, Cuba</span></div>
             </div>
             <a
-              href="https://wa.me/5359887863?text=Hola%2C%20tengo%20una%20consulta%20sobre%20los%20T%C3%A9rminos%20de%20Bisne%20con%20Talla"
+              href={`https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=Hola%2C%20tengo%20una%20consulta%20sobre%20los%20T%C3%A9rminos%20de%20Bisne%20con%20Talla`}
               target="_blank" rel="noopener noreferrer"
               className="mt-4 inline-flex items-center gap-2 bg-[#7AC142] text-[#0B3B68] font-black text-xs px-4 py-2 rounded-xl hover:bg-[#7AC142]/90 transition-colors"
             >
@@ -1007,7 +1037,7 @@ export function SettingsPage() {
               <p className="text-xs text-[#6B7280]">Contáctanos por WhatsApp y te asistimos en minutos</p>
             </div>
             <a
-              href="https://wa.me/5359887863?text=Hola,%20necesito%20ayuda%20con%20Bisne%20con%20Talla"
+              href={`https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=Hola,%20necesito%20ayuda%20con%20Bisne%20con%20Talla`}
               target="_blank"
               rel="noopener noreferrer"
               className="ml-auto flex-shrink-0 bg-[#25D366] text-white text-xs font-bold px-3 py-2 rounded-xl hover:bg-[#25D366]/90 transition-colors"

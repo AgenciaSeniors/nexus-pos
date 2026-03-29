@@ -12,11 +12,11 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, LineChart, Line, Area, AreaChart
 } from 'recharts';
-import { 
+import {
   Calendar, TrendingUp, ArrowLeft, ArrowRight, RefreshCw,
   BarChart3, DollarSign, Wallet, PieChart as PieChartIcon, ClipboardCheck,
   Printer, Trophy, Lock, Unlock, PlusCircle, MinusCircle, ShoppingBag, Loader2, X,
-  ArrowRightLeft, History, Ban, TrendingDown, Users, Hash
+  ArrowRightLeft, History, Ban, TrendingDown, Users, Hash, Download
 } from 'lucide-react';
 
 const EMPTY_ARRAY: never[] = [];
@@ -58,6 +58,9 @@ export function FinancePage() {
   const [transferCount, setTransferCount] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
+
+  // Confirmación antes de abrir el PIN para anular ventas
+  const [voidConfirmSale, setVoidConfirmSale] = useState<Sale | null>(null);
 
   // ESTADOS DEL PIN PAD (Incluye 'void_sale' para anular ventas)
   const [pinModal, setPinModal] = useState<{isOpen: boolean, action: 'out' | 'close' | 'void_sale' | null, data?: any}>({isOpen: false, action: null});
@@ -600,6 +603,33 @@ export function FinancePage() {
     if (newStr <= today) setSelectedDate(newStr);
   };
   
+  const handleExportCSV = () => {
+    if (!allSales.length) { toast.error('No hay ventas para exportar'); return; }
+    const header = ['ID', 'Fecha', 'Hora', 'Método', 'Estado', 'Vendedor', 'Cliente', 'Items', 'Total'];
+    const rows = allSales.map(s => [
+      s.id.slice(0, 8).toUpperCase(),
+      new Date(s.date).toLocaleDateString(),
+      new Date(s.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      s.payment_method,
+      s.status || 'completed',
+      s.staff_name || '',
+      s.customer_name || '',
+      (s.items || []).map(i => `${i.quantity}x ${i.name}`).join(' | '),
+      safeFloat(s.total).toFixed(2)
+    ]);
+    const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Ventas_${localDateStr()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success('Reporte CSV descargado');
+  };
+
   // En Electron usar el IPC nativo (evita el "no admite vista previa" de Chromium)
   const handlePrint = () => {
     if (window.electronAPI) {
@@ -874,6 +904,13 @@ export function FinancePage() {
                   <h2 className="text-lg font-bold text-[#1F2937] flex items-center gap-2">
                       <History className="text-[#0B3B68]"/> Historial (Últimos 30 días)
                   </h2>
+                  <button
+                    onClick={handleExportCSV}
+                    className="flex items-center gap-2 px-3 py-2 bg-[#7AC142]/10 text-[#7AC142] border border-[#7AC142]/20 rounded-xl text-xs font-bold hover:bg-[#7AC142]/20 transition-colors"
+                    title="Exportar a CSV"
+                  >
+                    <Download size={14}/> CSV
+                  </button>
               </div>
               <div className="overflow-x-auto">
                   <table className="w-full text-sm text-left">
@@ -925,7 +962,7 @@ export function FinancePage() {
                                               </button>
                                           )}
                                           {sale.status !== 'voided' && sale.status !== 'stock_conflict' && (
-                                              <button onClick={() => setPinModal({isOpen: true, action: 'void_sale', data: sale})} className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg font-bold text-xs hover:bg-red-100 transition-colors flex items-center gap-1">
+                                              <button onClick={() => setVoidConfirmSale(sale)} className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg font-bold text-xs hover:bg-red-100 transition-colors flex items-center gap-1">
                                                   <Ban size={12}/> Anular
                                               </button>
                                           )}
@@ -1349,6 +1386,50 @@ export function FinancePage() {
                   {pinLockSecondsLeft > 0 ? `BLOQUEADO (${Math.floor(pinLockSecondsLeft/60)}:${String(pinLockSecondsLeft%60).padStart(2,'0')})` : 'VERIFICAR'}
               </button>
            </div>
+        </div>
+      )}
+
+      {/* CONFIRMACIÓN ANTES DE ANULAR VENTA */}
+      {voidConfirmSale && (
+        <div className="fixed inset-0 bg-[#0B3B68]/70 z-[90] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-red-100 rounded-2xl flex items-center justify-center flex-shrink-0">
+                <Ban className="text-red-500 w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-[#1F2937]">¿Anular esta venta?</h2>
+                <p className="text-xs text-[#6B7280]">Esta acción requiere PIN Maestro</p>
+              </div>
+            </div>
+            <div className="bg-gray-50 rounded-xl p-3 mb-5 text-xs space-y-1 border border-gray-100">
+              <div className="flex justify-between"><span className="text-[#6B7280]">Ticket</span><span className="font-bold font-mono">#{voidConfirmSale.id.slice(0,8).toUpperCase()}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Total</span><span className="font-black text-[#1F2937]">{formatMoney(safeFloat(voidConfirmSale.total))}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Método</span><span className="font-bold uppercase">{voidConfirmSale.payment_method}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Items</span><span className="font-bold">{voidConfirmSale.items?.length || 0} producto(s)</span></div>
+            </div>
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3 mb-5">
+              ⚠ Se revertirá el stock de todos los productos y se descontarán los puntos de lealtad ganados.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setVoidConfirmSale(null)}
+                className="flex-1 py-3 bg-gray-100 text-[#1F2937] rounded-xl font-bold hover:bg-gray-200 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  const sale = voidConfirmSale;
+                  setVoidConfirmSale(null);
+                  setPinModal({ isOpen: true, action: 'void_sale', data: sale });
+                }}
+                className="flex-1 py-3 bg-red-500 text-white rounded-xl font-bold hover:bg-red-600 transition-colors flex items-center justify-center gap-2"
+              >
+                <Ban size={16} /> Continuar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -126,7 +126,7 @@ export function PosPage() {
       const existing = prev.find(item => item.id === product.id);
       if (existing) {
         if (existing.quantity >= product.stock) {
-            toast.error('Stock insuficiente');
+            toast.error(`Stock insuficiente: solo ${product.stock} unidades de "${product.name}"`);
             return prev;
         }
         return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
@@ -437,7 +437,7 @@ export function PosPage() {
                     )}
                 </div>
                 <button
-                    onClick={() => setMobileView('cart')}
+                    onClick={() => { setMobileView('cart'); if (parkedCount > 0) setShowParkedModal(true); }}
                     className="md:hidden relative flex-shrink-0 flex flex-col items-center justify-center gap-0.5 p-2.5 bg-background border border-gray-200 rounded-2xl text-bisne-navy shadow-inner min-w-[56px]"
                 >
                     <ClipboardList size={22} />

@@ -1,14 +1,37 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(
     import.meta.url));
 
+// ─── PERSISTENCIA DEL TAMAÑO Y POSICIÓN DE LA VENTANA ─────────────────────
+const windowStatePath = () => path.join(app.getPath('userData'), 'window-state.json');
+
+function loadWindowState() {
+    try {
+        return JSON.parse(fs.readFileSync(windowStatePath(), 'utf-8'));
+    } catch {
+        return { width: 1200, height: 800 };
+    }
+}
+
+function saveWindowState(win) {
+    try {
+        if (win.isMaximized() || win.isFullScreen()) return; // no guardar en maximizado
+        const bounds = win.getBounds();
+        fs.writeFileSync(windowStatePath(), JSON.stringify(bounds), 'utf-8');
+    } catch {}
+}
+
 function createWindow() {
+    const saved = loadWindowState();
     const win = new BrowserWindow({
-        width: 1200,
-        height: 800,
+        width: saved.width || 1200,
+        height: saved.height || 800,
+        x: saved.x,
+        y: saved.y,
         title: "Nexus POS",
         webPreferences: {
             nodeIntegration: false, // Bloqueamos acceso directo a Node (Seguridad)
@@ -16,6 +39,12 @@ function createWindow() {
             preload: path.join(__dirname, 'preload.js') // Cargamos el puente seguro
         }
     });
+
+    // Guardar tamaño/posición al cerrar y al mover/redimensionar
+    win.on('close', () => saveWindowState(win));
+    let resizeTimer;
+    win.on('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => saveWindowState(win), 500); });
+    win.on('move',   () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => saveWindowState(win), 500); });
 
     const isDev = !app.isPackaged;
 
@@ -25,11 +54,20 @@ function createWindow() {
     } else {
         win.loadFile(path.join(__dirname, '../dist/index.html'));
         // Bloquear DevTools en producción (F12, Ctrl+Shift+I, Ctrl+Shift+J)
+        // Atajos de navegación: F1=POS, F2=Inventario, F4=Finanzas, F5=Clientes
         win.webContents.on('before-input-event', (event, input) => {
             if (input.key === 'F12') { event.preventDefault(); return; }
             if (input.control && input.shift && (input.key === 'I' || input.key === 'i')) { event.preventDefault(); return; }
             if (input.control && input.shift && (input.key === 'J' || input.key === 'j')) { event.preventDefault(); return; }
             if (input.control && input.shift && (input.key === 'C' || input.key === 'c')) { event.preventDefault(); return; }
+            // Navegación por teclado (solo cuando no hay ningún input de texto activo)
+            if (input.type === 'keyDown' && !input.control && !input.alt && !input.meta) {
+                const navMap = { F1: '/', F2: '/inventario', F4: '/finanzas', F5: '/clientes' };
+                if (navMap[input.key]) {
+                    win.webContents.send('navigate', navMap[input.key]);
+                    event.preventDefault();
+                }
+            }
         });
     }
 
