@@ -131,7 +131,7 @@ export function InventoryPage() {
             await db.products.add(newProduct);
             await addToQueue('PRODUCT_SYNC', newProduct);
             await logAuditAction('CREATE_PRODUCT', { name: newProduct.name }, currentStaff);
-            toast.success('Producto creado');
+            toast.success(`"${newProduct.name}" creado correctamente`);
         }
 
         setIsFormOpen(false);
@@ -371,10 +371,28 @@ export function InventoryPage() {
       {activeTab === 'stock' ? (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
             {filteredProducts.length === 0 ? (
-                <div className="p-12 text-center text-[#6B7280]">
+                products.length === 0 ? (
+                  /* Catálogo vacío — onboarding para negocio nuevo */
+                  <div className="p-12 text-center">
+                    <div className="w-16 h-16 rounded-2xl bg-[#0B3B68] flex items-center justify-center mx-auto mb-4">
+                      <Package size={32} className="text-white" />
+                    </div>
+                    <h3 className="text-lg font-black text-[#1F2937] mb-1">¡Agrega tu primer producto!</h3>
+                    <p className="text-sm text-[#6B7280] mb-5">Tu catálogo está vacío. Empieza creando los productos que vendes.</p>
+                    <button
+                      onClick={() => { setEditingProduct(null); resetForm(); setIsFormOpen(true); }}
+                      className="inline-flex items-center gap-2 bg-[#0B3B68] text-white font-bold px-5 py-3 rounded-xl hover:bg-[#0B3B68]/90 transition-colors shadow-md"
+                    >
+                      <Plus size={18}/> Crear primer producto
+                    </button>
+                  </div>
+                ) : (
+                  /* Sin resultados de búsqueda */
+                  <div className="p-12 text-center text-[#6B7280]">
                     <Package className="w-12 h-12 opacity-20 mb-2 mx-auto"/>
-                    <p>No se encontraron productos.</p>
-                </div>
+                    <p>No se encontraron productos con ese término.</p>
+                  </div>
+                )
             ) : (
                 <div className="overflow-x-auto">
                     <table className="mobile-card-table w-full text-left border-collapse">

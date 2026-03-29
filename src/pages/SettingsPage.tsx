@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff, type BusinessConfig } from '../lib/db';
-import { syncPush, syncPull, isOnline, addToQueue } from '../lib/sync';
+import { syncManualFull, syncPush, isOnline, addToQueue } from '../lib/sync';
 import { logAuditAction } from '../lib/audit';
 import { toast } from 'sonner';
 import {
@@ -11,7 +11,8 @@ import {
   Wifi, WifiOff, AlertTriangle, Key,
   Download, Upload, Database,
   Users, Plus, Edit2, UserCheck, UserX, X, Lock, DollarSign, CheckCircle2, Clock,
-  HelpCircle, ShoppingCart, Package, BarChart2, Settings, UserCircle, ChevronRight, Repeat
+  HelpCircle, ShoppingCart, Package, BarChart2, Settings, UserCircle, ChevronRight, Repeat,
+  ScrollText, Zap, Star, Phone, Mail, MapPin, Info
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
@@ -20,8 +21,8 @@ export function SettingsPage() {
   const businessId = localStorage.getItem('nexus_business_id');
   
   const [searchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState<'general' | 'devices' | 'data' | 'team' | 'help'>(
-    searchParams.get('tab') === 'help' ? 'help' : 'general'
+  const [activeTab, setActiveTab] = useState<'general' | 'devices' | 'data' | 'team' | 'help' | 'legal'>(
+    searchParams.get('tab') === 'help' ? 'help' : searchParams.get('tab') === 'legal' ? 'legal' : 'general'
   );
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -67,6 +68,10 @@ export function SettingsPage() {
     if (!businessId) return;
     if (!staffForm.name.trim()) return toast.error('El nombre es obligatorio');
     if (!/^\d{4}$/.test(staffForm.pin)) return toast.error('El PIN debe ser exactamente 4 dígitos');
+
+    // Validar PIN duplicado (excluir el mismo empleado al editar)
+    const pinTaken = (staffList || []).some(s => s.pin === staffForm.pin && s.id !== editingStaff?.id && s.active !== false);
+    if (pinTaken) return toast.error('Ese PIN ya lo usa otro empleado activo. Elige uno diferente.');
 
     try {
       const staffRecord: Staff = {
@@ -162,14 +167,21 @@ export function SettingsPage() {
   };
 
   const handleManualSync = async () => {
+      if (!isOnline()) {
+          toast.error('Sin conexión a internet');
+          return;
+      }
       setIsSyncing(true);
+      const timeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), 45000)
+      );
       try {
-          await syncPush();
-          await syncPull(); 
+          await Promise.race([syncManualFull(), timeout]);
           toast.success('Sincronización completada');
       } catch (error) {
+          const isTimeout = error instanceof Error && error.message === 'timeout';
           console.error(error);
-          toast.error('Error de sincronización');
+          toast.error(isTimeout ? 'La sincronización tardó demasiado. Reintenta más tarde.' : 'Error de sincronización');
       } finally {
           setIsSyncing(false);
       }
@@ -272,20 +284,22 @@ export function SettingsPage() {
       .reduce((sum, s) => sum + Number(s.total || 0), 0);
   }, [businessId]) ?? 0;
 
-  // Rate y paid_until desde Supabase (se consulta una vez)
+  // Solo paid_until desde Supabase (la tasa se calcula automáticamente igual que SuperAdmin)
   useEffect(() => {
     if (!businessId) return;
-    supabase.from('billing').select('rate, paid_until').eq('business_id', businessId).maybeSingle()
+    supabase.from('billing').select('paid_until').eq('business_id', businessId).maybeSingle()
       .then(({ data }) => {
-        if (data) setBillingMeta({ rate: Number(data.rate ?? 1.0), paid_until: data.paid_until ?? null });
+        if (data) setBillingMeta(prev => ({ ...prev, paid_until: data.paid_until ?? null }));
       })
       .catch(() => {});
   }, [businessId]);
 
+  // Tasa auto-calculada: igual lógica que SuperAdmin (≤500k CUP → 1%, >500k CUP → 0.5%)
+  const autoRate = localMonthSalesTotal > 500_000 ? 0.5 : 1.0;
   const billing = {
-    rate: billingMeta.rate,
+    rate: autoRate,
     total_sales: localMonthSalesTotal,
-    fee: localMonthSalesTotal * billingMeta.rate / 100,
+    fee: localMonthSalesTotal * autoRate / 100,
     paid_until: billingMeta.paid_until,
   };
   // ──────────────────────────────────────────────────────────────────────────
@@ -315,6 +329,7 @@ export function SettingsPage() {
             <button onClick={() => setActiveTab('devices')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'devices' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Printer size={20}/> Hardware</button>
             <button onClick={() => setActiveTab('data')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'data' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Shield size={20}/> Datos y Respaldo</button>
             <button onClick={() => setActiveTab('help')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'help' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><HelpCircle size={20}/> Guía Rápida</button>
+            <button onClick={() => setActiveTab('legal')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'legal' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><ScrollText size={20}/> Términos y Política</button>
         </div>
 
         <div className="flex-1">
@@ -721,6 +736,143 @@ export function SettingsPage() {
                   </form>
               </div>
           </div>
+      )}
+
+      {activeTab === 'legal' && (
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 animate-in fade-in slide-in-from-right-4 duration-300 space-y-6">
+          {/* Encabezado */}
+          <div>
+            <h2 className="text-xl font-bold text-[#1F2937] mb-1 flex items-center gap-2">
+              <ScrollText size={22} className="text-[#0B3B68]" /> Términos de Uso y Política de Privacidad
+            </h2>
+            <p className="text-xs text-[#6B7280]">Bisne con Talla · Agencia Señores · Versión 1.0 · Sancti Spíritus, Cuba · 2025</p>
+          </div>
+
+          {/* Sección 1 — Aceptación */}
+          <div className="border border-gray-100 rounded-2xl p-4 space-y-1">
+            <h3 className="font-black text-[#0B3B68] text-sm flex items-center gap-2"><Info size={15}/> 1. Aceptación de los Términos</h3>
+            <p className="text-sm text-[#4B5563] leading-relaxed">
+              Al registrarte y utilizar <strong>Bisne con Talla</strong>, aceptas de forma plena y sin reservas los presentes Términos de Uso y la Política de Privacidad. Si no estás de acuerdo con alguno de estos términos, debes abstenerte de usar la aplicación.
+            </p>
+          </div>
+
+          {/* Sección 2 — Descripción */}
+          <div className="border border-gray-100 rounded-2xl p-4 space-y-1">
+            <h3 className="font-black text-[#0B3B68] text-sm flex items-center gap-2"><Info size={15}/> 2. Descripción del Servicio</h3>
+            <p className="text-sm text-[#4B5563] leading-relaxed">
+              <strong>Bisne con Talla</strong> es un sistema de punto de venta (POS) <em>offline-first</em> desarrollado por <strong>Agencia Señores</strong> para negocios ubicados en Cuba. La aplicación opera de forma local en el dispositivo del usuario y sincroniza datos con la nube cuando existe conexión a internet disponible.
+            </p>
+            <p className="text-sm text-[#4B5563] leading-relaxed mt-2">
+              El servicio incluye: gestión de ventas, inventario, clientes, turnos de caja, reportes financieros y sincronización multi-dispositivo.
+            </p>
+          </div>
+
+          {/* Sección 3 — Período de prueba */}
+          <div className="border border-gray-100 rounded-2xl p-4 space-y-1">
+            <h3 className="font-black text-[#0B3B68] text-sm flex items-center gap-2"><Info size={15}/> 3. Período de Prueba</h3>
+            <p className="text-sm text-[#4B5563] leading-relaxed">
+              Los nuevos usuarios tienen acceso <strong>gratuito durante 7 días</strong> desde la fecha de registro. Al finalizar este período, se requiere una suscripción activa para continuar utilizando el sistema. Agencia Señores se reserva el derecho de suspender el acceso transcurrido dicho plazo sin pago confirmado.
+            </p>
+          </div>
+
+          {/* Sección 4 — Tarifas (la más importante) */}
+          <div className="border-2 border-[#0B3B68]/20 bg-[#0B3B68]/03 rounded-2xl p-4 space-y-3">
+            <h3 className="font-black text-[#0B3B68] text-sm flex items-center gap-2"><DollarSign size={15}/> 4. Tarifas y Modelo de Cobro</h3>
+            <p className="text-sm text-[#4B5563] leading-relaxed">
+              El cobro del servicio se basa en el <strong>volumen mensual de ventas registradas</strong> en la plataforma. El nivel tarifario se detecta automáticamente al cierre de cada mes:
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Zap size={16} className="text-blue-600"/>
+                  <span className="font-black text-blue-800 text-sm">Tier Estándar</span>
+                </div>
+                <p className="text-xs text-blue-700 font-bold mb-1">Ventas mensuales hasta $500,000 CUP</p>
+                <p className="text-2xl font-black text-blue-800">1%</p>
+                <p className="text-xs text-blue-600 mt-1">sobre el total de ventas del mes</p>
+              </div>
+              <div className="bg-violet-50 border border-violet-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Star size={16} className="text-violet-600 fill-violet-600"/>
+                  <span className="font-black text-violet-800 text-sm">Tier Plus</span>
+                </div>
+                <p className="text-xs text-violet-700 font-bold mb-1">Ventas mensuales superiores a $500,000 CUP</p>
+                <p className="text-2xl font-black text-violet-800">0.5%</p>
+                <p className="text-xs text-violet-600 mt-1">sobre el total de ventas del mes</p>
+              </div>
+            </div>
+            <p className="text-xs text-[#6B7280] mt-2">
+              El monto a pagar se calcula automáticamente y debe abonarse dentro de los primeros <strong>5 días hábiles</strong> del mes siguiente al período facturado. Las ventas anuladas no se incluyen en el cálculo.
+            </p>
+          </div>
+
+          {/* Sección 5 — Privacidad y datos */}
+          <div className="border border-gray-100 rounded-2xl p-4 space-y-2">
+            <h3 className="font-black text-[#0B3B68] text-sm flex items-center gap-2"><Shield size={15}/> 5. Privacidad y Tratamiento de Datos</h3>
+            <ul className="space-y-2 text-sm text-[#4B5563]">
+              {[
+                'Los datos del negocio (ventas, inventario, clientes) se almacenan localmente en el dispositivo y se sincronizan cifrados con nuestros servidores en la nube (Supabase/PostgreSQL con RLS).',
+                'No vendemos, cedemos ni compartimos datos con terceros bajo ninguna circunstancia.',
+                'Los datos personales de clientes finales solo son accesibles por el negocio que los registró. Agencia Señores no accede a esta información.',
+                'El usuario es responsable de mantener sus credenciales de acceso (correo y contraseña) en estricta confidencialidad.',
+                'Ante la solicitud del usuario, los datos pueden ser exportados o eliminados permanentemente de nuestros servidores.',
+              ].map((item, i) => (
+                <li key={i} className="flex gap-2 leading-relaxed">
+                  <CheckCircle2 size={15} className="text-[#7AC142] flex-shrink-0 mt-0.5"/>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Sección 6 — Copias de seguridad */}
+          <div className="border border-gray-100 rounded-2xl p-4 space-y-1">
+            <h3 className="font-black text-[#0B3B68] text-sm flex items-center gap-2"><Info size={15}/> 6. Copias de Seguridad</h3>
+            <p className="text-sm text-[#4B5563] leading-relaxed">
+              Se recomienda encarecidamente realizar respaldos periódicos desde <em>Configuración › Datos y Respaldo</em>. Aunque el sistema sincroniza datos con la nube, <strong>Agencia Señores no se hace responsable</strong> de la pérdida de datos causada por fallos del dispositivo, eliminación accidental o datos que nunca fueron sincronizados por falta de conexión.
+            </p>
+          </div>
+
+          {/* Sección 7 — Uso aceptable */}
+          <div className="border border-gray-100 rounded-2xl p-4 space-y-1">
+            <h3 className="font-black text-[#0B3B68] text-sm flex items-center gap-2"><Info size={15}/> 7. Uso Aceptable</h3>
+            <p className="text-sm text-[#4B5563] leading-relaxed">
+              El sistema está diseñado exclusivamente para la gestión comercial legal de negocios. Queda terminantemente prohibido su uso para registrar actividades ilícitas, evadir impuestos o cualquier otra acción contraria a la legislación vigente. El usuario es el único responsable de la exactitud y legalidad de la información registrada.
+            </p>
+          </div>
+
+          {/* Sección 8 — Modificaciones */}
+          <div className="border border-gray-100 rounded-2xl p-4 space-y-1">
+            <h3 className="font-black text-[#0B3B68] text-sm flex items-center gap-2"><Info size={15}/> 8. Modificaciones a los Términos</h3>
+            <p className="text-sm text-[#4B5563] leading-relaxed">
+              Agencia Señores se reserva el derecho de modificar estos términos en cualquier momento. Los cambios significativos serán notificados a los usuarios con al menos <strong>15 días de antelación</strong> a través de la propia aplicación. El uso continuado del servicio tras la notificación implica la aceptación de los nuevos términos.
+            </p>
+          </div>
+
+          {/* Sección 9 — Limitación de responsabilidad */}
+          <div className="border border-gray-100 rounded-2xl p-4 space-y-1">
+            <h3 className="font-black text-[#0B3B68] text-sm flex items-center gap-2"><Info size={15}/> 9. Limitación de Responsabilidad</h3>
+            <p className="text-sm text-[#4B5563] leading-relaxed">
+              Agencia Señores no será responsable por pérdidas de ingresos, datos o cualquier daño indirecto derivado del uso o la imposibilidad de uso de la aplicación. La responsabilidad máxima en cualquier caso no superará el monto pagado por el servicio en el último mes facturado.
+            </p>
+          </div>
+
+          {/* Contacto */}
+          <div className="bg-[#0B3B68] rounded-2xl p-5 text-white">
+            <h3 className="font-black text-sm mb-3">Contacto y Soporte</h3>
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center gap-2 text-white/80"><Phone size={14}/> <span>+53 5988-7863 (WhatsApp)</span></div>
+              <div className="flex items-center gap-2 text-white/80"><MapPin size={14}/> <span>Sancti Spíritus, Cuba</span></div>
+            </div>
+            <a
+              href="https://wa.me/5359887863?text=Hola%2C%20tengo%20una%20consulta%20sobre%20los%20T%C3%A9rminos%20de%20Bisne%20con%20Talla"
+              target="_blank" rel="noopener noreferrer"
+              className="mt-4 inline-flex items-center gap-2 bg-[#7AC142] text-[#0B3B68] font-black text-xs px-4 py-2 rounded-xl hover:bg-[#7AC142]/90 transition-colors"
+            >
+              <Phone size={13}/> Contactar por WhatsApp
+            </a>
+          </div>
+        </div>
       )}
 
       {activeTab === 'help' && (

@@ -227,7 +227,7 @@ export class NexusDB extends Dexie {
     });
 
     this.version(9).upgrade(async (trans) => {
-      console.log('🔄 Migrando base de datos a versión 8...');
+      console.log('🔄 Migrando base de datos a versión 9...');
       const shifts = await trans.table('cash_shifts').toArray();
       for (const shift of shifts) {
         if (typeof shift.start_amount !== 'number') {

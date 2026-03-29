@@ -185,12 +185,16 @@ async function _runQueue() {
   const pendingItems = await db.action_queue.where('status').equals('pending').limit(5).toArray();
   if (pendingItems.length === 0) return;
 
+  let processedCount = 0;
+
   for (const item of pendingItems) {
     // Backoff exponencial: omitir ítems reintentados recientemente
     if (item.retries > 0) {
       const backoffMs = Math.min(Math.pow(2, item.retries - 1) * 30000, 300000); // 30s, 60s, 2m, 4m, máx 5m
       if (Date.now() - item.timestamp < backoffMs) continue;
     }
+
+    processedCount++;
 
     try {
       await db.action_queue.update(item.id, { status: 'processing' });
@@ -211,7 +215,10 @@ async function _runQueue() {
     }
   }
 
-  if ((await db.action_queue.where('status').equals('pending').count()) > 0) {
+  // Solo recursar si se procesó al menos un ítem en esta vuelta.
+  // Si todos estaban en período de backoff (processedCount === 0), detenerse:
+  // el sync periódico de 30s o la próxima reconexión los reintentará cuando corresponda.
+  if (processedCount > 0 && (await db.action_queue.where('status').equals('pending').count()) > 0) {
     await _runQueue();
   }
 }
@@ -459,8 +466,10 @@ if (typeof window !== 'undefined') {
             .catch(err => console.error("Error al procesar cola tras reconexión:", err));
     });
     resetProcessingItems();
-    // Push + Pull cada 30 segundos para mantener dispositivos sincronizados
+    // Push + Pull cada 30 segundos. Se omite si la app está en background
+    // (document.hidden = true en Android/Capacitor y Electron al minimizar)
     setInterval(() => {
+        if (document.hidden) return; // app en background → no consumir batería/datos
         if (isOnline() && db.isOpen()) {
             processQueue().catch(err => {
                 if (err?.name !== 'DatabaseClosedError') console.error("Error en sync push periódico:", err);
@@ -470,4 +479,11 @@ if (typeof window !== 'undefined') {
             });
         }
     }, 30000);
+
+    // Al volver al primer plano: sincronizar inmediatamente si hay pendientes
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && isOnline() && db.isOpen()) {
+            processQueue().catch(() => {});
+        }
+    });
 }

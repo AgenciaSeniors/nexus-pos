@@ -30,10 +30,13 @@ android {
 
     signingConfigs {
         release {
-            storeFile file("bisne-key.jks")
-            storePassword "123456" 
-            keyAlias "bisne-alias"
-            keyPassword "123456" 
+            def props = new Properties()
+            def localPropsFile = rootProject.file('local.properties')
+            if (localPropsFile.exists()) props.load(new FileInputStream(localPropsFile))
+            storeFile file(props['BISNE_STORE_FILE'] ?: 'bisne-key.jks')
+            storePassword props['BISNE_STORE_PASSWORD'] ?: '123456'
+            keyAlias props['BISNE_KEY_ALIAS'] ?: 'bisne-alias'
+            keyPassword props['BISNE_KEY_PASSWORD'] ?: '123456'
         }
     }
 

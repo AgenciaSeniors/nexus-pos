@@ -11,6 +11,15 @@ interface Props {
 
 export function ParkedOrdersModal({ onRestore, onClose }: Props) {
   const orders = useLiveQuery(() => db.parked_orders.reverse().toArray()) || [];
+
+  const formatOrderTime = (dateStr: string) => {
+    const d = new Date(dateStr);
+    const today = new Date();
+    const isToday = d.toDateString() === today.toDateString();
+    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (isToday) return time;
+    return `${d.toLocaleDateString([], { day: '2-digit', month: '2-digit' })} ${time}`;
+  };
   
   // ✅ ESTADO PARA SABER QUÉ ORDEN ESTAMOS IMPRIMIENDO
   const [orderToPrint, setOrderToPrint] = useState<ParkedOrder | null>(null);
@@ -55,7 +64,7 @@ export function ParkedOrdersModal({ onRestore, onClose }: Props) {
                      Total: ${order.total.toFixed(2)}
                   </p>
                   <p className="text-xs text-slate-400 font-mono mt-1">
-                    {new Date(order.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} • {order.items.length} productos
+                    <Clock size={10} className="inline mr-1 opacity-60"/>{formatOrderTime(order.date)} • {order.items.length} productos
                   </p>
                   <div className="text-xs text-slate-500 mt-2 line-clamp-1">
                     {order.items.map(i => i.name).join(', ')}

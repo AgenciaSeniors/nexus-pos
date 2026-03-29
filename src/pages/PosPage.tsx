@@ -158,8 +158,13 @@ export function PosPage() {
     if (isNaN(val) || val <= 0) return;
     setCart(prev => prev.map(item => {
       if (item.id === id) {
-        const capped = Math.min(val, item.stock);
-        if (val > item.stock) toast.warning(`Solo hay ${item.stock} en stock`);
+        // Unidades no decimales (ej: un, pieza) → forzar entero
+        const normalized = isDecimalUnit(item.unit) ? val : Math.round(val);
+        if (!isDecimalUnit(item.unit) && val !== Math.round(val)) {
+          toast.info(`"${item.unit}" solo acepta cantidades enteras`);
+        }
+        const capped = Math.min(normalized, item.stock);
+        if (normalized > item.stock) toast.warning(`Solo hay ${item.stock} en stock`);
         return { ...item, quantity: parseFloat(capped.toFixed(3)) };
       }
       return item;
@@ -268,7 +273,6 @@ export function PosPage() {
         else normalizedMethod = 'efectivo';
 
         const saleId = crypto.randomUUID();
-        const subtotalRaw = currency.calculateTotal(cart);
         const pointsDiscount = Math.round((redeemedPoints || 0) * 0.10 * 100) / 100;
         const saleTotal = Math.max(0, Math.round((finalTotal - pointsDiscount) * 100) / 100);
 
@@ -361,9 +365,6 @@ export function PosPage() {
         syncPush().catch(error => {
             console.error("⚠️ Sync background falló:", error);
         });
-
-        // Suprimir referencia para evitar warning de variable no usada
-        void subtotalRaw;
 
     } catch (error) {
         console.error("❌ Error crítico en transacción de venta:", error);

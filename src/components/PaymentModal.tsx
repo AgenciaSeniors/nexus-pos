@@ -45,7 +45,7 @@ export function PaymentModal({ total, customer, onConfirm, onCancel }: PaymentMo
   const cashValue = parseFloat(cashInput) || 0;
   const transferValue = parseFloat(transferInput) || 0;
   const remaining = Math.round((effectiveTotal - cashValue - transferValue) * 100) / 100;
-  const mixtoValid = Math.abs(remaining) < 0.005 && cashValue > 0 && transferValue > 0;
+  const mixtoValid = Math.abs(remaining) < 0.01 && cashValue > 0 && transferValue > 0;
 
   const isValid =
     method === 'efectivo' ? tenderedValue >= effectiveTotal :
@@ -191,6 +191,7 @@ export function PaymentModal({ total, customer, onConfirm, onCancel }: PaymentMo
                     <input
                       type="number"
                       autoFocus
+                      inputMode="decimal"
                       className="w-full pl-10 pr-4 py-4 text-3xl font-black border-2 border-gray-200 rounded-2xl focus:border-[#0B3B68] focus:ring-0 outline-none transition-colors text-[#1F2937]"
                       placeholder="0.00"
                       value={tendered}
@@ -238,6 +239,7 @@ export function PaymentModal({ total, customer, onConfirm, onCancel }: PaymentMo
                         type="number"
                         autoFocus
                         min="0"
+                        inputMode="decimal"
                         className="w-full pl-7 pr-3 py-3 text-xl font-black border-2 border-gray-200 rounded-xl focus:border-[#0B3B68] focus:ring-0 outline-none text-[#1F2937]"
                         placeholder="0.00"
                         value={cashInput}
@@ -252,6 +254,7 @@ export function PaymentModal({ total, customer, onConfirm, onCancel }: PaymentMo
                       <input
                         type="number"
                         min="0"
+                        inputMode="decimal"
                         className="w-full pl-7 pr-3 py-3 text-xl font-black border-2 border-gray-200 rounded-xl focus:border-[#0B3B68] focus:ring-0 outline-none text-[#1F2937]"
                         placeholder="0.00"
                         value={transferInput}

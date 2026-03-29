@@ -24,6 +24,13 @@ function createWindow() {
         win.webContents.openDevTools(); // Abre la consola para depurar
     } else {
         win.loadFile(path.join(__dirname, '../dist/index.html'));
+        // Bloquear DevTools en producción (F12, Ctrl+Shift+I, Ctrl+Shift+J)
+        win.webContents.on('before-input-event', (event, input) => {
+            if (input.key === 'F12') { event.preventDefault(); return; }
+            if (input.control && input.shift && (input.key === 'I' || input.key === 'i')) { event.preventDefault(); return; }
+            if (input.control && input.shift && (input.key === 'J' || input.key === 'j')) { event.preventDefault(); return; }
+            if (input.control && input.shift && (input.key === 'C' || input.key === 'c')) { event.preventDefault(); return; }
+        });
     }
 
     win.setMenuBarVisibility(false);

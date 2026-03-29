@@ -4,7 +4,7 @@ import {
   Cloud, AlertCircle, RefreshCw, LogOut, Menu, X, Users as UsersIcon, CheckCircle2, Loader2,
   ArrowLeftRight, WifiOff, Wifi, Clock, HelpCircle
 } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff } from '../lib/db';
 import { syncManualFull } from '../lib/sync'; 
@@ -27,11 +27,24 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
-  const [showGuidePrompt, setShowGuidePrompt] = useState(
-    () => !localStorage.getItem('nexus_guide_seen')
-  );
+  const [showGuidePrompt, setShowGuidePrompt] = useState(false);
+  const guideCheckedRef = useRef(false); // evita re-disparar si staff cambia mid-sesión
 
   const [justReconnected, setJustReconnected] = useState(false);
+
+  // Mostrar guía rápida: una vez por cuenta (clave por business_id) o cuando es registro nuevo.
+  // guideCheckedRef garantiza que no se repita si el empleado activo cambia durante la sesión.
+  useEffect(() => {
+    if (!currentStaff || guideCheckedRef.current) return;
+    guideCheckedRef.current = true;
+    const bId = localStorage.getItem('nexus_business_id');
+    const guideKey = bId ? `nexus_guide_seen_${bId}` : null;
+    const isNewRegistration = sessionStorage.getItem('nexus_new_registration') === '1';
+    const alreadySeen = guideKey ? !!localStorage.getItem(guideKey) : false;
+    if (isNewRegistration || !alreadySeen) {
+      setShowGuidePrompt(true);
+    }
+  }, [currentStaff]);
 
   // Escuchar alertas de stock negativo (conflicto multi-dispositivo offline)
   useEffect(() => {
@@ -146,15 +159,18 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
         return;
     }
     setIsSyncing(true);
-    
+    const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), 45000)
+    );
     try {
-        await syncManualFull();
+        await Promise.race([syncManualFull(), timeout]);
         toast.success('¡Sistema sincronizado con éxito!');
     } catch (error) {
+        const isTimeout = error instanceof Error && error.message === 'timeout';
         console.error(error);
-        toast.error('Error al sincronizar');
+        toast.error(isTimeout ? 'La sincronización tardó demasiado. Reintenta más tarde.' : 'Error al sincronizar');
     } finally {
-        setTimeout(() => setIsSyncing(false), 500);
+        setIsSyncing(false);
     }
   };
 
@@ -435,7 +451,9 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
             <div className="flex gap-2 flex-shrink-0">
               <button
                 onClick={() => {
-                  localStorage.setItem('nexus_guide_seen', '1');
+                  const bId = localStorage.getItem('nexus_business_id');
+                  if (bId) localStorage.setItem(`nexus_guide_seen_${bId}`, '1');
+                  sessionStorage.removeItem('nexus_new_registration');
                   setShowGuidePrompt(false);
                   navigate('/configuracion?tab=help');
                 }}
@@ -445,7 +463,9 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
               </button>
               <button
                 onClick={() => {
-                  localStorage.setItem('nexus_guide_seen', '1');
+                  const bId = localStorage.getItem('nexus_business_id');
+                  if (bId) localStorage.setItem(`nexus_guide_seen_${bId}`, '1');
+                  sessionStorage.removeItem('nexus_new_registration');
                   setShowGuidePrompt(false);
                 }}
                 className="w-8 h-8 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors"

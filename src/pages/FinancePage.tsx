@@ -51,6 +51,10 @@ export function FinancePage() {
   const [reason, setReason] = useState('');
   const [movementType, setMovementType] = useState<'in' | 'out' | null>(null);
   const [isClosing, setIsClosing] = useState(false);
+  // Captura los stats del turno al iniciar el cierre para evitar que el modal
+  // desaparezca cuando db.cash_shifts.update() dispara el useLiveQuery
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [closingShiftStats, setClosingShiftStats] = useState<any>(null);
   const [transferCount, setTransferCount] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -270,6 +274,10 @@ export function FinancePage() {
       const method = sale.payment_method?.toLowerCase() || 'efectivo';
       if (method === 'efectivo') cashTotal += saleTotal;
       else if (method === 'tarjeta') cardTotal += saleTotal;
+      else if (method === 'mixto') {
+        cashTotal += safeFloat(sale.cash_amount || 0);
+        transferTotal += safeFloat(sale.transfer_amount || 0);
+      }
       else transferTotal += saleTotal;
 
       (sale.items || []).forEach((item) => {
@@ -459,7 +467,10 @@ export function FinancePage() {
 
   const handleCloseShift = async () => {
     const currentShift = activeShift;
-    if (!currentShift || !shiftStats) return;
+    if (!currentShift) { toast.error('No hay turno activo para cerrar.'); return; }
+    const stats = shiftStats || closingShiftStats;
+    if (!stats)        { toast.error('Los datos del turno aún están cargando. Intenta de nuevo.'); return; }
+
     const finalCashCount = safeFloat(amount);
     const finalTransferCount = safeFloat(transferCount);
 
@@ -467,41 +478,42 @@ export function FinancePage() {
     try {
         const { bId, sId } = await getActiveCredentials();
         const safeBid = bId || currentShift.business_id;
-        const cashDiff = finalCashCount - shiftStats.expectedCash;
-        const transferDiff = finalTransferCount - shiftStats.transferSales;
+        const cashDiff = finalCashCount - stats.expectedCash;
+        const transferDiff = finalTransferCount - stats.transferSales;
         const closedAt = new Date().toISOString();
-
         const staffPayload = { id: sId, name: currentStaff?.name || 'Cajero', business_id: safeBid };
 
-        await db.transaction('rw', [db.cash_shifts, db.action_queue, db.audit_logs], async () => {
-            await db.cash_shifts.update(currentShift.id, {
-                end_amount: finalCashCount,
-                difference: cashDiff,
-                expected_amount: shiftStats.expectedCash,
-                transfer_expected: shiftStats.transferSales,
-                transfer_count: finalTransferCount,
-                transfer_difference: transferDiff,
-                closed_at: closedAt,
-                status: 'closed',
-                sync_status: 'pending_update'
-            });
-
-            const closedShift = await db.cash_shifts.get(currentShift.id);
-            if(closedShift) await addToQueue('SHIFT', closedShift);
-
-            await logAuditAction('CLOSE_SHIFT', {
-              expected_cash: shiftStats.expectedCash, real_cash: finalCashCount, cash_diff: cashDiff,
-              expected_transfer: shiftStats.transferSales, real_transfer: finalTransferCount, transfer_diff: transferDiff,
-            }, staffPayload as any);
+        // Transacción mínima: SOLO actualizar el turno en IndexedDB
+        // addToQueue y logAuditAction se hacen FUERA para evitar conflictos
+        // con transacciones paralelas del sync periódico en Electron/IndexedDB
+        await db.cash_shifts.update(currentShift.id, {
+            end_amount: finalCashCount,
+            difference: cashDiff,
+            expected_amount: stats.expectedCash,
+            transfer_expected: stats.transferSales,
+            transfer_count: finalTransferCount,
+            transfer_difference: transferDiff,
+            closed_at: closedAt,
+            status: 'closed',
+            sync_status: 'pending_update'
         });
+
+        // Encolar y auditar fuera de la transacción
+        const closedShift = await db.cash_shifts.get(currentShift.id);
+        if (closedShift) await addToQueue('SHIFT', closedShift);
+
+        await logAuditAction('CLOSE_SHIFT', {
+          expected_cash: stats.expectedCash, real_cash: finalCashCount, cash_diff: cashDiff,
+          expected_transfer: stats.transferSales, real_transfer: finalTransferCount, transfer_diff: transferDiff,
+        }, staffPayload as any);
 
         const totalDiff = cashDiff + transferDiff;
         toast.success(`Caja cerrada. Diferencia total: ${formatMoney(totalDiff)}`);
-        setIsClosing(false); setAmount(''); setTransferCount('');
+        setIsClosing(false); setClosingShiftStats(null); setAmount(''); setTransferCount('');
         syncPush().catch(() => {});
     } catch (error) {
-        console.error(error);
-        toast.error("Error al cerrar caja");
+        console.error('Error cerrando turno:', error);
+        toast.error(`Error al cerrar caja: ${error instanceof Error ? error.message : 'Error desconocido'}`);
     } finally {
         setIsLoading(false);
     }
@@ -509,6 +521,11 @@ export function FinancePage() {
 
   // ✅ NUEVA FUNCIÓN: ANULAR VENTA Y DEVOLVER INVENTARIO
   const handleVoidSale = async (sale: Sale) => {
+      // Verificar que hay un turno abierto — sin turno activo no se puede registrar el reembolso
+      if (!activeShift) {
+          toast.error('Debes tener un turno de caja abierto para anular ventas.');
+          return;
+      }
       setIsLoading(true);
       try {
           const { bId, sId } = await getActiveCredentials();
@@ -523,9 +540,11 @@ export function FinancePage() {
               if (sale.customer_id) {
                   const customer = await db.customers.get(sale.customer_id);
                   if (customer) {
-                      const pointsToRemove = Math.floor(safeFloat(sale.total) / 10);
+                      // Quitar puntos ganados en esta venta y devolver los canjeados
+                      const pointsEarned = Math.floor(safeFloat(sale.total) / 10);
+                      const pointsRedeemed = sale.redeemed_points || 0;
                       await db.customers.update(sale.customer_id, {
-                          loyalty_points: Math.max(0, (customer.loyalty_points || 0) - pointsToRemove),
+                          loyalty_points: Math.max(0, (customer.loyalty_points || 0) - pointsEarned + pointsRedeemed),
                           sync_status: 'pending_update'
                       });
                   }
@@ -882,13 +901,20 @@ export function FinancePage() {
                                           {sale.status === 'stock_conflict' && (
                                               <button
                                                 onClick={async () => {
-                                                  await db.sales.update(sale.id, { status: 'completed', sync_status: 'pending_update' });
-                                                  toast.success('Venta marcada como completada. Revisa el inventario manualmente.');
+                                                  try {
+                                                    // Reintentar sync: resetear estado y agregar a la cola
+                                                    await db.sales.update(sale.id, { status: undefined, sync_status: 'pending_create' });
+                                                    await addToQueue('SALE', { sale: { ...sale, status: undefined, sync_status: 'pending_create' }, items: sale.items || [] });
+                                                    toast.info('Venta reenviada al servidor. Si hay stock suficiente se completará sola.', { duration: 6000 });
+                                                    syncPush().catch(() => {});
+                                                  } catch {
+                                                    toast.error('Error al reenviar la venta');
+                                                  }
                                                 }}
                                                 className="px-3 py-1.5 bg-orange-50 text-orange-700 rounded-lg font-bold text-xs hover:bg-orange-100 transition-colors flex items-center gap-1"
-                                                title="Marcar como completada (el stock NO fue descontado automáticamente — ajústalo manualmente)"
+                                                title="Reintentar sincronización con el servidor"
                                               >
-                                                ✓ Resolver
+                                                ↺ Reintentar
                                               </button>
                                           )}
                                           {sale.status !== 'voided' && sale.status !== 'stock_conflict' && (
@@ -1245,7 +1271,13 @@ export function FinancePage() {
                       const handleSuccess = () => {
                           pinAttemptsRef.current = 0;
                           if (pinModal.action === 'out') { setMovementType('out'); setAmount(''); }
-                          if (pinModal.action === 'close') { setIsClosing(true); setAmount(''); }
+                          if (pinModal.action === 'close') {
+                            setIsClosing(true);
+                            setClosingShiftStats(shiftStats); // capturar antes de que useLiveQuery lo anule
+                            setAmount('');
+                            // Pre-rellenar transferencias con el monto esperado para que el botón no quede bloqueado
+                            if (shiftStats) setTransferCount(shiftStats.transferSales > 0 ? String(shiftStats.transferSales.toFixed(2)) : '0');
+                          }
                           if (pinModal.action === 'void_sale' && pinModal.data) { handleVoidSale(pinModal.data); }
                           setPinModal({isOpen: false, action: null, data: null});
                           setPinInput('');
@@ -1327,15 +1359,16 @@ export function FinancePage() {
       )}
 
       {/* MODAL CIERRE */}
-      {isClosing && shiftStats && (() => {
-        const cashDiffPreview = amount !== '' ? safeFloat(amount) - shiftStats.expectedCash : null;
-        const transferDiffPreview = transferCount !== '' ? safeFloat(transferCount) - shiftStats.transferSales : null;
+      {isClosing && (closingShiftStats || shiftStats) && (() => {
+        const ss = closingShiftStats || shiftStats;
+        const cashDiffPreview = amount !== '' ? safeFloat(amount) - ss.expectedCash : null;
+        const transferDiffPreview = transferCount !== '' ? safeFloat(transferCount) - ss.transferSales : null;
         return (
         <div className="fixed inset-0 bg-[#0B3B68]/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
             <div className="bg-white rounded-2xl p-0 max-w-md w-full shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
                 <div className="bg-[#0B3B68] p-6 text-white flex justify-between items-center sticky top-0 z-10">
                     <h2 className="text-xl font-black flex items-center gap-2"><Lock className="text-[#7AC142]"/> CORTE DE CAJA</h2>
-                    <button onClick={() => { setIsClosing(false); setAmount(''); setTransferCount(''); }}><X className="text-gray-400 hover:text-white"/></button>
+                    <button onClick={() => { setIsClosing(false); setClosingShiftStats(null); setAmount(''); setTransferCount(''); }}><X className="text-gray-400 hover:text-white"/></button>
                 </div>
                 <div className="p-6 space-y-5">
                     {/* SECCIÓN EFECTIVO */}
@@ -1343,9 +1376,9 @@ export function FinancePage() {
                       <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mb-3">
                           <div className="flex justify-between items-center">
                               <span className="text-xs font-bold text-blue-600 uppercase flex items-center gap-1.5"><Wallet size={14}/> Efectivo Esperado</span>
-                              <span className="text-lg font-black text-[#0B3B68]">{formatMoney(shiftStats.expectedCash)}</span>
+                              <span className="text-lg font-black text-[#0B3B68]">{formatMoney(ss.expectedCash)}</span>
                           </div>
-                          <p className="text-[10px] text-blue-400 mt-1">Apertura {formatMoney(shiftStats.startAmount)} + Ventas {formatMoney(shiftStats.cashSales)} + Ingresos {formatMoney(shiftStats.cashIn)} − Retiros {formatMoney(shiftStats.cashOut)}</p>
+                          <p className="text-[10px] text-blue-400 mt-1">Apertura {formatMoney(ss.startAmount)} + Ventas {formatMoney(ss.cashSales)} + Ingresos {formatMoney(ss.cashIn)} − Retiros {formatMoney(ss.cashOut)}</p>
                       </div>
                       <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Conteo real de efectivo</label>
                       <div className="relative">
@@ -1368,9 +1401,9 @@ export function FinancePage() {
                       <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 mb-3">
                           <div className="flex justify-between items-center">
                               <span className="text-xs font-bold text-purple-600 uppercase flex items-center gap-1.5"><ArrowRightLeft size={14}/> Transferencias Esperadas</span>
-                              <span className="text-lg font-black text-purple-800">{formatMoney(shiftStats.transferSales)}</span>
+                              <span className="text-lg font-black text-purple-800">{formatMoney(ss.transferSales)}</span>
                           </div>
-                          <p className="text-[10px] text-purple-400 mt-1">{shiftData?.sales.filter(s => s.status !== 'voided' && ['transferencia','transfer'].includes(s.payment_method?.toLowerCase() || '')).length || 0} venta(s) por transferencia</p>
+                          <p className="text-[10px] text-purple-400 mt-1">{shiftData?.sales.filter(s => s.status !== 'voided' && ['transferencia','transfer','mixto'].includes(s.payment_method?.toLowerCase() || '')).length || 0} venta(s) con transferencia (incl. mixtas)</p>
                       </div>
                       <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Monto verificado en transferencias</label>
                       <div className="relative">

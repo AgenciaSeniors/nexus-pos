@@ -147,6 +147,9 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
 
       toast.success('¡Bienvenido a Bisne con Talla! Tienes 7 días de prueba gratuita.', { duration: 6000 });
 
+      // Marcar que es un registro nuevo para que Layout muestre la guía rápida
+      sessionStorage.setItem('nexus_new_registration', '1');
+
       // Entrar a la app directamente sin volver al login
       onRegistrationEnd();
       onEnterApp(authData.user.id);
