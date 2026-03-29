@@ -56,6 +56,8 @@ app.whenReady().then(() => {
         event.sender.print(options, (success, errorType) => {
             if (!success) console.log("❌ Error de impresión:", errorType);
             else console.log("✅ Impresión enviada correctamente");
+            // Notificar al renderer para mostrar toast al usuario
+            event.sender.send('print-ticket-result', success, errorType || null);
         });
     });
 });

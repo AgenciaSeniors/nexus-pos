@@ -1162,7 +1162,7 @@ export function FinancePage() {
                <button onClick={handlePrint} className="flex items-center gap-2 px-4 py-2 bg-[#0B3B68] text-white text-xs font-bold rounded-lg hover:bg-[#0B3B68]/90 transition-colors shadow-lg shadow-[#0B3B68]/30"><Printer size={16} /> Imprimir</button>
             </div>
           </div>
-          <div className="bg-white p-8 rounded-none md:rounded-3xl shadow-lg border border-gray-200 print:shadow-none print:border-none print:p-0">
+          <div id="printable-report" className="bg-white p-8 rounded-none md:rounded-3xl shadow-lg border border-gray-200 print:shadow-none print:border-none print:p-0">
              <div className="text-center mb-8 border-b border-dashed border-gray-300 pb-6">
                  <h1 className="text-2xl font-black text-[#0B3B68] uppercase tracking-widest mb-2">REPORTE Z</h1>
                  <p className="text-[#6B7280] font-mono text-xs">Bisne con Talla POS</p>
@@ -1216,6 +1216,20 @@ export function FinancePage() {
           </div>
         </div>
       )}
+
+      {/* CSS: aislar Reporte Z igual que TicketModal al imprimir */}
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #printable-report, #printable-report * { visibility: visible; }
+          #printable-report {
+            position: absolute; left: 0; top: 0;
+            width: 100%; margin: 0; padding: 16px;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+          }
+        }
+      `}</style>
 
       {/* ✅ PIN PAD MODAL PARA RETIROS, CIERRES Y ANULACIONES */}
       {pinModal.isOpen && (

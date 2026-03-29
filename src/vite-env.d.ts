@@ -7,5 +7,6 @@ interface Window {
   electronAPI?: {
     getVersion: () => Promise<string>;
     printTicket: () => void;
+    onPrintResult: (callback: (success: boolean, errorType: string | null) => void) => void;
   };
 }

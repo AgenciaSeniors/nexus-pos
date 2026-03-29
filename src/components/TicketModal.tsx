@@ -1,8 +1,9 @@
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../lib/db';
 import type { Sale, SaleItem, ParkedOrder } from '../lib/db';
 import { Printer, X, User, Star } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface TicketModalProps {
   sale?: Sale | null;
@@ -32,6 +33,18 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
 
   // Subtotal antes de descuento (suma de ítems)
   const itemsSubtotal = doc.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+
+  // Escuchar resultado de impresión en Electron y notificar al usuario
+  useEffect(() => {
+    if (!window.electronAPI?.onPrintResult) return;
+    window.electronAPI.onPrintResult((success: boolean, errorType: string | null) => {
+      if (success) {
+        toast.success('Ticket enviado a la impresora');
+      } else {
+        toast.error(`Error al imprimir: ${errorType || 'impresora no disponible'}`);
+      }
+    });
+  }, []);
 
   const handlePrint = () => {
     if (window.electronAPI) {
