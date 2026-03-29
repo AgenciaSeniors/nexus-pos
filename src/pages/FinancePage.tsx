@@ -600,7 +600,14 @@ export function FinancePage() {
     if (newStr <= today) setSelectedDate(newStr);
   };
   
-  const handlePrint = () => window.print();
+  // En Electron usar el IPC nativo (evita el "no admite vista previa" de Chromium)
+  const handlePrint = () => {
+    if (window.electronAPI) {
+      window.electronAPI.printTicket();
+    } else {
+      window.print();
+    }
+  };
   const COLORS = ['#0B3B68', '#7AC142', '#F59E0B', '#EF4444', '#6B7280'];
 
   if (activeShift === undefined || isInitialLoad) {
