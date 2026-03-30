@@ -49,7 +49,8 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   // Atajos de teclado F1/F2/F4/F5 desde Electron (main process → preload → renderer)
   useEffect(() => {
     if (!window.electronAPI?.onNavigate) return;
-    window.electronAPI.onNavigate((path: string) => navigate(path));
+    const cleanup = window.electronAPI.onNavigate((path: string) => navigate(path));
+    return cleanup; // preload retorna función que elimina el listener de ipcRenderer
   }, [navigate]);
 
   // Escuchar alertas de stock negativo (conflicto multi-dispositivo offline)

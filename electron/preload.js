@@ -13,7 +13,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
 
     // Escucha eventos de navegación por teclado (F1/F2/F4/F5)
+    // Retorna una función para cancelar el listener (cleanup en useEffect)
     onNavigate: (callback) => {
-        ipcRenderer.on('navigate', (_event, path) => callback(path));
+        const handler = (_event, path) => callback(path);
+        ipcRenderer.on('navigate', handler);
+        return () => ipcRenderer.removeListener('navigate', handler);
     }
 });

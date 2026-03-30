@@ -370,6 +370,8 @@ export function PosPage() {
         console.error("❌ Error crítico en transacción de venta:", error);
         if (error instanceof Error && (error.name === 'TransactionInactiveError' || error.name === 'AbortError')) {
             toast.error("Error de concurrencia en base de datos. Por favor intente de nuevo.");
+        } else if (error instanceof Error && error.message.startsWith('Stock insuficiente')) {
+            toast.error(error.message);
         } else {
             toast.error("Error al procesar la venta. Verifique el stock.");
         }

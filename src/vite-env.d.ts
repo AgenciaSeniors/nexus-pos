@@ -8,6 +8,6 @@ interface Window {
     getVersion: () => Promise<string>;
     printTicket: () => void;
     onPrintResult: (callback: (success: boolean, errorType: string | null) => void) => void;
-    onNavigate: (callback: (path: string) => void) => void;
+    onNavigate: (callback: (path: string) => void) => (() => void);
   };
 }

@@ -226,12 +226,6 @@ export class NexusDB extends Dexie {
       cash_movements: 'id, shift_id, business_id, [shift_id+business_id], created_at'
     });
 
-    // v10: elimina la tabla local `inventory_movements` que era un duplicado de `movements`
-    // (el servidor Supabase sí usa esa tabla, pero localmente siempre usamos `movements`)
-    this.version(10).stores({
-      inventory_movements: null // DROP tabla local no utilizada
-    });
-
     this.version(9).upgrade(async (trans) => {
       console.log('🔄 Migrando base de datos a versión 9...');
       const shifts = await trans.table('cash_shifts').toArray();
@@ -242,7 +236,7 @@ export class NexusDB extends Dexie {
           });
         }
       }
-      
+
       const sales = await trans.table('sales').toArray();
       for (const sale of sales) {
         if (typeof sale.total !== 'number') {
@@ -251,6 +245,12 @@ export class NexusDB extends Dexie {
           });
         }
       }
+    });
+
+    // v10: elimina la tabla local `inventory_movements` (duplicado de `movements`)
+    // El servidor Supabase sí usa esa tabla, pero localmente siempre usamos `movements`
+    this.version(10).stores({
+      inventory_movements: null // DROP tabla local no utilizada
     });
   }
 }
