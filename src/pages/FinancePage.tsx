@@ -3,6 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff, type InventoryMovement } from '../lib/db';
 import { addToQueue, syncPull, syncPush, isOnline } from '../lib/sync';
+import { hashPin, verifyPin, isPinHashed } from '../lib/pin';
 import { supabase } from '../lib/supabase';
 import { logAuditAction } from '../lib/audit';
 import { currency } from '../lib/currency';
@@ -1353,27 +1354,38 @@ export function FinancePage() {
                           }
                       };
 
+                      const bId = localStorage.getItem('nexus_business_id');
+                      if (!bId) { handleFailure(); return; }
+
                       if (isOnline()) {
-                          // Verificación server-side: registra el intento y valida el PIN en Supabase
-                          const bId = localStorage.getItem('nexus_business_id');
-                          if (!bId) { handleFailure(); return; }
+                          // Enviar hash si el PIN local ya está hasheado (Supabase también lo tiene);
+                          // de lo contrario enviar texto plano (migración gradual).
+                          const pinToSend = masterPin && isPinHashed(masterPin)
+                              ? await hashPin(pinInput, bId)
+                              : pinInput;
                           const { data, error } = await supabase.rpc('verify_master_pin', {
-                              p_pin: pinInput,
+                              p_pin: pinToSend,
                               p_business_id: bId,
                           });
                           if (error) {
-                              // El servidor puede devolver error de bloqueo (rate limit)
                               handleFailure(error.message?.includes('bloqueado') ? error.message : undefined);
                           } else if (data === true) {
                               handleSuccess();
                           } else {
-                              handleFailure();
+                              // Fallback: si la verificación local pasa pero Supabase falló,
+                              // puede ser que el hash aún no se haya sincronizado — forzar push.
+                              if (masterPin && await verifyPin(pinInput, bId, masterPin)) {
+                                  handleSuccess();
+                                  syncPush().catch(() => {});
+                              } else {
+                                  handleFailure();
+                              }
                           }
                       } else {
-                          // Sin internet: verificación local con lockout cliente
+                          // Sin internet: verificación local (soporta hash y texto plano)
                           if (!masterPin) {
                               handleFailure('PIN maestro no configurado. Ve a Ajustes para establecerlo.');
-                          } else if (pinInput === masterPin) {
+                          } else if (await verifyPin(pinInput, bId, masterPin)) {
                               handleSuccess();
                           } else {
                               handleFailure();

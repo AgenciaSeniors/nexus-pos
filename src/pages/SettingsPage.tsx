@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff, type BusinessConfig } from '../lib/db';
 import { syncManualFull, syncPush, isOnline, addToQueue, retryFailedItems } from '../lib/sync';
 import { ADMIN_WHATSAPP_PHONE } from '../lib/config';
+import { hashPin, verifyPin, isPinHashed } from '../lib/pin';
 import { logAuditAction } from '../lib/audit';
 import { toast } from 'sonner';
 import {
@@ -66,7 +67,9 @@ export function SettingsPage() {
 
   const openEditStaff = (staff: Staff) => {
     setEditingStaff(staff);
-    setStaffForm({ name: staff.name, role: staff.role, pin: staff.pin });
+    // No cargar el PIN almacenado (puede ser hash); el campo queda vacío
+    // y solo se actualiza si el admin ingresa un nuevo PIN de 4 dígitos.
+    setStaffForm({ name: staff.name, role: staff.role, pin: '' });
     setShowStaffModal(true);
   };
 
@@ -74,18 +77,35 @@ export function SettingsPage() {
     e.preventDefault();
     if (!businessId) return;
     if (!staffForm.name.trim()) return toast.error('El nombre es obligatorio');
-    if (!/^\d{4}$/.test(staffForm.pin)) return toast.error('El PIN debe ser exactamente 4 dígitos');
 
-    // Validar PIN duplicado (excluir el mismo empleado al editar)
-    const pinTaken = (staffList || []).some(s => s.pin === staffForm.pin && s.id !== editingStaff?.id && s.active !== false);
-    if (pinTaken) return toast.error('Ese PIN ya lo usa otro empleado activo. Elige uno diferente.');
+    const isNewPin = staffForm.pin.length > 0;
+    if (isNewPin && !/^\d{4}$/.test(staffForm.pin)) return toast.error('El PIN debe ser exactamente 4 dígitos');
+    if (!editingStaff && !isNewPin) return toast.error('El PIN es obligatorio para un nuevo empleado');
 
     try {
+      const staffId = editingStaff?.id || crypto.randomUUID();
+
+      // Determinar el PIN final: hashear si es nuevo; mantener existente si está vacío al editar
+      let pinFinal: string;
+      if (isNewPin) {
+        // Verificar duplicados usando verifyPin (soporta hashes y texto plano)
+        const others = (staffList || []).filter(s => s.id !== editingStaff?.id && s.active !== false);
+        for (const s of others) {
+          if (await verifyPin(staffForm.pin, s.id, s.pin)) {
+            return toast.error('Ese PIN ya lo usa otro empleado activo. Elige uno diferente.');
+          }
+        }
+        pinFinal = await hashPin(staffForm.pin, staffId);
+      } else {
+        // Sin nuevo PIN al editar: conservar el PIN/hash actual
+        pinFinal = editingStaff!.pin;
+      }
+
       const staffRecord: Staff = {
-        id: editingStaff?.id || crypto.randomUUID(),
+        id: staffId,
         name: staffForm.name.trim(),
         role: staffForm.role,
-        pin: staffForm.pin,
+        pin: pinFinal,
         active: editingStaff?.active ?? true,
         business_id: businessId,
         sync_status: editingStaff ? 'pending_update' : 'pending_create'
@@ -134,7 +154,9 @@ export function SettingsPage() {
         address: settings.address || '',
         phone: settings.phone || '',
         receipt_message: settings.receipt_message || '¡Gracias por su compra!',
-        master_pin: settings.master_pin || '1234'
+        // Si el PIN almacenado ya es un hash, no lo cargamos en el campo:
+        // el admin ingresa un nuevo PIN solo si quiere cambiarlo.
+        master_pin: isPinHashed(settings.master_pin || '') ? '' : (settings.master_pin || '1234')
       });
     }
   }, [settings]);
@@ -142,17 +164,26 @@ export function SettingsPage() {
   const handleSaveBusiness = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!businessId) return;
-    if (!/^\d{4}$/.test(businessForm.master_pin)) return toast.error('El PIN debe ser exactamente 4 dígitos numéricos');
+
+    const isNewPin = businessForm.master_pin.length > 0;
+    if (isNewPin && !/^\d{4}$/.test(businessForm.master_pin)) return toast.error('El PIN debe ser exactamente 4 dígitos numéricos');
+    if (!isNewPin && !isPinHashed(settings?.master_pin || '')) return toast.error('El PIN maestro es obligatorio');
+
     setIsLoading(true);
 
     try {
+        // Usar el PIN hasheado nuevo, o conservar el existente si no se cambió
+        const pinFinal = isNewPin
+          ? await hashPin(businessForm.master_pin, businessId)
+          : settings!.master_pin!;
+
         const updatedSettings: BusinessConfig = {
-            id: businessId, 
+            id: businessId,
             name: businessForm.name,
             address: businessForm.address,
             phone: businessForm.phone,
             receipt_message: businessForm.receipt_message,
-            master_pin: businessForm.master_pin, 
+            master_pin: pinFinal,
             status: 'active',
             sync_status: 'pending_update'
         };
@@ -389,8 +420,9 @@ export function SettingsPage() {
                                     <Key size={14}/> PIN Maestro de Seguridad
                                 </label>
                                 <p className="text-[10px] text-red-500 mb-2">Se pedirá para retirar dinero o anular ventas.</p>
-                                <input type="password" inputMode="numeric" maxLength={4} required value={businessForm.master_pin} onChange={e => setBusinessForm({...businessForm, master_pin: e.target.value.replace(/\D/g, '').slice(0, 4)})}
-                                    className="w-full p-3 border border-red-200 rounded-xl focus:ring-2 focus:ring-red-500 outline-none font-mono text-xl tracking-widest text-center" />
+                                <input type="password" inputMode="numeric" maxLength={4} value={businessForm.master_pin} onChange={e => setBusinessForm({...businessForm, master_pin: e.target.value.replace(/\D/g, '').slice(0, 4)})}
+                                    className="w-full p-3 border border-red-200 rounded-xl focus:ring-2 focus:ring-red-500 outline-none font-mono text-xl tracking-widest text-center"
+                                    placeholder={isPinHashed(settings?.master_pin || '') ? 'Dejar vacío = sin cambios' : '1234'} />
                             </div>
                         </div>
                         
@@ -742,14 +774,14 @@ export function SettingsPage() {
                       </div>
                       <div>
                           <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1 flex items-center gap-1">
-                              <Lock size={12}/> PIN (4 dígitos)
+                              <Lock size={12}/> PIN (4 dígitos){editingStaff && <span className="font-normal normal-case ml-1 text-gray-400">— vacío = sin cambios</span>}
                           </label>
                           <input
-                              type="password" inputMode="numeric" maxLength={4} required
+                              type="password" inputMode="numeric" maxLength={4}
                               value={staffForm.pin}
                               onChange={e => setStaffForm({...staffForm, pin: e.target.value.replace(/\D/g, '').slice(0, 4)})}
                               className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none font-mono text-2xl tracking-widest text-center"
-                              placeholder="••••"
+                              placeholder={editingStaff ? 'Dejar vacío = sin cambios' : '••••'}
                           />
                           <p className="text-[10px] text-[#6B7280] mt-1">El empleado usará este PIN para identificarse en cada dispositivo</p>
                       </div>

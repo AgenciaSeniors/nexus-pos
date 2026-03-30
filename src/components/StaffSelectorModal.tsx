@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff } from '../lib/db';
+import { verifyPin } from '../lib/pin';
 import { Users, Delete, Shield, UserCircle2 } from 'lucide-react';
 
 interface Props {
@@ -41,12 +42,10 @@ export function StaffSelectorModal({ businessId, onSelect, onClose }: Props) {
     setError('');
   };
 
-  const validatePin = (enteredPin: string) => {
+  const validatePin = async (enteredPin: string) => {
     if (!selected) return;
-    // Asegurar que el PIN almacenado sea numérico antes de comparar
-    const storedPin = selected.pin?.replace(/\D/g, '') || '';
-    const cleanEntered = enteredPin.replace(/\D/g, '');
-    if (storedPin && cleanEntered === storedPin) {
+    const isValid = await verifyPin(enteredPin, selected.id, selected.pin || '');
+    if (isValid) {
       localStorage.setItem('nexus_staff_id', selected.id);
       onSelect(selected);
     } else {
