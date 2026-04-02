@@ -165,10 +165,10 @@ export function CashShiftModal({
 
   return (
     <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-[#F3F4F6]">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 bg-[#F3F4F6] flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className={`w-9 h-9 rounded-full flex items-center justify-center ${iconBg}`}>
               <Icon size={18} className={iconColor} />
@@ -180,7 +180,7 @@ export function CashShiftModal({
           </button>
         </div>
 
-        <form onSubmit={submitHandler} className="p-5 space-y-4">
+        <form onSubmit={submitHandler} className="flex-1 overflow-y-auto p-5 space-y-4">
 
           {/* MODO MOVIMIENTO: selector de tipo */}
           {isMovement && (

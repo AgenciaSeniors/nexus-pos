@@ -32,9 +32,20 @@ export function PaymentModal({ total, customer, onConfirm, onCancel }: PaymentMo
   const [redeemedPoints, setRedeemedPoints] = useState(0);
 
   const availablePoints = customer?.loyalty_points || 0;
+  // Max points = min of what customer has AND what would cover the total (1pt = $0.10)
   const maxRedeemable = Math.min(availablePoints, Math.floor(total / 0.10));
   const pointsDiscount = Math.round(redeemedPoints * 0.10 * 100) / 100;
   const effectiveTotal = Math.max(0, Math.round((total - pointsDiscount) * 100) / 100);
+
+  // Clamp redeemed points if they exceed max (can happen if total changes)
+  useEffect(() => {
+    if (redeemedPoints > maxRedeemable) setRedeemedPoints(maxRedeemable);
+  }, [maxRedeemable, redeemedPoints]);
+
+  // If effective total hits 0, mixto doesn't make sense — switch to efectivo
+  useEffect(() => {
+    if (effectiveTotal <= 0 && method === 'mixto') setMethod('efectivo');
+  }, [effectiveTotal, method]);
 
   // Efectivo
   const tenderedValue = parseFloat(tendered) || 0;
@@ -171,11 +182,12 @@ export function PaymentModal({ total, customer, onConfirm, onCancel }: PaymentMo
                 <button
                   key={key}
                   onClick={() => selectMethod(key)}
+                  disabled={key === 'mixto' && effectiveTotal <= 0}
                   className={`p-3 rounded-2xl border-2 flex flex-col items-center gap-1.5 transition-all ${
                     method === key
                       ? 'border-[#0B3B68] bg-[#0B3B68]/5 text-[#0B3B68]'
                       : 'border-gray-100 text-gray-400 hover:bg-gray-50 hover:border-gray-200'
-                  }`}
+                  } disabled:opacity-30 disabled:cursor-not-allowed`}
                 >
                   {icon}
                   <span className="font-bold text-xs">{label}</span>

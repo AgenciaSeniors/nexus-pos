@@ -208,6 +208,15 @@ async function _runQueue() {
 
       if (newRetries >= 5) {
           await db.action_queue.update(item.id, { status: 'failed', error: `ABANDONADO: ${errorMessage}` });
+          // Notificar al usuario que un item falló permanentemente
+          const typeLabels: Record<string, string> = {
+            SALE: 'Venta', PRODUCT_SYNC: 'Producto', CUSTOMER_SYNC: 'Cliente',
+            MOVEMENT: 'Movimiento', AUDIT: 'Auditoría', SETTINGS_SYNC: 'Configuración',
+            SHIFT: 'Turno', CASH_MOVEMENT: 'Mov. Caja', STAFF_SYNC: 'Empleado', VOID_SALE: 'Anulación'
+          };
+          window.dispatchEvent(new CustomEvent('nexus-sync-failed', {
+            detail: { type: typeLabels[item.type] || item.type, error: errorMessage }
+          }));
       } else {
           // Actualiza timestamp para calcular el backoff desde el último intento
           await db.action_queue.update(item.id, { status: 'pending', retries: newRetries, error: errorMessage, timestamp: Date.now() });
@@ -302,36 +311,32 @@ export async function syncCriticalData(businessId: string) {
   }
 }
 
-export function syncHeavyData(businessId: string): Promise<void> {
-  if (!isOnline()) return Promise.resolve();
+export async function syncHeavyData(businessId: string): Promise<{ products: number; customers: number }> {
+  if (!isOnline()) return { products: 0, customers: 0 };
 
-  const syncProducts = new Promise<void>(resolve => {
-    setTimeout(async () => {
-      try {
-        const productsData = await fetchAll('products', businessId);
-        if (productsData.length > 0) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const cleanProducts = productsData.map((p: any) => ({ ...p, sync_status: 'synced' }));
-          await safeBulkPut(db.products as never, cleanProducts);
-        }
-      } catch (error) { console.error(error); } finally { resolve(); }
-    }, 200);
-  });
+  const results = { products: 0, customers: 0 };
 
-  const syncCustomers = new Promise<void>(resolve => {
-    setTimeout(async () => {
-      try {
-        const customersData = await fetchAll('customers', businessId);
-        if (customersData.length > 0) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const cleanCustomers = customersData.map((c: any) => ({ ...c, sync_status: 'synced' }));
-          await safeBulkPut(db.customers as never, cleanCustomers);
-        }
-      } catch (error) { console.error(error); } finally { resolve(); }
-    }, 1000);
-  });
+  // Productos y clientes en paralelo, sin delays artificiales
+  const [productsData, customersData] = await Promise.all([
+    fetchAll('products', businessId),
+    fetchAll('customers', businessId)
+  ]);
 
-  return Promise.all([syncProducts, syncCustomers]).then(() => undefined);
+  if (productsData.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cleanProducts = productsData.map((p: any) => ({ ...p, sync_status: 'synced' }));
+    await safeBulkPut(db.products as never, cleanProducts);
+    results.products = cleanProducts.length;
+  }
+
+  if (customersData.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cleanCustomers = customersData.map((c: any) => ({ ...c, sync_status: 'synced' }));
+    await safeBulkPut(db.customers as never, cleanCustomers);
+    results.customers = cleanCustomers.length;
+  }
+
+  return results;
 }
 
 export async function syncBusinessProfile(businessId: string) {
@@ -447,7 +452,7 @@ export async function syncLiveData() {
         // 4. Stock actualizado (productos pueden haber sido vendidos desde otro dispositivo)
         const { data: productsData } = await supabase
             .from('products')
-            .select('id, stock, price, cost, name, category, unit, sku, business_id, deleted_at')
+            .select('id, stock, stock_warehouse, price, cost, name, category, unit, sku, business_id, deleted_at')
             .eq('business_id', businessId);
 
         if (productsData && productsData.length > 0) {
@@ -478,7 +483,7 @@ if (typeof window !== 'undefined') {
             .then(() => syncLiveData())
             .catch(err => console.error("Error al procesar cola tras reconexión:", err));
     });
-    resetProcessingItems();
+    resetProcessingItems().catch(() => {});
     // Push + Pull cada 30 segundos. Se omite si la app está en background
     // (document.hidden = true en Android/Capacitor y Electron al minimizar)
     setInterval(() => {
@@ -501,10 +506,10 @@ if (typeof window !== 'undefined') {
         }
     }, 30000);
 
-    // Al volver al primer plano: sincronizar inmediatamente si hay pendientes
+    // Al volver al primer plano: resetear items pegados y sincronizar
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden && isOnline() && db.isOpen()) {
-            processQueue().catch(() => {});
+            resetProcessingItems().then(() => processQueue()).catch(() => {});
         }
     });
 }

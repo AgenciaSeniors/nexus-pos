@@ -8,6 +8,7 @@ export interface Product {
   price: number;
   cost?: number;
   stock: number;
+  stock_warehouse?: number;
   sku: string;
   category?: string;
   unit?: string;

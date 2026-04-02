@@ -69,11 +69,17 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
         { duration: 10000 }
       );
     };
+    const handleSyncFailed = (e: Event) => {
+      const { type, error } = (e as CustomEvent).detail;
+      toast.error(`Sincronización fallida: ${type}. ${error?.includes('Failed to fetch') ? 'Sin conexión al servidor.' : error?.slice(0, 80) || 'Error desconocido.'}`, { duration: 8000 });
+    };
     window.addEventListener('nexus-stock-alert', handleStockAlert);
     window.addEventListener('nexus-stock-conflict', handleStockConflict);
+    window.addEventListener('nexus-sync-failed', handleSyncFailed);
     return () => {
       window.removeEventListener('nexus-stock-alert', handleStockAlert);
       window.removeEventListener('nexus-stock-conflict', handleStockConflict);
+      window.removeEventListener('nexus-sync-failed', handleSyncFailed);
     };
   }, []);
 
@@ -124,16 +130,13 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
       .where('business_id').equals(bId)
       .filter(p => !p.deleted_at)
       .toArray();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const now = Date.now();
     let count = 0;
     for (const p of products) {
-      const threshold = (p as any).low_stock_threshold ?? 5;
+      const threshold = p.low_stock_threshold ?? 5;
       if (p.stock <= threshold) count++;
       if (p.expiration_date) {
-        const exp = new Date(p.expiration_date);
-        exp.setHours(0, 0, 0, 0);
-        const days = Math.ceil((exp.getTime() - today.getTime()) / 86400000);
+        const days = Math.ceil((new Date(p.expiration_date).getTime() - now) / 86400000);
         if (days <= 90) count++;
       }
     }

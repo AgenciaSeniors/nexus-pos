@@ -138,7 +138,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
                 throw new Error("Tu cuenta ha sido suspendida.");
             }
 
-            if (isMounted) setLoadingMessage('Sincronizando configuración y catálogo...');
+            if (isMounted) setLoadingMessage('Sincronizando configuración...');
             await syncCriticalData(profile.business_id);
 
             // Verificar trial después de sincronizar (businesses.status se habrá descargado)
@@ -149,8 +149,16 @@ export function AuthGuard({ children }: AuthGuardProps) {
               return;
             }
 
-            toast.info("Descargando inventario de fondo...", { duration: 5000 });
-            syncHeavyData(profile.business_id);
+            if (isMounted) setLoadingMessage('Descargando productos y clientes...');
+            try {
+              const result = await syncHeavyData(profile.business_id);
+              if (result.products > 0 || result.customers > 0) {
+                toast.success(`Listo: ${result.products} productos, ${result.customers} clientes descargados.`, { duration: 4000 });
+              }
+            } catch (syncErr) {
+              console.warn("Error descargando inventario:", syncErr);
+              toast.warning("No se pudo descargar el inventario completo. Usa el botón de Sincronizar para reintentar.", { duration: 6000 });
+            }
 
             if (isMounted) setLoading(false);
 

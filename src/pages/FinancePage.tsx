@@ -944,23 +944,31 @@ export function FinancePage() {
                                       <div className="flex justify-center gap-2">
                                           <button onClick={() => setSelectedTicket(sale)} className="px-3 py-1.5 bg-gray-100 text-[#1F2937] rounded-lg font-bold text-xs hover:bg-gray-200 transition-colors">Ver</button>
                                           {sale.status === 'stock_conflict' && (
+                                              <>
                                               <button
                                                 onClick={async () => {
                                                   try {
-                                                    // Reintentar sync: resetear estado y agregar a la cola
-                                                    await db.sales.update(sale.id, { status: undefined, sync_status: 'pending_create' });
-                                                    await addToQueue('SALE', { sale: { ...sale, status: undefined, sync_status: 'pending_create' }, items: sale.items || [] });
-                                                    toast.info('Venta reenviada al servidor. Si hay stock suficiente se completará sola.', { duration: 6000 });
+                                                    await db.sales.update(sale.id, { status: 'completed' as any, sync_status: 'pending_update' });
+                                                    await addToQueue('SALE', { sale: { ...sale, status: 'completed', sync_status: 'pending_update' }, items: sale.items || [] });
+                                                    toast.success('Venta aceptada. El stock puede quedar negativo — ajústalo manualmente.', { duration: 5000 });
                                                     syncPush().catch(() => {});
                                                   } catch {
-                                                    toast.error('Error al reenviar la venta');
+                                                    toast.error('Error al aceptar la venta');
                                                   }
                                                 }}
-                                                className="px-3 py-1.5 bg-orange-50 text-orange-700 rounded-lg font-bold text-xs hover:bg-orange-100 transition-colors flex items-center gap-1"
-                                                title="Reintentar sincronización con el servidor"
+                                                className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg font-bold text-xs hover:bg-green-100 transition-colors"
+                                                title="Aceptar venta con stock negativo"
                                               >
-                                                ↺ Reintentar
+                                                Aceptar
                                               </button>
+                                              <button
+                                                onClick={() => setVoidConfirmSale(sale)}
+                                                className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg font-bold text-xs hover:bg-red-100 transition-colors flex items-center gap-1"
+                                                title="Anular venta y devolver stock"
+                                              >
+                                                <Ban size={12}/> Anular
+                                              </button>
+                                              </>
                                           )}
                                           {sale.status !== 'voided' && sale.status !== 'stock_conflict' && (
                                               <button onClick={() => setVoidConfirmSale(sale)} className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg font-bold text-xs hover:bg-red-100 transition-colors flex items-center gap-1">
@@ -1279,16 +1287,16 @@ export function FinancePage() {
       {/* ✅ PIN PAD MODAL PARA RETIROS, CIERRES Y ANULACIONES */}
       {pinModal.isOpen && (
         <div className="fixed inset-0 bg-[#0B3B68]/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-           <div className="bg-white rounded-3xl p-6 max-w-xs w-full shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
-              <div className="text-center mb-6">
-                  <div className="w-16 h-16 bg-[#EF4444]/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <Lock className="text-[#EF4444] w-8 h-8" />
+           <div className="bg-white rounded-3xl max-w-xs w-full max-h-[92vh] overflow-y-auto shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
+              <div className="text-center p-5 pb-0">
+                  <div className="w-14 h-14 bg-[#EF4444]/10 rounded-full flex items-center justify-center mx-auto mb-3">
+                      <Lock className="text-[#EF4444] w-7 h-7" />
                   </div>
-                  <h2 className="text-xl font-black text-[#1F2937]">Acceso Restringido</h2>
+                  <h2 className="text-lg font-black text-[#1F2937]">Acceso Restringido</h2>
                   <p className="text-xs text-[#6B7280] mt-1">Ingresa el PIN Maestro para continuar</p>
               </div>
-              
-              <div className="mb-6">
+
+              <div className="px-5 mt-4 mb-4">
                   <div className="flex justify-center gap-3 mb-2">
                       {[0,1,2,3].map(i => (
                           <div key={i} className={`w-4 h-4 rounded-full transition-all ${pinInput.length > i ? 'bg-[#0B3B68] scale-110' : 'bg-gray-200'}`}></div>
@@ -1306,23 +1314,24 @@ export function FinancePage() {
                   )}
               </div>
 
-              <div className="grid grid-cols-3 gap-3 mb-6">
+              <div className="grid grid-cols-3 gap-2 px-5 mb-4">
                   {[1,2,3,4,5,6,7,8,9].map(num => (
-                      <button key={num} disabled={pinLockSecondsLeft > 0} onClick={() => { if(pinInput.length < 4) setPinInput(pinInput + num) }} className="py-4 bg-gray-50 hover:bg-gray-100 rounded-xl text-xl font-black text-[#1F2937] transition-colors active:scale-95 disabled:opacity-30">
+                      <button key={num} disabled={pinLockSecondsLeft > 0} onClick={() => { if(pinInput.length < 4) setPinInput(pinInput + num) }} className="py-3.5 bg-gray-50 hover:bg-gray-100 rounded-xl text-xl font-black text-[#1F2937] transition-colors active:scale-95 disabled:opacity-30">
                           {num}
                       </button>
                   ))}
-                  <button onClick={() => { setPinModal({isOpen: false, action: null}); setPinInput(''); pinAttemptsRef.current = 0; pinLockedUntilRef.current = 0; setPinLockSecondsLeft(0); }} className="py-4 bg-red-50 hover:bg-red-100 rounded-xl text-red-500 font-bold transition-colors flex items-center justify-center">
-                      <X size={24}/>
+                  <button onClick={() => { setPinModal({isOpen: false, action: null}); setPinInput(''); pinAttemptsRef.current = 0; pinLockedUntilRef.current = 0; setPinLockSecondsLeft(0); }} className="py-3.5 bg-red-50 hover:bg-red-100 rounded-xl text-red-500 font-bold transition-colors flex items-center justify-center">
+                      <X size={22}/>
                   </button>
-                  <button disabled={pinLockSecondsLeft > 0} onClick={() => { if(pinInput.length < 4) setPinInput(pinInput + '0') }} className="py-4 bg-gray-50 hover:bg-gray-100 rounded-xl text-xl font-black text-[#1F2937] transition-colors active:scale-95 disabled:opacity-30">
+                  <button disabled={pinLockSecondsLeft > 0} onClick={() => { if(pinInput.length < 4) setPinInput(pinInput + '0') }} className="py-3.5 bg-gray-50 hover:bg-gray-100 rounded-xl text-xl font-black text-[#1F2937] transition-colors active:scale-95 disabled:opacity-30">
                       0
                   </button>
-                  <button disabled={pinLockSecondsLeft > 0} onClick={() => setPinInput(pinInput.slice(0, -1))} className="py-4 bg-gray-50 hover:bg-gray-100 rounded-xl text-[#6B7280] font-bold transition-colors flex items-center justify-center disabled:opacity-30">
-                      <ArrowLeft size={24}/>
+                  <button disabled={pinLockSecondsLeft > 0} onClick={() => setPinInput(pinInput.slice(0, -1))} className="py-3.5 bg-gray-50 hover:bg-gray-100 rounded-xl text-[#6B7280] font-bold transition-colors flex items-center justify-center disabled:opacity-30">
+                      <ArrowLeft size={22}/>
                   </button>
               </div>
 
+              <div className="px-5 pb-5">
               <button
                   onClick={async () => {
                       if (pinLockSecondsLeft > 0) return;
@@ -1393,10 +1402,11 @@ export function FinancePage() {
                       }
                   }}
                   disabled={pinInput.length < 4 || pinLockSecondsLeft > 0}
-                  className="w-full py-4 bg-[#0B3B68] text-white font-bold rounded-xl shadow-lg transition-all active:scale-[0.98] disabled:opacity-50"
+                  className="w-full py-3.5 bg-[#0B3B68] text-white font-bold rounded-xl shadow-lg transition-all active:scale-[0.98] disabled:opacity-50"
               >
                   {pinLockSecondsLeft > 0 ? `BLOQUEADO (${Math.floor(pinLockSecondsLeft/60)}:${String(pinLockSecondsLeft%60).padStart(2,'0')})` : 'VERIFICAR'}
               </button>
+              </div>
            </div>
         </div>
       )}
@@ -1404,7 +1414,7 @@ export function FinancePage() {
       {/* CONFIRMACIÓN ANTES DE ANULAR VENTA */}
       {voidConfirmSale && (
         <div className="fixed inset-0 bg-[#0B3B68]/70 z-[90] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-3xl p-5 max-w-sm w-full max-h-[92vh] overflow-y-auto shadow-2xl animate-in zoom-in-95 duration-200">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-12 h-12 bg-red-100 rounded-2xl flex items-center justify-center flex-shrink-0">
                 <Ban className="text-red-500 w-6 h-6" />
@@ -1448,7 +1458,7 @@ export function FinancePage() {
       {/* MODAL MOVIMIENTOS */}
       {movementType && (
         <div className="fixed inset-0 bg-[#0B3B68]/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <div className="bg-white rounded-2xl p-5 max-w-sm w-full max-h-[92vh] overflow-y-auto shadow-2xl">
                 <div className="flex justify-between items-center mb-4">
                     <h2 className={`text-xl font-black flex items-center gap-2 ${movementType === 'in' ? 'text-[#7AC142]' : 'text-[#EF4444]'}`}>
                         {movementType === 'in' ? 'INGRESO' : 'RETIRO'}

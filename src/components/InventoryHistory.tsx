@@ -124,11 +124,15 @@ function translateReason(reason: string) {
   const map: Record<string, string> = {
     'initial': 'Carga Inicial',
     'correction': 'Ajuste / Conteo',
+    'correction_warehouse': 'Ajuste Almacén',
     'sale': 'Venta',
     'restock': 'Compra / Ingreso',
+    'restock_warehouse': 'Ingreso a Almacén',
     'return': 'Devolución',
     'damage': 'Merma / Daño',
-    'gift': 'Regalo / Promo'
+    'damage_warehouse': 'Merma Almacén',
+    'gift': 'Regalo / Promo',
+    'transfer_to_display': 'Traslado a Vitrina'
   };
   return map[reason] || reason;
 }
@@ -136,9 +140,11 @@ function translateReason(reason: string) {
 function getReasonStyle(reason: string) {
     switch (reason) {
         case 'sale': return 'bg-white border-slate-200 text-slate-500';
-        case 'restock': return 'bg-blue-50 border-blue-100 text-blue-600';
-        case 'damage': return 'bg-red-50 border-red-100 text-red-600';
+        case 'restock': case 'restock_warehouse': return 'bg-blue-50 border-blue-100 text-blue-600';
+        case 'damage': case 'damage_warehouse': return 'bg-red-50 border-red-100 text-red-600';
         case 'initial': return 'bg-indigo-50 border-indigo-100 text-indigo-600';
+        case 'transfer_to_display': return 'bg-emerald-50 border-emerald-100 text-emerald-600';
+        case 'correction_warehouse': return 'bg-amber-50 border-amber-100 text-amber-600';
         default: return 'bg-slate-50 border-slate-200 text-slate-600';
     }
 }

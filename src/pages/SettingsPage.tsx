@@ -44,7 +44,7 @@ export function SettingsPage() {
     address: '',
     phone: '',
     receipt_message: '¡Gracias por su compra!',
-    master_pin: '1234'
+    master_pin: ''
   });
 
   const [showResetDbConfirm, setShowResetDbConfirm] = useState(false);
@@ -156,7 +156,7 @@ export function SettingsPage() {
         receipt_message: settings.receipt_message || '¡Gracias por su compra!',
         // Si el PIN almacenado ya es un hash, no lo cargamos en el campo:
         // el admin ingresa un nuevo PIN solo si quiere cambiarlo.
-        master_pin: isPinHashed(settings.master_pin || '') ? '' : (settings.master_pin || '1234')
+        master_pin: isPinHashed(settings.master_pin || '') ? '' : (settings.master_pin || '')
       });
     }
   }, [settings]);
@@ -422,7 +422,7 @@ export function SettingsPage() {
                                 <p className="text-[10px] text-red-500 mb-2">Se pedirá para retirar dinero o anular ventas.</p>
                                 <input type="password" inputMode="numeric" maxLength={4} value={businessForm.master_pin} onChange={e => setBusinessForm({...businessForm, master_pin: e.target.value.replace(/\D/g, '').slice(0, 4)})}
                                     className="w-full p-3 border border-red-200 rounded-xl focus:ring-2 focus:ring-red-500 outline-none font-mono text-xl tracking-widest text-center"
-                                    placeholder={isPinHashed(settings?.master_pin || '') ? 'Dejar vacío = sin cambios' : '1234'} />
+                                    placeholder={isPinHashed(settings?.master_pin || '') ? 'Vacío = sin cambios' : 'Ej. 1234'} />
                             </div>
                         </div>
                         
@@ -740,8 +740,8 @@ export function SettingsPage() {
 
       {showStaffModal && (
           <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200">
-              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in-95 duration-200">
-                  <div className="flex justify-between items-center mb-5">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+                  <div className="flex justify-between items-center p-5 pb-0 flex-shrink-0">
                       <h3 className="font-bold text-lg text-[#1F2937] flex items-center gap-2">
                           <Users size={20} className="text-[#7AC142]"/>
                           {editingStaff ? 'Editar Empleado' : 'Nuevo Empleado'}
@@ -750,7 +750,7 @@ export function SettingsPage() {
                           <X size={20}/>
                       </button>
                   </div>
-                  <form onSubmit={handleSaveStaff} className="space-y-4">
+                  <form onSubmit={handleSaveStaff} className="flex-1 overflow-y-auto p-5 space-y-4">
                       <div>
                           <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Nombre</label>
                           <input
@@ -1082,7 +1082,7 @@ export function SettingsPage() {
 
       {showResetDbConfirm && (
           <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200">
-              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center animate-in zoom-in-95 duration-200">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[92vh] overflow-y-auto p-6 text-center animate-in zoom-in-95 duration-200">
                   <div className="w-14 h-14 bg-[#EF4444]/10 rounded-full flex items-center justify-center mx-auto mb-4">
                       <AlertTriangle size={28} className="text-[#EF4444]" />
                   </div>

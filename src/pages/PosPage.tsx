@@ -1,8 +1,8 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Product, type Sale, type ParkedOrder, type SaleItem, type Staff, type Customer } from '../lib/db';
-import { addToQueue, syncPush } from '../lib/sync';
+import { addToQueue, syncPush, syncPull, isOnline } from '../lib/sync';
 import { currency } from '../lib/currency';
 import { logAuditAction } from '../lib/audit';
 import { TicketModal } from '../components/TicketModal';
@@ -12,7 +12,7 @@ import { CustomerSelect } from '../components/CustomerSelect';
 import {
   PauseCircle, ClipboardList, Search, Barcode, Keyboard, AlertTriangle,
   Plus, Minus, X, Lock, ShoppingCart, ChevronRight, Package, Trash2, Edit3,
-  Tag, ArrowLeftRight
+  Tag, ArrowLeftRight, RefreshCw
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -65,6 +65,7 @@ export function PosPage() {
   // --- ESTADO VISUAL MÓVIL ---
   const [mobileView, setMobileView] = useState<'catalog' | 'cart'>('catalog');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // --- MULTI-VENDEDOR ---
   const multipleStaff = useLiveQuery(async () => {
@@ -110,6 +111,19 @@ export function PosPage() {
       if (!bId) return 0;
       return await db.parked_orders.where('business_id').equals(bId).count();
   }, []) || 0;
+
+  // Auto-limpiar órdenes estacionadas >48h
+  useEffect(() => {
+    const cleanup = async () => {
+      const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+      const old = await db.parked_orders.filter(o => new Date(o.date).getTime() < cutoff).primaryKeys();
+      if (old.length > 0) {
+        await db.parked_orders.bulkDelete(old);
+        toast.info(`${old.length} orden(es) pendiente(s) de hace más de 48h eliminada(s) automáticamente`);
+      }
+    };
+    cleanup().catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- FILTROS ---
   const categories = ['Todo', ...new Set(products.map(p => p.category || 'General'))];
@@ -402,6 +416,10 @@ export function PosPage() {
 
   const saveItemEditor = (itemId: string) => {
     const parsedPrice = parseFloat(editPrice);
+    if (!isNaN(parsedPrice) && parsedPrice <= 0) {
+      toast.warning('El precio debe ser mayor a 0');
+      return;
+    }
     setCart(prev => prev.map(i => {
       if (i.id !== itemId) return i;
       const newCustomPrice = !isNaN(parsedPrice) && parsedPrice > 0 && parsedPrice !== i.price
@@ -480,6 +498,27 @@ export function PosPage() {
                                 <h2 className="text-2xl font-black text-bisne-navy font-heading">¡Bienvenido!</h2>
                                 <p className="text-sm text-text-secondary mt-1">Sigue estos pasos para empezar a vender</p>
                             </div>
+                            {/* Botón de sincronización para dispositivos nuevos */}
+                            {isOnline() && (
+                              <button
+                                onClick={async () => {
+                                  setIsSyncing(true);
+                                  try {
+                                    await syncPull();
+                                    toast.success("Sincronización completada");
+                                  } catch {
+                                    toast.error("Error al sincronizar. Verifica tu conexión.");
+                                  } finally {
+                                    setIsSyncing(false);
+                                  }
+                                }}
+                                disabled={isSyncing}
+                                className="w-full mb-4 flex items-center justify-center gap-2 py-3 bg-[#7AC142] text-white rounded-xl font-bold hover:bg-[#5e9631] transition-all active:scale-95 disabled:opacity-70 shadow-lg shadow-[#7AC142]/20"
+                              >
+                                <RefreshCw size={18} className={isSyncing ? 'animate-spin' : ''} />
+                                {isSyncing ? 'Sincronizando...' : 'Sincronizar productos desde la nube'}
+                              </button>
+                            )}
                             <div className="space-y-3">
                                 <div className="flex items-center gap-4 bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
                                     <div className="w-9 h-9 rounded-xl bg-[#7AC142] flex items-center justify-center flex-shrink-0">
@@ -790,7 +829,10 @@ export function PosPage() {
                             <button
                                 onClick={() => {
                                     const v = parseFloat(discountInput) || 0;
-                                    if (v > 0) setDiscount({ type: discountType, value: v });
+                                    if (v <= 0) { setShowDiscountEditor(false); return; }
+                                    if (discountType === 'pct' && v > 100) { toast.warning('El descuento no puede superar el 100%'); return; }
+                                    if (discountType === 'fixed' && v > subtotal) { toast.warning('El descuento no puede superar el subtotal'); return; }
+                                    setDiscount({ type: discountType, value: v });
                                     setShowDiscountEditor(false);
                                 }}
                                 className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-bold hover:bg-amber-600 transition-colors"

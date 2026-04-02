@@ -447,7 +447,17 @@ function BusinessApp() {
           await db.staff.bulkDelete(duplicateAdmins.map(s => s.id));
         }
 
-        syncHeavyData(data.business_id).catch(() => {});
+        try {
+          const result = await syncHeavyData(data.business_id);
+          if (!isBackgroundSync && (result.products > 0 || result.customers > 0)) {
+            toast.success(`Sincronizado: ${result.products} productos, ${result.customers} clientes`, { duration: 3000 });
+          }
+        } catch (syncErr) {
+          console.warn("Error en syncHeavyData:", syncErr);
+          if (!isBackgroundSync) {
+            toast.warning("No se pudo descargar todo el inventario. Sincroniza manualmente desde Ajustes.", { duration: 5000 });
+          }
+        }
       }
     } catch (error: any) {
       console.error("Error obteniendo perfil:", error);

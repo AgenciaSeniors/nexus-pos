@@ -338,12 +338,12 @@ export function CustomersPage() {
       {/* --- MODAL DETALLES (CRM) --- */}
       {isDetailsOpen && selectedCustomer && (
           <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden">
                   
                   {/* Header del Modal */}
-                  <div className="p-6 bg-[#F3F4F6] border-b border-gray-200 flex justify-between items-start">
-                      <div className="flex items-center gap-4">
-                          <div className="w-16 h-16 bg-[#0B3B68] rounded-full flex items-center justify-center text-white font-bold text-2xl shadow-lg border-2 border-white">
+                  <div className="p-4 bg-[#F3F4F6] border-b border-gray-200 flex justify-between items-start flex-shrink-0">
+                      <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 bg-[#0B3B68] rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg border-2 border-white">
                               {selectedCustomer.name.substring(0,2).toUpperCase()}
                           </div>
                           <div>
@@ -453,7 +453,7 @@ export function CustomersPage() {
       {/* --- MODAL AJUSTE PUNTOS --- */}
       {isPointsModalOpen && selectedCustomer && (
           <div className="fixed inset-0 bg-[#0B3B68]/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
-              <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in duration-200">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in duration-200">
                   <div className="p-5 border-b border-gray-100 bg-[#F3F4F6] text-center">
                       <h3 className="font-bold text-[#1F2937]">Ajustar Puntos</h3>
                       <p className="text-xs text-[#6B7280]">Saldo actual: <span className="font-bold">{selectedCustomer.loyalty_points || 0}</span></p>
@@ -499,13 +499,13 @@ export function CustomersPage() {
       {/* --- MODAL FORMULARIO CLIENTE --- */}
       {isFormOpen && (
         <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
-                <div className="p-6 border-b border-gray-100 bg-[#F3F4F6] flex justify-between items-center">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in duration-200">
+                <div className="p-4 border-b border-gray-100 bg-[#F3F4F6] flex justify-between items-center flex-shrink-0">
                     <h2 className="text-xl font-bold text-[#1F2937]">{editingId ? 'Editar Cliente' : 'Nuevo Cliente'}</h2>
                     <button onClick={() => setIsFormOpen(false)} className="text-[#6B7280] hover:text-[#1F2937] text-2xl leading-none">&times;</button>
                 </div>
-                
-                <form onSubmit={handleSubmit} className="p-6 space-y-4">
+
+                <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-4">
                     <div>
                         <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Nombre Completo <span className="text-[#EF4444]">*</span></label>
                         <input autoFocus required type="text" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none"
@@ -545,7 +545,7 @@ export function CustomersPage() {
       {/* --- MODAL CONFIRMACIÓN ELIMINAR CLIENTE --- */}
       {deleteConfirmId && deleteConfirmCustomer && (
           <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4 animate-in fade-in duration-200">
-              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-6 text-center animate-in zoom-in-95 duration-200">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs max-h-[92vh] overflow-y-auto p-6 text-center animate-in zoom-in-95 duration-200">
                   <div className="w-14 h-14 bg-[#EF4444]/10 rounded-full flex items-center justify-center mx-auto mb-4">
                       <Trash2 size={28} className="text-[#EF4444]" />
                   </div>
