@@ -11,7 +11,8 @@ import {
   type CashShift,
   type CashMovement,
   type Staff,
-  type VoidSalePayload
+  type VoidSalePayload,
+  type PartialRefundPayload
 } from './db';
 import { supabase } from './supabase';
 import type { Table } from 'dexie';
@@ -158,6 +159,13 @@ async function processItem(item: QueueItem) {
         const { saleId } = payload as VoidSalePayload;
         const { error } = await supabase.from('sales').update({ status: 'voided' }).eq('id', saleId);
         if (error) throw new Error(`Error anulando venta: ${error.message}`);
+        await db.sales.update(saleId, { sync_status: 'synced' });
+        break;
+    }
+    case 'PARTIAL_REFUND': {
+        const { saleId, refunded_items } = payload as PartialRefundPayload;
+        const { error } = await supabase.from('sales').update({ status: 'partial_refund', refunded_items }).eq('id', saleId);
+        if (error) throw new Error(`Error registrando devolución: ${error.message}`);
         await db.sales.update(saleId, { sync_status: 'synced' });
         break;
     }

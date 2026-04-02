@@ -44,7 +44,7 @@ export interface Sale {
   payment_method: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto';
   amount_tendered?: number;
   change?: number;
-  status?: 'completed' | 'voided' | 'stock_conflict';
+  status?: 'completed' | 'voided' | 'stock_conflict' | 'partial_refund';
   // Descuento
   discount_amount?: number;
   discount_type?: 'percentage' | 'fixed';
@@ -54,7 +54,17 @@ export interface Sale {
   transfer_amount?: number;
   // Puntos canjeados
   redeemed_points?: number;
+  // Devoluciones parciales
+  refunded_items?: RefundedItem[];
   sync_status: 'synced' | 'pending_create' | 'pending_update';
+}
+
+export interface RefundedItem {
+  product_id: string;
+  name: string;
+  quantity: number;
+  amount: number;
+  date: string;
 }
 
 export interface InventoryMovement {
@@ -168,7 +178,8 @@ export interface AuditLog {
 }
 
 export type SalePayload = { sale: Sale; items: SaleItem[] };
-export type VoidSalePayload = { saleId: string }; // ✅ PAYLOAD PARA ANULAR VENTA
+export type VoidSalePayload = { saleId: string };
+export type PartialRefundPayload = { saleId: string; refunded_items: RefundedItem[] };
 
 export type QueuePayload = 
     | SalePayload 
@@ -180,11 +191,12 @@ export type QueuePayload =
     | CashShift      
     | CashMovement
     | Staff
-    | VoidSalePayload;
+    | VoidSalePayload
+    | PartialRefundPayload;
 
 export interface QueueItem {
   id: string;
-  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT' | 'STAFF_SYNC' | 'VOID_SALE';
+  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT' | 'STAFF_SYNC' | 'VOID_SALE' | 'PARTIAL_REFUND';
   payload: QueuePayload; 
   timestamp: number;
   retries: number;

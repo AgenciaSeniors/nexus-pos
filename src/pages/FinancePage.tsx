@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff, type InventoryMovement } from '../lib/db';
+import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff, type InventoryMovement, type RefundedItem } from '../lib/db';
 import { addToQueue, syncPull, syncPush, isOnline } from '../lib/sync';
 import { hashPin, verifyPin, isPinHashed } from '../lib/pin';
 import { supabase } from '../lib/supabase';
@@ -17,7 +17,7 @@ import {
   Calendar, TrendingUp, ArrowLeft, ArrowRight, RefreshCw,
   BarChart3, DollarSign, Wallet, PieChart as PieChartIcon, ClipboardCheck,
   Printer, Trophy, Lock, Unlock, PlusCircle, MinusCircle, ShoppingBag, Loader2, X,
-  ArrowRightLeft, History, Ban, TrendingDown, Users, Hash, Download
+  ArrowRightLeft, History, Ban, TrendingDown, Users, Hash, Download, RotateCcw, Package
 } from 'lucide-react';
 
 const EMPTY_ARRAY: never[] = [];
@@ -62,6 +62,10 @@ export function FinancePage() {
 
   // Confirmación antes de abrir el PIN para anular ventas
   const [voidConfirmSale, setVoidConfirmSale] = useState<Sale | null>(null);
+
+  // Devolución parcial
+  const [refundSale, setRefundSale] = useState<Sale | null>(null);
+  const [refundSelections, setRefundSelections] = useState<Record<string, number>>({});
 
   // ESTADOS DEL PIN PAD (Incluye 'void_sale' para anular ventas)
   const [pinModal, setPinModal] = useState<{isOpen: boolean, action: 'out' | 'close' | 'void_sale' | null, data?: any}>({isOpen: false, action: null});
@@ -596,6 +600,113 @@ export function FinancePage() {
       }
   };
 
+  // ── DEVOLUCIÓN PARCIAL ────────────────────────────────────
+  const openRefundModal = (sale: Sale) => {
+    setRefundSale(sale);
+    const selections: Record<string, number> = {};
+    (sale.items || []).forEach(item => { selections[item.product_id] = 0; });
+    setRefundSelections(selections);
+  };
+
+  const refundTotal = refundSale
+    ? (refundSale.items || []).reduce((sum, item) => {
+        const qty = refundSelections[item.product_id] || 0;
+        return sum + (qty * (item.custom_price ?? item.price));
+      }, 0)
+    : 0;
+
+  const handlePartialRefund = async () => {
+    if (!refundSale || !activeShift || refundTotal <= 0) return;
+    setIsLoading(true);
+    try {
+      const { bId, sId } = await getActiveCredentials();
+      const safeBid = bId || refundSale.business_id;
+      const staffPayload = { id: sId, name: currentStaff?.name || 'Cajero', business_id: safeBid };
+
+      const itemsToRefund = (refundSale.items || []).filter(item => (refundSelections[item.product_id] || 0) > 0);
+      if (itemsToRefund.length === 0) { toast.error('Selecciona al menos un producto'); setIsLoading(false); return; }
+
+      const refundedItems: RefundedItem[] = itemsToRefund.map(item => ({
+        product_id: item.product_id,
+        name: item.name,
+        quantity: refundSelections[item.product_id],
+        amount: refundSelections[item.product_id] * (item.custom_price ?? item.price),
+        date: new Date().toISOString()
+      }));
+
+      await db.transaction('rw', [db.sales, db.products, db.movements, db.cash_movements, db.customers, db.action_queue, db.audit_logs], async () => {
+        // 1. Devolver stock por cada item
+        for (const ri of refundedItems) {
+          const product = await db.products.get(ri.product_id);
+          if (product) {
+            const newStock = product.stock + ri.quantity;
+            await db.products.update(ri.product_id, { stock: newStock, sync_status: 'pending_update' });
+            await addToQueue('PRODUCT_SYNC', { ...product, stock: newStock, sync_status: 'pending_update' });
+
+            const mov: InventoryMovement = {
+              id: crypto.randomUUID(), business_id: safeBid, product_id: ri.product_id,
+              qty_change: ri.quantity, reason: `Devolución parcial - Venta #${refundSale.id.slice(0, 6)}`,
+              created_at: new Date().toISOString(), staff_id: sId, sync_status: 'pending_create'
+            };
+            await db.movements.add(mov);
+            await addToQueue('MOVEMENT', mov);
+          }
+        }
+
+        // 2. Movimiento de caja (reembolso) si fue efectivo/mixto
+        if (['efectivo', 'mixto'].includes(refundSale.payment_method)) {
+          const cashMov: CashMovement = {
+            id: crypto.randomUUID(), shift_id: activeShift.id, business_id: safeBid,
+            type: 'out', amount: refundTotal,
+            reason: `Devolución parcial - Venta #${refundSale.id.slice(0, 6)}`,
+            staff_id: sId, created_at: new Date().toISOString(), sync_status: 'pending_create'
+          };
+          await db.cash_movements.add(cashMov);
+          await addToQueue('CASH_MOVEMENT', cashMov);
+        }
+
+        // 3. Revertir puntos de lealtad proporcionalmente
+        if (refundSale.customer_id) {
+          const customer = await db.customers.get(refundSale.customer_id);
+          if (customer) {
+            const pointsToRevert = Math.floor(refundTotal / 10);
+            if (pointsToRevert > 0) {
+              await db.customers.update(refundSale.customer_id, {
+                loyalty_points: Math.max(0, (customer.loyalty_points || 0) - pointsToRevert),
+                sync_status: 'pending_update'
+              });
+            }
+          }
+        }
+
+        // 4. Actualizar venta con items devueltos
+        const existingRefunds = refundSale.refunded_items || [];
+        const allRefunds = [...existingRefunds, ...refundedItems];
+        await db.sales.update(refundSale.id, {
+          status: 'partial_refund',
+          refunded_items: allRefunds,
+          sync_status: 'pending_update'
+        });
+        await addToQueue('PARTIAL_REFUND', { saleId: refundSale.id, refunded_items: allRefunds });
+
+        // 5. Audit
+        await logAuditAction('PARTIAL_REFUND', {
+          sale_id: refundSale.id, refund_amount: refundTotal,
+          items: refundedItems.map(i => `${i.name} x${i.quantity}`)
+        }, staffPayload as any);
+      });
+
+      toast.success(`Devolución de ${currency.format(refundTotal)} procesada`);
+      setRefundSale(null);
+      syncPush().catch(() => {});
+    } catch (error) {
+      console.error(error);
+      toast.error('Error al procesar la devolución');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const changeDate = (days: number) => {
     // Parsear YYYY-MM-DD como fecha local (agregar T00:00 evita que JS lo interprete como UTC)
     const d = new Date(selectedDate + 'T00:00');
@@ -926,7 +1037,7 @@ export function FinancePage() {
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                           {allSales.map(sale => (
-                              <tr key={sale.id} className={`transition-colors ${sale.status === 'voided' ? 'bg-red-50/50 opacity-60' : sale.status === 'stock_conflict' ? 'bg-orange-50/60' : 'hover:bg-gray-50'}`}>
+                              <tr key={sale.id} className={`transition-colors ${sale.status === 'voided' ? 'bg-red-50/50 opacity-60' : sale.status === 'stock_conflict' ? 'bg-orange-50/60' : sale.status === 'partial_refund' ? 'bg-amber-50/40' : 'hover:bg-gray-50'}`}>
                                   <td className="p-4 font-mono text-[#6B7280]">
                                       {new Date(sale.date).toLocaleDateString()} <span className="ml-2">{new Date(sale.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
                                   </td>
@@ -936,6 +1047,8 @@ export function FinancePage() {
                                           ? <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full text-[10px] font-black uppercase">Anulada</span>
                                           : sale.status === 'stock_conflict'
                                           ? <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-[10px] font-black uppercase">⚠ Stock Insuficiente</span>
+                                          : sale.status === 'partial_refund'
+                                          ? <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-[10px] font-black uppercase">Dev. Parcial</span>
                                           : <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-[10px] font-black uppercase">Completada</span>
                                       }
                                   </td>
@@ -970,10 +1083,15 @@ export function FinancePage() {
                                               </button>
                                               </>
                                           )}
-                                          {sale.status !== 'voided' && sale.status !== 'stock_conflict' && (
+                                          {(sale.status === 'completed' || sale.status === 'partial_refund') && (
+                                              <>
+                                              <button onClick={() => openRefundModal(sale)} className="px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg font-bold text-xs hover:bg-amber-100 transition-colors flex items-center gap-1">
+                                                  <RotateCcw size={12}/> Devolución
+                                              </button>
                                               <button onClick={() => setVoidConfirmSale(sale)} className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg font-bold text-xs hover:bg-red-100 transition-colors flex items-center gap-1">
                                                   <Ban size={12}/> Anular
                                               </button>
+                                              </>
                                           )}
                                       </div>
                                   </td>
@@ -1347,6 +1465,9 @@ export function FinancePage() {
                             if (shiftStats) setTransferCount(shiftStats.transferSales > 0 ? String(shiftStats.transferSales.toFixed(2)) : '0');
                           }
                           if (pinModal.action === 'void_sale' && pinModal.data) { handleVoidSale(pinModal.data); }
+                          if (pinModal.action === 'partial_refund') {
+                            handlePartialRefund();
+                          }
                           setPinModal({isOpen: false, action: null, data: null});
                           setPinInput('');
                       };
@@ -1450,6 +1571,107 @@ export function FinancePage() {
               >
                 <Ban size={16} /> Continuar
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DEVOLUCIÓN PARCIAL */}
+      {refundSale && (
+        <div className="fixed inset-0 bg-[#0B3B68]/70 z-[90] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl w-full max-w-md max-h-[92vh] flex flex-col overflow-hidden shadow-2xl">
+            {/* Header */}
+            <div className="p-4 bg-amber-50 border-b border-amber-100 flex justify-between items-center flex-shrink-0">
+              <div>
+                <h2 className="text-lg font-black text-amber-800 flex items-center gap-2"><RotateCcw size={18}/> Devolución Parcial</h2>
+                <p className="text-xs text-amber-600 font-mono">Venta #{refundSale.id.slice(0, 8).toUpperCase()}</p>
+              </div>
+              <button onClick={() => setRefundSale(null)} className="p-1.5 text-amber-400 hover:text-amber-700 hover:bg-amber-100 rounded-full transition-colors"><X size={18}/></button>
+            </div>
+
+            {/* Items */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {(refundSale.items || []).map((item, idx) => {
+                const alreadyRefunded = (refundSale.refunded_items || [])
+                  .filter(r => r.product_id === item.product_id)
+                  .reduce((sum, r) => sum + r.quantity, 0);
+                const maxQty = item.quantity - alreadyRefunded;
+                const qty = refundSelections[item.product_id] || 0;
+                const itemTotal = qty * (item.custom_price ?? item.price);
+
+                if (maxQty <= 0) return (
+                  <div key={idx} className="bg-gray-50 rounded-xl p-3 opacity-50">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="font-bold text-sm text-gray-400">{item.name}</p>
+                        <p className="text-[10px] text-gray-400">Ya devuelto completamente</p>
+                      </div>
+                      <span className="text-xs font-bold text-gray-400">x{item.quantity}</span>
+                    </div>
+                  </div>
+                );
+
+                return (
+                  <div key={idx} className={`rounded-xl p-3 border-2 transition-all ${qty > 0 ? 'bg-amber-50 border-amber-300' : 'bg-white border-gray-100'}`}>
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-sm text-[#1F2937]">{item.name}</p>
+                        <p className="text-[10px] text-[#6B7280]">
+                          {currency.format(item.custom_price ?? item.price)} x {item.quantity} vendido(s)
+                          {alreadyRefunded > 0 && <span className="text-amber-600 ml-1">({alreadyRefunded} ya devuelto)</span>}
+                        </p>
+                      </div>
+                      {qty > 0 && <span className="text-xs font-black text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">{currency.format(itemTotal)}</span>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-[10px] font-bold text-[#6B7280] uppercase">Devolver:</label>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setRefundSelections(prev => ({ ...prev, [item.product_id]: Math.max(0, qty - 1) }))}
+                          className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center font-black text-[#6B7280] transition-colors"
+                        >-</button>
+                        <input
+                          type="number" min={0} max={maxQty} step={1}
+                          value={qty}
+                          onChange={e => setRefundSelections(prev => ({ ...prev, [item.product_id]: Math.min(maxQty, Math.max(0, parseInt(e.target.value) || 0)) }))}
+                          className="w-14 text-center font-bold border border-gray-200 rounded-lg py-1 text-sm outline-none focus:ring-2 focus:ring-amber-300"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setRefundSelections(prev => ({ ...prev, [item.product_id]: Math.min(maxQty, qty + 1) }))}
+                          className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center font-black text-[#6B7280] transition-colors"
+                        >+</button>
+                      </div>
+                      <span className="text-[10px] text-[#6B7280]">/ {maxQty} máx</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-gray-200 flex-shrink-0 space-y-3 bg-white">
+              {refundTotal > 0 && (
+                <div className="flex justify-between items-center bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  <span className="text-sm font-bold text-amber-800">Total a reembolsar</span>
+                  <span className="text-xl font-black text-amber-700">{currency.format(refundTotal)}</span>
+                </div>
+              )}
+              <div className="flex gap-3">
+                <button onClick={() => setRefundSale(null)} className="flex-1 py-3 border border-gray-200 text-[#6B7280] font-bold rounded-xl hover:bg-gray-50 transition-colors">
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => {
+                    setPinModal({ isOpen: true, action: 'partial_refund' as any, data: refundSale });
+                  }}
+                  disabled={refundTotal <= 0}
+                  className="flex-1 py-3 bg-amber-500 text-white font-bold rounded-xl hover:bg-amber-600 transition-colors shadow-lg shadow-amber-200 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  <RotateCcw size={16}/> Proceder
+                </button>
+              </div>
             </div>
           </div>
         </div>

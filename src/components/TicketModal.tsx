@@ -228,6 +228,19 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
                 </div>
             )}
 
+            {/* ITEMS DEVUELTOS */}
+            {!isPreBill && sale?.refunded_items && sale.refunded_items.length > 0 && (
+              <div className="pt-2 mt-2 border-t border-dashed border-red-300 text-xs">
+                <p className="font-black text-red-600 text-center mb-1">DEVOLUCIONES</p>
+                {sale.refunded_items.map((ri, idx) => (
+                  <div key={idx} className="flex justify-between text-red-600">
+                    <span>{ri.quantity}x {ri.name}</span>
+                    <span>-${ri.amount.toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* ADVERTENCIA SI ES PRE-CUENTA */}
             {isPreBill && (
                  <div className="pt-3 mt-3 border-t border-dashed border-slate-300 text-[10px] text-center font-bold">
