@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, session } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -75,6 +75,26 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+    // ─── CSP: Content Security Policy ────────────────────────────────────
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+        callback({
+            responseHeaders: {
+                ...details.responseHeaders,
+                'Content-Security-Policy': [
+                    "default-src 'self'; " +
+                    "script-src 'self'; " +
+                    "style-src 'self' 'unsafe-inline'; " +
+                    "img-src 'self' data: blob: https:; " +
+                    "font-src 'self' data:; " +
+                    "connect-src 'self' https://*.supabase.co wss://*.supabase.co; " +
+                    "frame-src 'none'; " +
+                    "object-src 'none'; " +
+                    "base-uri 'self';"
+                ]
+            }
+        });
+    });
+
     createWindow();
 
     // 1. Obtener versión

@@ -9,7 +9,7 @@
  * Los PINs se hashean automáticamente la próxima vez que el admin los guarda.
  */
 
-const PEPPER = 'nexus-pos-v1';
+const PEPPER = import.meta.env.VITE_PIN_PEPPER || 'nexus-pos-v1';
 
 /**
  * Hashea un PIN con el ID de la entidad como sal.

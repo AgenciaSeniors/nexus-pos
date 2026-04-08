@@ -29,7 +29,7 @@ function UpdatePasswordScreen({ onComplete }: { onComplete: () => void }) {
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password.length < 6) return toast.error("La contraseña debe tener al menos 6 caracteres");
+    if (password.length < 8) return toast.error("La contraseña debe tener al menos 8 caracteres");
     
     setLoading(true);
     try {
@@ -404,7 +404,7 @@ function BusinessApp() {
           id: data.id,
           name: data.full_name || data.email,
           role: 'admin',
-          pin: existingAdmin?.pin || '0000',
+          pin: existingAdmin?.pin || '',
           active: true,
           business_id: data.business_id
         };
