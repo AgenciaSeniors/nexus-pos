@@ -164,26 +164,42 @@ export function CustomersPage() {
         const customer = await db.customers.get(id);
         if (!customer) return;
 
+        // Verificar ventas activas del cliente
+        const customerSales = await db.sales
+          .where('business_id').equals(businessId)
+          .filter(s => s.customer_id === id && s.status !== 'voided')
+          .count();
+
         // Soft Delete: Marcamos fecha de borrado y pendiente de sync
-        const deleted = { 
-            ...customer, 
-            deleted_at: new Date().toISOString(), 
-            sync_status: 'pending_update' as const 
+        const deleted = {
+            ...customer,
+            deleted_at: new Date().toISOString(),
+            sync_status: 'pending_update' as const
         };
-        
+
         await db.transaction('rw', [db.customers, db.action_queue, db.audit_logs], async () => {
             await db.customers.put(deleted);
-            await addToQueue('CUSTOMER_SYNC', deleted); // <--- CLAVE PARA SYNC
-            await logAuditAction('DELETE_CUSTOMER', { name: customer.name }, currentStaff);
+            await addToQueue('CUSTOMER_SYNC', deleted);
+            await logAuditAction('DELETE_CUSTOMER', {
+              name: customer.name,
+              loyalty_points: customer.loyalty_points || 0,
+              sales_count: customerSales
+            }, currentStaff);
         });
-        
-        toast.success("Cliente eliminado");
+
+        const warnings: string[] = [];
+        if ((customer.loyalty_points || 0) > 0) warnings.push(`${customer.loyalty_points} puntos perdidos`);
+        if (customerSales > 0) warnings.push(`${customerSales} venta${customerSales > 1 ? 's' : ''} asociada${customerSales > 1 ? 's' : ''}`);
+
+        toast.success(warnings.length > 0
+          ? `Cliente eliminado (${warnings.join(', ')})`
+          : "Cliente eliminado");
         if (selectedCustomer?.id === id) setSelectedCustomer(null);
         syncPush().catch(console.error);
 
-    } catch (e) { 
+    } catch (e) {
         console.error(e);
-        toast.error("Error al eliminar"); 
+        toast.error("Error al eliminar");
     }
   };
 

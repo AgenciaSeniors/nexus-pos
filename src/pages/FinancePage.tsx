@@ -493,6 +493,14 @@ export function FinancePage() {
     if (val <= 0) return toast.error('Monto inválido');
     if (!reason.trim()) return toast.error('Debes indicar un motivo');
 
+    // Validar fondos suficientes para retiros
+    if (movementType === 'out' && shiftStats) {
+      if (val > shiftStats.expectedCash) {
+        toast.error(`Fondos insuficientes. Disponible en caja: ${formatMoney(shiftStats.expectedCash)}`);
+        return;
+      }
+    }
+
     setIsLoading(true);
     try {
         const { bId, sId } = await getActiveCredentials();
@@ -534,6 +542,13 @@ export function FinancePage() {
     if (!currentShift) { toast.error('No hay turno activo para cerrar.'); return; }
     const stats = shiftStats || closingShiftStats;
     if (!stats)        { toast.error('Los datos del turno aún están cargando. Intenta de nuevo.'); return; }
+
+    // Verificar ventas con conflicto de stock sin resolver
+    const conflictSales = shiftData?.sales?.filter(s => s.status === 'stock_conflict') || [];
+    if (conflictSales.length > 0) {
+      toast.error(`No puedes cerrar con ${conflictSales.length} venta${conflictSales.length > 1 ? 's' : ''} con conflicto de stock. Acépta o anula primero.`);
+      return;
+    }
 
     const finalCashCount = safeFloat(amount);
     const finalTransferCount = safeFloat(transferCount);

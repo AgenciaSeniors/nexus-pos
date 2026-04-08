@@ -520,11 +520,30 @@ export function InventoryPage() {
       const product = deleteConfirmProduct;
       setDeleteConfirmProduct(null);
       try {
+          // Contar ventas recientes que referencian este producto
+          const recentSales = await db.sales
+            .where('business_id').equals(businessId)
+            .filter(s => s.status !== 'voided' && (s.items || []).some(i => i.product_id === product.id))
+            .count();
+
           const deleted = { ...product, deleted_at: new Date().toISOString(), sync_status: 'pending_update' as const };
           await db.products.put(deleted);
           await addToQueue('PRODUCT_SYNC', deleted);
-          await logAuditAction('DELETE_PRODUCT', { name: product.name }, currentStaff);
-          toast.success("Producto eliminado");
+          await logAuditAction('DELETE_PRODUCT', {
+            product_id: product.id,
+            name: product.name,
+            sku: product.sku,
+            price: product.price,
+            cost: product.cost,
+            stock: product.stock,
+            stock_warehouse: product.stock_warehouse,
+            category: product.category,
+            sales_count: recentSales
+          }, currentStaff);
+
+          toast.success(recentSales > 0
+            ? `Producto eliminado (tenía ${recentSales} venta${recentSales > 1 ? 's' : ''} registrada${recentSales > 1 ? 's' : ''})`
+            : "Producto eliminado");
           syncPush().catch(console.error);
       } catch {
           toast.error("Error al eliminar");
