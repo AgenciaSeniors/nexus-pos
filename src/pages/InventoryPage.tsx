@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { db, type Product, type Staff, type InventoryMovement } from '../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -78,13 +78,14 @@ export function InventoryPage() {
   };
 
   const LOW_STOCK_DEFAULT = 5;
-  const lowStockProducts = products.filter(p => p.stock <= (p.low_stock_threshold ?? LOW_STOCK_DEFAULT));
-  const expiringProducts = products.filter(p => {
+  const { lowStockProducts, expiringProducts, totalAlerts } = useMemo(() => {
+    const low = products.filter(p => p.stock <= (p.low_stock_threshold ?? LOW_STOCK_DEFAULT));
+    const expiring = products.filter(p => {
       const days = getDaysUntilExpiration(p.expiration_date);
-      return days !== null && days <= 90; // Vencidos o vencen en <= 90 días
-  });
-
-  const totalAlerts = lowStockProducts.length + expiringProducts.length;
+      return days !== null && days <= 90;
+    });
+    return { lowStockProducts: low, expiringProducts: expiring, totalAlerts: low.length + expiring.length };
+  }, [products]);
 
   // --- 1. GUARDAR PRODUCTO ---
   const handleSubmitProduct = async (e: React.FormEvent) => {
@@ -418,9 +419,13 @@ export function InventoryPage() {
     setImportedCount(0);
 
     const total = importResults.valid.length;
-    let imported = 0;
+    const BATCH_SIZE = 50;
 
     try {
+      // Preparar todos los datos primero
+      const allProducts: Product[] = [];
+      const allMovements: InventoryMovement[] = [];
+
       for (const item of importResults.valid) {
         const product: Product = {
           id: crypto.randomUUID(),
@@ -438,33 +443,39 @@ export function InventoryPage() {
           created_at: new Date().toISOString(),
           sync_status: 'pending_create',
         };
+        allProducts.push(product);
 
-        await db.products.add(product);
-        await addToQueue('PRODUCT_SYNC', product);
-
-        // Create inventory movements for initial stock
         if (product.stock > 0) {
-          const mov: InventoryMovement = {
+          allMovements.push({
             id: crypto.randomUUID(), business_id: businessId, product_id: product.id,
             staff_id: currentStaff.id, qty_change: product.stock,
             reason: 'initial', created_at: new Date().toISOString(), sync_status: 'pending_create'
-          };
-          await db.movements.add(mov);
-          await addToQueue('MOVEMENT', mov);
+          });
         }
         if ((product.stock_warehouse ?? 0) > 0) {
-          const mov: InventoryMovement = {
+          allMovements.push({
             id: crypto.randomUUID(), business_id: businessId, product_id: product.id,
             staff_id: currentStaff.id, qty_change: product.stock_warehouse!,
             reason: 'restock_warehouse', created_at: new Date().toISOString(), sync_status: 'pending_create'
-          };
-          await db.movements.add(mov);
-          await addToQueue('MOVEMENT', mov);
+          });
         }
+      }
 
-        imported++;
+      // Insertar en lotes con bulkAdd
+      let imported = 0;
+      for (let i = 0; i < allProducts.length; i += BATCH_SIZE) {
+        const batch = allProducts.slice(i, i + BATCH_SIZE);
+        await db.products.bulkAdd(batch);
+        for (const p of batch) await addToQueue('PRODUCT_SYNC', p);
+        imported += batch.length;
         setImportedCount(imported);
         setImportProgress(Math.round((imported / total) * 100));
+      }
+
+      // Movimientos en bulk
+      if (allMovements.length > 0) {
+        await db.movements.bulkAdd(allMovements);
+        for (const m of allMovements) await addToQueue('MOVEMENT', m);
       }
 
       await logAuditAction('CREATE_PRODUCT', { action: 'csv_import', count: imported }, currentStaff);
@@ -473,7 +484,7 @@ export function InventoryPage() {
       toast.success(`${imported} productos importados correctamente`);
     } catch (error) {
       console.error('Import error:', error);
-      toast.error(`Error durante la importación. ${imported} de ${total} importados.`);
+      toast.error(`Error durante la importación.`);
       setImportStep('done');
     }
   };

@@ -67,6 +67,10 @@ export function FinancePage() {
   const [refundSale, setRefundSale] = useState<Sale | null>(null);
   const [refundSelections, setRefundSelections] = useState<Record<string, number>>({});
 
+  // Paginación tabla de ventas
+  const [salesPage, setSalesPage] = useState(1);
+  const SALES_PER_PAGE = 50;
+
   // ESTADOS DEL PIN PAD (Incluye 'void_sale' para anular ventas)
   const [pinModal, setPinModal] = useState<{isOpen: boolean, action: 'out' | 'close' | 'void_sale' | null, data?: any}>({isOpen: false, action: null});
   const [pinInput, setPinInput] = useState('');
@@ -140,13 +144,19 @@ export function FinancePage() {
     if (!bId) return [];
     if (viewMode !== 'history' && viewMode !== 'daily' && viewMode !== 'trends' && viewMode !== 'closing') return [];
 
-    // En modo rango, cargar datos suficientes para cubrir el rango seleccionado
-    const cutoffDays = (viewMode === 'daily' && reportMode === 'range') ? 90 : 30;
     const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - cutoffDays);
+    if (viewMode === 'daily' && reportMode === 'range' && dateFrom) {
+      // En modo rango, cargar desde la fecha inicial del rango
+      cutoff.setTime(new Date(dateFrom).getTime());
+    } else if (viewMode === 'daily' && reportMode === 'day') {
+      // En modo día, cargar solo 3 días (ayer, hoy, mañana buffer)
+      cutoff.setDate(cutoff.getDate() - 3);
+    } else {
+      cutoff.setDate(cutoff.getDate() - 30);
+    }
 
     return await db.sales.where('business_id').equals(bId).filter(s => s.date >= cutoff.toISOString()).reverse().sortBy('date');
-  }, [viewMode, reportMode]) || EMPTY_ARRAY;
+  }, [viewMode, reportMode, dateFrom]) || EMPTY_ARRAY;
 
   useEffect(() => {
     if (activeShift !== undefined) {
@@ -1101,7 +1111,7 @@ export function FinancePage() {
                           </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
-                          {allSales.map(sale => (
+                          {allSales.slice(0, salesPage * SALES_PER_PAGE).map(sale => (
                               <tr key={sale.id} className={`transition-colors ${sale.status === 'voided' ? 'bg-red-50/50 opacity-60' : sale.status === 'stock_conflict' ? 'bg-orange-50/60' : sale.status === 'partial_refund' ? 'bg-amber-50/40' : 'hover:bg-gray-50'}`}>
                                   <td className="p-4 font-mono text-[#6B7280]">
                                       {new Date(sale.date).toLocaleDateString()} <span className="ml-2">{new Date(sale.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
@@ -1166,6 +1176,22 @@ export function FinancePage() {
                       </tbody>
                   </table>
               </div>
+              {/* Paginación */}
+              {allSales.length > salesPage * SALES_PER_PAGE && (
+                <div className="p-4 border-t border-gray-200 text-center">
+                  <button
+                    onClick={() => setSalesPage(p => p + 1)}
+                    className="px-6 py-2 bg-[#0B3B68] text-white rounded-xl font-bold text-sm hover:bg-[#0B3B68]/90 transition-colors"
+                  >
+                    Mostrar más ({allSales.length - salesPage * SALES_PER_PAGE} ventas restantes)
+                  </button>
+                </div>
+              )}
+              {allSales.length > 0 && (
+                <p className="text-center text-xs text-[#6B7280] py-2">
+                  Mostrando {Math.min(salesPage * SALES_PER_PAGE, allSales.length)} de {allSales.length} ventas
+                </p>
+              )}
            </div>
         </div>
       )}

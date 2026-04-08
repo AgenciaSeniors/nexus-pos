@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
-import { type Staff, db } from './lib/db'; 
+import { type Staff, db } from './lib/db';
 import { type Session } from '@supabase/supabase-js';
 import { Toaster, toast } from 'sonner';
 import { syncCriticalData, syncHeavyData, stopSyncListeners } from './lib/sync';
@@ -9,14 +9,16 @@ import { startAutoBackup, stopAutoBackup } from './lib/backup';
 
 import { ADMIN_WHATSAPP_PHONE } from './lib/config';
 import { Layout } from './components/Layout';
-import { PosPage } from './pages/PosPage';
-import { InventoryPage } from './pages/InventoryPage';
-import { FinancePage } from './pages/FinancePage';
-import { SettingsPage } from './pages/SettingsPage';
-import { SuperAdminPage } from './pages/SuperAdminPage';
-import { SuperAdminLogin } from './pages/SuperAdminLogin';
-import { CustomersPage } from './components/CustomersPage';
 import { StaffSelectorModal } from './components/StaffSelectorModal';
+
+// Code splitting: páginas cargadas bajo demanda
+const PosPage = lazy(() => import('./pages/PosPage').then(m => ({ default: m.PosPage })));
+const InventoryPage = lazy(() => import('./pages/InventoryPage').then(m => ({ default: m.InventoryPage })));
+const FinancePage = lazy(() => import('./pages/FinancePage').then(m => ({ default: m.FinancePage })));
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
+const SuperAdminPage = lazy(() => import('./pages/SuperAdminPage').then(m => ({ default: m.SuperAdminPage })));
+const SuperAdminLogin = lazy(() => import('./pages/SuperAdminLogin').then(m => ({ default: m.SuperAdminLogin })));
+const CustomersPage = lazy(() => import('./components/CustomersPage').then(m => ({ default: m.CustomersPage })));
 
 import { Loader2, Store, User, Lock, Mail, Phone, ArrowRight, CheckCircle, Shield, Eye, EyeOff } from 'lucide-react';
 
@@ -681,16 +683,18 @@ function BusinessApp() {
           onClose={() => setShowStaffSelector(false)}
         />
       )}
-      <Routes>
-        <Route element={<Layout currentStaff={currentStaff} onChangeStaff={() => setShowStaffSelector(true)} />}>
-          <Route path="/" element={<PosPage />} />
-          <Route path="/clientes" element={<CustomersPage />} />
-          <Route path="/inventario" element={<InventoryPage />} />
-          <Route path="/finanzas" element={<FinancePage />} />
-          <Route path="/configuracion" element={<SettingsPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
+      <Suspense fallback={<div className="flex items-center justify-center h-screen"><Loader2 className="animate-spin text-[#0B3B68]" size={32} /></div>}>
+        <Routes>
+          <Route element={<Layout currentStaff={currentStaff} onChangeStaff={() => setShowStaffSelector(true)} />}>
+            <Route path="/" element={<PosPage />} />
+            <Route path="/clientes" element={<CustomersPage />} />
+            <Route path="/inventario" element={<InventoryPage />} />
+            <Route path="/finanzas" element={<FinancePage />} />
+            <Route path="/configuracion" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </Suspense>
     </>
   );
 }
@@ -734,11 +738,13 @@ export default function App() {
     <>
       <Toaster position="top-right" richColors />
       <HashRouter>
-        <Routes>
-          <Route path="/admin-login" element={<SuperAdminLogin />} />
-          <Route path="/super-panel" element={<AdminRoute><SuperAdminPage /></AdminRoute>} />
-          <Route path="/*" element={<BusinessApp />} />
-        </Routes>
+        <Suspense fallback={<div className="flex items-center justify-center h-screen"><Loader2 className="animate-spin text-[#0B3B68]" size={32} /></div>}>
+          <Routes>
+            <Route path="/admin-login" element={<SuperAdminLogin />} />
+            <Route path="/super-panel" element={<AdminRoute><SuperAdminPage /></AdminRoute>} />
+            <Route path="/*" element={<BusinessApp />} />
+          </Routes>
+        </Suspense>
       </HashRouter>
     </>
   );

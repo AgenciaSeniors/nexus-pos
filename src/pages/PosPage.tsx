@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Product, type Sale, type ParkedOrder, type SaleItem, type Staff, type Customer } from '../lib/db';
@@ -37,6 +37,8 @@ export function PosPage() {
   // --- ESTADOS DE LA VENTA ---
   const [query, setQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Todo');
+  const [productsPage, setProductsPage] = useState(1);
+  const PRODUCTS_PER_PAGE = 40;
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCheckout, setIsCheckout] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
@@ -126,13 +128,19 @@ export function PosPage() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- FILTROS ---
-  const categories = ['Todo', ...new Set(products.map(p => p.category || 'General'))];
-  
-  const filteredProducts = products.filter(p => {
+  const categories = useMemo(() => ['Todo', ...new Set(products.map(p => p.category || 'General'))], [products]);
+
+  const filteredProducts = useMemo(() => products.filter(p => {
     const matchQuery = p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.includes(query);
     const matchCat = selectedCategory === 'Todo' || p.category === selectedCategory;
     return matchQuery && matchCat;
-  });
+  }), [products, query, selectedCategory]);
+
+  // Reset página al cambiar filtros
+  useEffect(() => { setProductsPage(1); }, [query, selectedCategory]);
+
+  const visibleProducts = useMemo(() => filteredProducts.slice(0, productsPage * PRODUCTS_PER_PAGE), [filteredProducts, productsPage]);
+  const hasMoreProducts = visibleProducts.length < filteredProducts.length;
 
   // --- LÓGICA DEL CARRITO ---
   const addToCart = (product: Product) => {
@@ -582,7 +590,7 @@ export function PosPage() {
                 )
             ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4 pb-24 md:pb-0">
-                    {filteredProducts.map(product => (
+                    {visibleProducts.map(product => (
                         <button
                             key={product.id}
                             onClick={() => addToCart(product)}
@@ -614,6 +622,14 @@ export function PosPage() {
                             </div>
                         </button>
                     ))}
+                    {hasMoreProducts && (
+                        <button
+                            onClick={() => setProductsPage(p => p + 1)}
+                            className="col-span-full py-3 bg-gray-100 hover:bg-gray-200 text-bisne-navy font-bold text-sm rounded-xl transition-colors"
+                        >
+                            Mostrar más ({filteredProducts.length - visibleProducts.length} restantes)
+                        </button>
+                    )}
                 </div>
             )}
         </div>
