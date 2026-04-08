@@ -4,7 +4,8 @@ import { supabase } from './lib/supabase';
 import { type Staff, db } from './lib/db'; 
 import { type Session } from '@supabase/supabase-js';
 import { Toaster, toast } from 'sonner';
-import { syncCriticalData, syncHeavyData } from './lib/sync';
+import { syncCriticalData, syncHeavyData, stopSyncListeners } from './lib/sync';
+import { startAutoBackup, stopAutoBackup } from './lib/backup';
 
 import { ADMIN_WHATSAPP_PHONE } from './lib/config';
 import { Layout } from './components/Layout';
@@ -571,6 +572,9 @@ function BusinessApp() {
 
     initApp();
 
+    // Backup automático cada 15 minutos (protección contra apagones)
+    startAutoBackup();
+
     // Escuchador de cambios (Ej: Cuando alguien inicia sesión exitosamente en LoginScreen)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (!mounted) return;
@@ -600,6 +604,8 @@ function BusinessApp() {
     return () => {
         mounted = false;
         subscription.unsubscribe();
+        stopAutoBackup();
+        stopSyncListeners();
     };
   }, []); // Sin dependencias: el efecto corre solo al montar. Los refs evitan race conditions.
 

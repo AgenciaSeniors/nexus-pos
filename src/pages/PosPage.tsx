@@ -279,6 +279,16 @@ export function PosPage() {
         const bId = await getTargetId();
         if (!bId) throw new Error("Falta ID de negocio");
 
+        // Fix 4: Validar puntos canjeados contra balance real del cliente
+        if (redeemedPoints && redeemedPoints > 0 && selectedCustomer?.id) {
+            const freshCustomer = await db.customers.get(selectedCustomer.id);
+            if (!freshCustomer || (freshCustomer.loyalty_points || 0) < redeemedPoints) {
+                toast.error(`Puntos insuficientes. Disponible: ${freshCustomer?.loyalty_points || 0}`);
+                setIsCheckout(false);
+                return;
+            }
+        }
+
         let normalizedMethod: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto' = 'efectivo';
         const m = methodInput.toLowerCase().trim();
         if (m.includes('transf')) normalizedMethod = 'transferencia';
@@ -287,8 +297,18 @@ export function PosPage() {
         else normalizedMethod = 'efectivo';
 
         const saleId = crypto.randomUUID();
-        const pointsDiscount = Math.round((redeemedPoints || 0) * 0.10 * 100) / 100;
-        const saleTotal = Math.max(0, Math.round((finalTotal - pointsDiscount) * 100) / 100);
+        const pointsDiscount = currency.multiply((redeemedPoints || 0), 0.10);
+        const saleTotal = Math.max(0, currency.subtract(finalTotal, pointsDiscount));
+
+        // Fix 5: Validar que pago mixto cubra el total
+        if (normalizedMethod === 'mixto' && cashAmount !== undefined && transferAmount !== undefined) {
+            const totalPaid = currency.add(cashAmount, transferAmount);
+            if (totalPaid < currency.subtract(saleTotal, 0.01)) { // tolerancia de 1 centavo
+                toast.error(`El pago mixto ($${totalPaid.toFixed(2)}) no cubre el total ($${saleTotal.toFixed(2)})`);
+                setIsCheckout(false);
+                return;
+            }
+        }
 
         const saleItems: SaleItem[] = cart.map(i => ({
             product_id: i.id,
@@ -394,17 +414,16 @@ export function PosPage() {
     }
   };
 
-  // --- CÁLCULOS DEL CARRITO ---
-  // Usa custom_price si el ítem fue personalizado, si no el precio estándar
-  const subtotal = Math.round(
-    cart.reduce((sum, i) => sum + Math.round((i.custom_price ?? i.price) * 100) * i.quantity, 0)
-  ) / 100;
+  // --- CÁLCULOS DEL CARRITO (usa currency.ts para evitar errores de punto flotante) ---
+  const subtotal = currency.calculateTotal(
+    cart.map(i => ({ price: i.custom_price ?? i.price, quantity: i.quantity }))
+  );
   const discountAmount = discount
     ? (discount.type === 'pct'
-        ? Math.round(subtotal * discount.value / 100 * 100) / 100
+        ? currency.multiply(subtotal, discount.value / 100)
         : Math.min(discount.value, subtotal))
     : 0;
-  const finalTotal = Math.max(0, Math.round((subtotal - discountAmount) * 100) / 100);
+  const finalTotal = Math.max(0, currency.subtract(subtotal, discountAmount));
   const cartCount = parseFloat(cart.reduce((sum, item) => sum + item.quantity, 0).toFixed(3));
 
   // --- EDITOR INLINE: abrir/guardar/cancelar ---

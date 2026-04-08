@@ -188,18 +188,23 @@ export async function processQueue() {
   }
 }
 
+// Mapa en memoria para rastrear cuándo fue el último intento de cada item.
+// Separado del campo `timestamp` (que es la fecha de creación) para no romper el backoff.
+const _lastRetryAt = new Map<string, number>();
+
 async function _runQueue() {
   if (!db.isOpen()) return;
-  const pendingItems = await db.action_queue.where('status').equals('pending').limit(5).toArray();
+  const pendingItems = await db.action_queue.where('status').equals('pending').limit(5).sortBy('timestamp');
   if (pendingItems.length === 0) return;
 
   let processedCount = 0;
 
   for (const item of pendingItems) {
-    // Backoff exponencial: omitir ítems reintentados recientemente
+    // Backoff exponencial basado en el último intento real (no el timestamp de creación)
     if (item.retries > 0) {
       const backoffMs = Math.min(Math.pow(2, item.retries - 1) * 30000, 300000); // 30s, 60s, 2m, 4m, máx 5m
-      if (Date.now() - item.timestamp < backoffMs) continue;
+      const lastAttempt = _lastRetryAt.get(item.id) || item.timestamp;
+      if (Date.now() - lastAttempt < backoffMs) continue;
     }
 
     processedCount++;
@@ -208,15 +213,19 @@ async function _runQueue() {
       await db.action_queue.update(item.id, { status: 'processing' });
       await processItem(item);
       await db.action_queue.delete(item.id);
+      _lastRetryAt.delete(item.id);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const newRetries = (item.retries || 0) + 1;
 
       console.error(`❌ Fallo ítem ${item.type} (${item.id}):`, errorMessage);
 
+      // Registrar cuándo fue este intento para el backoff
+      _lastRetryAt.set(item.id, Date.now());
+
       if (newRetries >= 5) {
           await db.action_queue.update(item.id, { status: 'failed', error: `ABANDONADO: ${errorMessage}` });
-          // Notificar al usuario que un item falló permanentemente
+          _lastRetryAt.delete(item.id);
           const typeLabels: Record<string, string> = {
             SALE: 'Venta', PRODUCT_SYNC: 'Producto', CUSTOMER_SYNC: 'Cliente',
             MOVEMENT: 'Movimiento', AUDIT: 'Auditoría', SETTINGS_SYNC: 'Configuración',
@@ -226,15 +235,12 @@ async function _runQueue() {
             detail: { type: typeLabels[item.type] || item.type, error: errorMessage }
           }));
       } else {
-          // Actualiza timestamp para calcular el backoff desde el último intento
-          await db.action_queue.update(item.id, { status: 'pending', retries: newRetries, error: errorMessage, timestamp: Date.now() });
+          await db.action_queue.update(item.id, { status: 'pending', retries: newRetries, error: errorMessage });
       }
     }
   }
 
   // Solo recursar si se procesó al menos un ítem en esta vuelta.
-  // Si todos estaban en período de backoff (processedCount === 0), detenerse:
-  // el sync periódico de 30s o la próxima reconexión los reintentará cuando corresponda.
   if (processedCount > 0 && (await db.action_queue.where('status').equals('pending').count()) > 0) {
     await _runQueue();
   }
@@ -484,40 +490,67 @@ export async function syncLiveData() {
     }
 }
 
-if (typeof window !== 'undefined') {
-    window.addEventListener('online', () => {
-        resetProcessingItems()
-            .then(() => processQueue())
-            .then(() => syncLiveData())
-            .catch(err => console.error("Error al procesar cola tras reconexión:", err));
-    });
-    resetProcessingItems().catch(() => {});
-    // Push + Pull cada 30 segundos. Se omite si la app está en background
-    // (document.hidden = true en Android/Capacitor y Electron al minimizar)
-    setInterval(() => {
-        if (document.hidden) return; // app en background → no consumir batería/datos
-        if (isOnline() && db.isOpen()) {
-            // Push inteligente: solo ejecutar si hay elementos pendientes
-            db.action_queue.where('status').anyOf('pending', 'processing').count()
-                .then(count => {
-                    if (count > 0) {
-                        processQueue().catch(err => {
-                            if (err?.name !== 'DatabaseClosedError') console.error("Error en sync push periódico:", err);
-                        });
-                    }
-                })
-                .catch(() => {});
-            // Pull siempre: el stock o turno puede haber cambiado desde otro dispositivo
-            syncLiveData().catch(err => {
-                if (err?.name !== 'DatabaseClosedError') console.error("Error en sync pull periódico:", err);
-            });
-        }
-    }, 30000);
+// --- Sync listeners con cleanup para evitar memory leaks ---
+let _syncIntervalId: ReturnType<typeof setInterval> | null = null;
+let _onlineHandler: (() => void) | null = null;
+let _visibilityHandler: (() => void) | null = null;
 
-    // Al volver al primer plano: resetear items pegados y sincronizar
-    document.addEventListener('visibilitychange', () => {
-        if (!document.hidden && isOnline() && db.isOpen()) {
-            resetProcessingItems().then(() => processQueue()).catch(() => {});
-        }
-    });
+export function startSyncListeners() {
+  if (_syncIntervalId !== null) return; // Ya inicializado
+
+  _onlineHandler = () => {
+    resetProcessingItems()
+      .then(() => processQueue())
+      .then(() => syncLiveData())
+      .catch(err => console.error("Error al procesar cola tras reconexión:", err));
+  };
+  window.addEventListener('online', _onlineHandler);
+
+  _visibilityHandler = () => {
+    if (!document.hidden && isOnline() && db.isOpen()) {
+      resetProcessingItems().then(() => processQueue()).catch(() => {});
+    }
+  };
+  document.addEventListener('visibilitychange', _visibilityHandler);
+
+  // Push + Pull cada 30 segundos
+  _syncIntervalId = setInterval(() => {
+    if (document.hidden) return;
+    if (isOnline() && db.isOpen()) {
+      db.action_queue.where('status').anyOf('pending', 'processing').count()
+        .then(count => {
+          if (count > 0) {
+            processQueue().catch(err => {
+              if (err?.name !== 'DatabaseClosedError') console.error("Error en sync push periódico:", err);
+            });
+          }
+        })
+        .catch(() => {});
+      syncLiveData().catch(err => {
+        if (err?.name !== 'DatabaseClosedError') console.error("Error en sync pull periódico:", err);
+      });
+    }
+  }, 30000);
+
+  resetProcessingItems().catch(() => {});
+}
+
+export function stopSyncListeners() {
+  if (_syncIntervalId !== null) {
+    clearInterval(_syncIntervalId);
+    _syncIntervalId = null;
+  }
+  if (_onlineHandler) {
+    window.removeEventListener('online', _onlineHandler);
+    _onlineHandler = null;
+  }
+  if (_visibilityHandler) {
+    document.removeEventListener('visibilitychange', _visibilityHandler);
+    _visibilityHandler = null;
+  }
+}
+
+// Auto-iniciar al importar el módulo (compatibilidad con código existente)
+if (typeof window !== 'undefined') {
+  startSyncListeners();
 }

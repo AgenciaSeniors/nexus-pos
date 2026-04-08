@@ -5,8 +5,8 @@ interface Props {
   children: React.ReactNode;
 }
 
-// ⚠️ CONTRASEÑA MAESTRA
-const MASTER_PASSWORD = "nexus-master-key"; 
+// Contraseña de técnico desde variable de entorno (nunca hardcodeada en el bundle)
+const TECH_PASSWORD = import.meta.env.VITE_TECH_PASSWORD || '';
 
 export function TechGuard({ children }: Props) {
   // ✅ CORRECCIÓN: Inicialización perezosa (Lazy Initialization)
@@ -20,7 +20,7 @@ export function TechGuard({ children }: Props) {
 
   const handleVerify = (e: React.FormEvent) => {
     e.preventDefault();
-    if (input === MASTER_PASSWORD) {
+    if (TECH_PASSWORD && input === TECH_PASSWORD) {
       setAuthorized(true);
       sessionStorage.setItem('nexus_tech_auth', 'true'); 
       setError(false);

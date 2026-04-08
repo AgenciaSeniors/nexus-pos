@@ -14,7 +14,7 @@ import {
   PieChart, Pie, Cell, Legend, LineChart, Line, Area, AreaChart
 } from 'recharts';
 import {
-  Calendar, TrendingUp, ArrowLeft, ArrowRight, RefreshCw,
+  Calendar, CalendarRange, TrendingUp, ArrowLeft, ArrowRight, RefreshCw,
   BarChart3, DollarSign, Wallet, PieChart as PieChartIcon, ClipboardCheck,
   Printer, Trophy, Lock, Unlock, PlusCircle, MinusCircle, ShoppingBag, Loader2, X,
   ArrowRightLeft, History, Ban, TrendingDown, Users, Hash, Download, RotateCcw, Package
@@ -92,6 +92,14 @@ export function FinancePage() {
   const [selectedTicket, setSelectedTicket] = useState<Sale | null>(null);
   const [trendFilter, setTrendFilter] = useState<'week' | 'month'>('week');
 
+  // Reportes por rango de fechas
+  const [reportMode, setReportMode] = useState<'day' | 'range'>('day');
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 7);
+    return localDateStr(d);
+  });
+  const [dateTo, setDateTo] = useState(today);
+
   const businessSettings = useLiveQuery(() => db.settings.toArray());
   // null si no está configurado → nunca coincide con entrada del usuario
   // (evita que todos los negocios sin PIN usen el mismo '1234' por defecto)
@@ -131,12 +139,14 @@ export function FinancePage() {
     let bId = localStorage.getItem('nexus_business_id');
     if (!bId) return [];
     if (viewMode !== 'history' && viewMode !== 'daily' && viewMode !== 'trends' && viewMode !== 'closing') return [];
-    
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
-    return await db.sales.where('business_id').equals(bId).filter(s => s.date >= thirtyDaysAgo.toISOString()).reverse().sortBy('date');
-  }, [viewMode]) || EMPTY_ARRAY;
+
+    // En modo rango, cargar datos suficientes para cubrir el rango seleccionado
+    const cutoffDays = (viewMode === 'daily' && reportMode === 'range') ? 90 : 30;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - cutoffDays);
+
+    return await db.sales.where('business_id').equals(bId).filter(s => s.date >= cutoff.toISOString()).reverse().sortBy('date');
+  }, [viewMode, reportMode]) || EMPTY_ARRAY;
 
   useEffect(() => {
     if (activeShift !== undefined) {
@@ -214,12 +224,22 @@ export function FinancePage() {
     return { costs, cats };
   }, [products]);
 
+  // Helper: filtra ventas según modo día o rango
+  const saleMatchesRange = (saleDate: string): boolean => {
+    const local = localDateStr(new Date(saleDate));
+    return local >= dateFrom && local <= dateTo;
+  };
+
   const dailyStats = useMemo(() => {
-    const salesForDay = allSales.filter((sale) => saleMatchesLocalDate(sale.date, selectedDate) && sale.status !== 'voided');
+    const salesForDay = reportMode === 'range'
+      ? allSales.filter((sale) => saleMatchesRange(sale.date) && sale.status !== 'voided')
+      : allSales.filter((sale) => saleMatchesLocalDate(sale.date, selectedDate) && sale.status !== 'voided');
     let revenue = 0, cost = 0;
     const hourlyCounts: Record<string, number> = {};
     const categoryCounts: Record<string, number> = {};
-    const productCounts: Record<string, number> = {}; 
+    const productCounts: Record<string, number> = {};
+    // En modo rango: agrupar ventas por día para el gráfico de barras
+    const dailyCounts: Record<string, number> = {};
 
     for (let i = 7; i <= 23; i++) hourlyCounts[i.toString().padStart(2, '0') + ":00"] = 0;
 
@@ -230,6 +250,11 @@ export function FinancePage() {
       if (!isNaN(saleDate.getTime())) {
           const h = saleDate.getHours().toString().padStart(2, '0') + ":00";
           if (hourlyCounts[h] !== undefined) hourlyCounts[h] += saleTotal;
+          // Agrupar por día para gráfico de rango
+          if (reportMode === 'range') {
+            const dayKey = saleDate.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' });
+            dailyCounts[dayKey] = (dailyCounts[dayKey] || 0) + saleTotal;
+          }
       }
       (sale.items || []).forEach((item) => {
         const itemQty = safeFloat(item.quantity);
@@ -248,6 +273,7 @@ export function FinancePage() {
     const profit = revenue - cost;
     const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
     const chartData = Object.entries(hourlyCounts).map(([time, total]) => ({ time, total }));
+    const rangeChartData = Object.entries(dailyCounts).map(([date, total]) => ({ date, total }));
     const pieData = Object.entries(categoryCounts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
 
     // Top 5 productos por cantidad
@@ -269,8 +295,24 @@ export function FinancePage() {
       }
     });
 
-    return { sales: salesForDay, revenue, profit, cost, margin, chartData, pieData, bestSeller, topProducts, paymentBreakdown };
-  }, [allSales, selectedDate, productMeta]);
+    // Promedio diario (solo para modo rango)
+    const daysInRange = reportMode === 'range'
+      ? Math.max(1, Math.round((new Date(dateTo + 'T23:59').getTime() - new Date(dateFrom + 'T00:00').getTime()) / 86400000) + 1)
+      : 1;
+    const dailyAvg = revenue / daysInRange;
+
+    // Desglose por vendedor (para modo rango)
+    const staffCounts: Record<string, { count: number; total: number }> = {};
+    salesForDay.forEach(s => {
+      const name = s.staff_name || 'Sin asignar';
+      if (!staffCounts[name]) staffCounts[name] = { count: 0, total: 0 };
+      staffCounts[name].count++;
+      staffCounts[name].total += safeFloat(s.total);
+    });
+    const staffList = Object.entries(staffCounts).map(([name, d]) => ({ name, ...d })).sort((a, b) => b.total - a.total);
+
+    return { sales: salesForDay, revenue, profit, cost, margin, chartData, rangeChartData, pieData, bestSeller, topProducts, paymentBreakdown, dailyAvg, daysInRange, staffList };
+  }, [allSales, selectedDate, productMeta, reportMode, dateFrom, dateTo]);
 
   const closingStats = useMemo(() => {
     let cashTotal = 0, transferTotal = 0, cardTotal = 0;
@@ -400,18 +442,22 @@ export function FinancePage() {
 
         const shiftId = crypto.randomUUID();
         const newShift: CashShift = {
-            id: shiftId, 
-            business_id: bId, 
-            staff_id: sId, 
+            id: shiftId,
+            business_id: bId,
+            staff_id: sId,
             start_amount: startAmount,
-            opened_at: new Date().toISOString(), 
-            status: 'open', 
+            opened_at: new Date().toISOString(),
+            status: 'open',
             sync_status: 'pending_create'
         };
 
         const staffPayload = { id: sId, name: currentStaff?.name || 'Cajero', business_id: bId };
 
         await db.transaction('rw', [db.cash_shifts, db.action_queue, db.audit_logs], async () => {
+            // Fix: Prevenir turnos simultáneos (race condition multi-dispositivo)
+            const existingOpen = await db.cash_shifts.where({ business_id: bId, status: 'open' }).first();
+            if (existingOpen) throw new Error('Ya existe un turno abierto. Ciérralo primero.');
+
             await db.cash_shifts.add(newShift);
             await addToQueue('SHIFT', newShift);
             await logAuditAction('OPEN_SHIFT', { amount: startAmount }, staffPayload as any);
@@ -486,8 +532,8 @@ export function FinancePage() {
     try {
         const { bId, sId } = await getActiveCredentials();
         const safeBid = bId || currentShift.business_id;
-        const cashDiff = finalCashCount - stats.expectedCash;
-        const transferDiff = finalTransferCount - stats.transferSales;
+        const cashDiff = currency.subtract(finalCashCount, stats.expectedCash);
+        const transferDiff = currency.subtract(finalTransferCount, stats.transferSales);
         const closedAt = new Date().toISOString();
         const staffPayload = { id: sId, name: currentStaff?.name || 'Cajero', business_id: safeBid };
 
@@ -529,6 +575,11 @@ export function FinancePage() {
 
   // ✅ NUEVA FUNCIÓN: ANULAR VENTA Y DEVOLVER INVENTARIO
   const handleVoidSale = async (sale: Sale) => {
+      // Fix: Prevenir doble anulación
+      if (sale.status === 'voided') {
+          toast.error('Esta venta ya fue anulada.');
+          return;
+      }
       // Verificar que hay un turno abierto — sin turno activo no se puede registrar el reembolso
       if (!activeShift) {
           toast.error('Debes tener un turno de caja abierto para anular ventas.');
@@ -540,6 +591,10 @@ export function FinancePage() {
           const safeBid = bId || sale.business_id;
 
           await db.transaction('rw', [db.sales, db.products, db.movements, db.cash_movements, db.customers, db.action_queue, db.audit_logs], async () => {
+              // Fix: Verificar estado dentro de la transacción (previene race condition multi-dispositivo)
+              const freshSale = await db.sales.get(sale.id);
+              if (!freshSale || freshSale.status === 'voided') throw new Error('Esta venta ya fue anulada.');
+
               // 1. Marcar venta como anulada
               await db.sales.update(sale.id, { status: 'voided', sync_status: 'pending_update' });
               await addToQueue('VOID_SALE', { saleId: sale.id });
@@ -635,6 +690,17 @@ export function FinancePage() {
       }));
 
       await db.transaction('rw', [db.sales, db.products, db.movements, db.cash_movements, db.customers, db.action_queue, db.audit_logs], async () => {
+        // Fix: Verificar cantidades dentro de la transacción (previene race condition)
+        const freshSale = await db.sales.get(refundSale.id);
+        if (!freshSale || freshSale.status === 'voided') throw new Error('Esta venta ya fue anulada.');
+        const existingRefunds = freshSale.refunded_items || [];
+        for (const ri of refundedItems) {
+          const originalItem = (freshSale.items || []).find(i => i.product_id === ri.product_id);
+          const alreadyRefunded = existingRefunds.filter(r => r.product_id === ri.product_id).reduce((s, r) => s + r.quantity, 0);
+          const maxAllowed = (originalItem?.quantity || 0) - alreadyRefunded;
+          if (ri.quantity > maxAllowed) throw new Error(`No se pueden devolver ${ri.quantity} unidades de "${ri.name}" (máx: ${maxAllowed})`);
+        }
+
         // 1. Devolver stock por cada item
         for (const ri of refundedItems) {
           const product = await db.products.get(ri.product_id);
@@ -679,8 +745,7 @@ export function FinancePage() {
           }
         }
 
-        // 4. Actualizar venta con items devueltos
-        const existingRefunds = refundSale.refunded_items || [];
+        // 4. Actualizar venta con items devueltos (usa existingRefunds del freshSale)
         const allRefunds = [...existingRefunds, ...refundedItems];
         await db.sales.update(refundSale.id, {
           status: 'partial_refund',
@@ -1107,15 +1172,52 @@ export function FinancePage() {
 
       {viewMode === 'daily' && (
         <div className="animate-in fade-in zoom-in-95 duration-300">
-          <div className="flex justify-between items-center mb-6">
-             <div className="flex items-center gap-2 bg-white p-1 rounded-xl border border-gray-200 shadow-sm">
-                <button onClick={() => changeDate(-1)} className="p-2 hover:bg-gray-100 rounded-lg text-[#6B7280]"><ArrowLeft size={20} /></button>
-                <div className="relative mx-2">
-                  <input type="date" value={selectedDate} max={today} onChange={(e) => e.target.value && setSelectedDate(e.target.value)} className="bg-transparent text-[#1F2937] font-bold outline-none cursor-pointer text-sm uppercase" />
+          {/* Selector: Día / Rango */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-3">
+            <div className="flex items-center gap-2">
+              <div className="flex bg-white p-1 rounded-xl border border-gray-200 shadow-sm">
+                <button onClick={() => setReportMode('day')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${reportMode === 'day' ? 'bg-[#0B3B68] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}>
+                  <Calendar size={14}/> Día
+                </button>
+                <button onClick={() => setReportMode('range')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${reportMode === 'range' ? 'bg-[#0B3B68] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}>
+                  <CalendarRange size={14}/> Rango
+                </button>
+              </div>
+
+              {reportMode === 'day' ? (
+                <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-gray-200 shadow-sm">
+                  <button onClick={() => changeDate(-1)} className="p-2 hover:bg-gray-100 rounded-lg text-[#6B7280]"><ArrowLeft size={18} /></button>
+                  <input type="date" value={selectedDate} max={today} onChange={(e) => e.target.value && setSelectedDate(e.target.value)} className="bg-transparent text-[#1F2937] font-bold outline-none cursor-pointer text-sm" />
+                  <button onClick={() => changeDate(1)} disabled={selectedDate >= today} className="p-2 hover:bg-gray-100 rounded-lg text-[#6B7280] disabled:opacity-30"><ArrowRight size={18} /></button>
                 </div>
-                <button onClick={() => changeDate(1)} disabled={selectedDate >= today} className="p-2 hover:bg-gray-100 rounded-lg text-[#6B7280] disabled:opacity-30"><ArrowRight size={20} /></button>
-             </div>
-             <button onClick={() => syncPull()} className="p-2 bg-white text-[#0B3B68] border border-gray-200 rounded-lg shadow-sm hover:bg-[#0B3B68]/10 transition-colors" title="Sincronizar Nube"><RefreshCw size={20}/></button>
+              ) : (
+                <div className="flex items-center gap-2 bg-white p-2 rounded-xl border border-gray-200 shadow-sm">
+                  <input type="date" value={dateFrom} max={dateTo} onChange={(e) => e.target.value && setDateFrom(e.target.value)} className="bg-transparent text-[#1F2937] font-bold outline-none cursor-pointer text-sm" />
+                  <span className="text-[#6B7280] text-xs font-bold">→</span>
+                  <input type="date" value={dateTo} max={today} onChange={(e) => e.target.value && setDateTo(e.target.value)} className="bg-transparent text-[#1F2937] font-bold outline-none cursor-pointer text-sm" />
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              {reportMode === 'range' && (
+                <div className="flex gap-1">
+                  {[
+                    { label: '7d', days: 7 },
+                    { label: '15d', days: 15 },
+                    { label: '30d', days: 30 },
+                  ].map(preset => (
+                    <button key={preset.label} onClick={() => {
+                      const d = new Date(); d.setDate(d.getDate() - preset.days + 1);
+                      setDateFrom(localDateStr(d)); setDateTo(today);
+                    }} className="px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg text-[10px] font-bold text-[#6B7280] hover:bg-[#0B3B68]/10 hover:text-[#0B3B68] transition-colors">
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button onClick={() => syncPull()} className="p-2 bg-white text-[#0B3B68] border border-gray-200 rounded-lg shadow-sm hover:bg-[#0B3B68]/10 transition-colors" title="Sincronizar Nube"><RefreshCw size={18}/></button>
+            </div>
           </div>
 
           {/* KPIs */}
@@ -1123,12 +1225,12 @@ export function FinancePage() {
             <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
               <p className="text-[#6B7280] text-[10px] font-bold uppercase mb-1 flex items-center gap-1"><Hash size={11}/> Tickets</p>
               <h3 className="text-2xl font-black text-[#0B3B68]">{dailyStats.sales.length}</h3>
-              <p className="text-[10px] text-[#6B7280]">ventas del día</p>
+              <p className="text-[10px] text-[#6B7280]">{reportMode === 'range' ? `en ${dailyStats.daysInRange} día${dailyStats.daysInRange !== 1 ? 's' : ''}` : 'ventas del día'}</p>
             </div>
             <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
               <p className="text-[#6B7280] text-[10px] font-bold uppercase mb-1 flex items-center gap-1"><DollarSign size={11}/> Ingresos</p>
               <h3 className="text-2xl font-black text-[#1F2937]">{formatMoney(dailyStats.revenue)}</h3>
-              <p className="text-[10px] text-[#6B7280]">neto del día</p>
+              <p className="text-[10px] text-[#6B7280]">{reportMode === 'range' ? `prom. diario: ${formatMoney(dailyStats.dailyAvg)}` : 'neto del día'}</p>
             </div>
             <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
               <p className="text-[#6B7280] text-[10px] font-bold uppercase mb-1 flex items-center gap-1"><TrendingDown size={11}/> Costos</p>
@@ -1164,18 +1266,36 @@ export function FinancePage() {
 
           {dailyStats.sales.length > 0 && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-              {/* GRÁFICO HORAS */}
+              {/* GRÁFICO: por hora (día) o por día (rango) */}
               <div className="lg:col-span-2 bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
-                <h4 className="font-bold text-[#1F2937] text-sm mb-4 flex items-center gap-2"><BarChart3 size={16}/> Ventas por Hora</h4>
+                <h4 className="font-bold text-[#1F2937] text-sm mb-4 flex items-center gap-2">
+                  <BarChart3 size={16}/> {reportMode === 'range' ? 'Ventas por Día' : 'Ventas por Hora'}
+                </h4>
                 <div className="h-56">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={dailyStats.chartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
-                      <XAxis dataKey="time" fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} interval={1}/>
-                      <YAxis fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} tickFormatter={v => v === 0 ? '' : `$${v}`} width={36}/>
-                      <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }} formatter={(v: number) => [formatMoney(v), 'Ventas']}/>
-                      <Bar dataKey="total" fill="#0B3B68" radius={[4,4,0,0]}/>
-                    </BarChart>
+                    {reportMode === 'range' ? (
+                      <AreaChart data={dailyStats.rangeChartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                        <defs>
+                          <linearGradient id="rangeGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#0B3B68" stopOpacity={0.15}/>
+                            <stop offset="95%" stopColor="#0B3B68" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
+                        <XAxis dataKey="date" fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }}/>
+                        <YAxis fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} tickFormatter={v => v === 0 ? '' : `$${v}`} width={36}/>
+                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }} formatter={(v: number) => [formatMoney(v), 'Ventas']}/>
+                        <Area type="monotone" dataKey="total" stroke="#0B3B68" strokeWidth={2} fill="url(#rangeGrad)" dot={{ r: 3, fill: '#0B3B68', strokeWidth: 0 }} activeDot={{ r: 5, fill: '#0B3B68' }}/>
+                      </AreaChart>
+                    ) : (
+                      <BarChart data={dailyStats.chartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
+                        <XAxis dataKey="time" fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} interval={1}/>
+                        <YAxis fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} tickFormatter={v => v === 0 ? '' : `$${v}`} width={36}/>
+                        <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }} formatter={(v: number) => [formatMoney(v), 'Ventas']}/>
+                        <Bar dataKey="total" fill="#0B3B68" radius={[4,4,0,0]}/>
+                      </BarChart>
+                    )}
                   </ResponsiveContainer>
                 </div>
               </div>
@@ -1223,6 +1343,35 @@ export function FinancePage() {
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: '11px' }}/>
                 </PieChart>
               </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* VENDEDORES (solo en modo rango con más de 1 vendedor) */}
+          {reportMode === 'range' && dailyStats.staffList.length > 1 && (
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 mb-6">
+              <h4 className="font-bold text-[#1F2937] text-sm mb-4 flex items-center gap-2"><Trophy size={16} className="text-[#7AC142]"/> Ventas por Vendedor</h4>
+              <div className="space-y-2">
+                {dailyStats.staffList.map((s, i) => {
+                  const pct = dailyStats.revenue > 0 ? (s.total / dailyStats.revenue) * 100 : 0;
+                  return (
+                    <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                      <div className="w-7 h-7 rounded-lg bg-[#0B3B68]/10 text-[#0B3B68] flex items-center justify-center text-[10px] font-black flex-shrink-0">
+                        {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : s.name.substring(0, 2).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-center mb-1">
+                          <p className="text-xs font-bold text-[#1F2937] truncate">{s.name}</p>
+                          <span className="font-black text-xs text-[#7AC142] flex-shrink-0 ml-2">{formatMoney(s.total)}</span>
+                        </div>
+                        <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-[#7AC142] transition-all" style={{ width: `${pct}%` }}/>
+                        </div>
+                        <p className="text-[9px] text-[#6B7280] mt-0.5">{s.count} venta{s.count !== 1 ? 's' : ''} · {pct.toFixed(0)}%</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
