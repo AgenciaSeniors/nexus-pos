@@ -341,6 +341,17 @@ export async function syncHeavyData(businessId: string): Promise<{ products: num
     const cleanProducts = productsData.map((p: any) => ({ ...p, sync_status: 'synced' }));
     await safeBulkPut(db.products as never, cleanProducts);
     results.products = cleanProducts.length;
+
+    // Limpiar productos locales que ya no existen en la nube
+    const remoteIds = new Set(productsData.map((p: any) => p.id));
+    const bId = productsData[0]?.business_id;
+    if (bId) {
+      const localProducts = await db.products.where('business_id').equals(bId).toArray();
+      const orphanIds = localProducts
+        .filter(p => p.sync_status === 'synced' && !remoteIds.has(p.id))
+        .map(p => p.id);
+      if (orphanIds.length > 0) await db.products.bulkDelete(orphanIds);
+    }
   }
 
   if (customersData.length > 0) {
@@ -348,6 +359,17 @@ export async function syncHeavyData(businessId: string): Promise<{ products: num
     const cleanCustomers = customersData.map((c: any) => ({ ...c, sync_status: 'synced' }));
     await safeBulkPut(db.customers as never, cleanCustomers);
     results.customers = cleanCustomers.length;
+
+    // Limpiar clientes locales que ya no existen en la nube
+    const remoteCustomerIds = new Set(customersData.map((c: any) => c.id));
+    const bId = customersData[0]?.business_id;
+    if (bId) {
+      const localCustomers = await db.customers.where('business_id').equals(bId).toArray();
+      const orphanIds = localCustomers
+        .filter(c => c.sync_status === 'synced' && !remoteCustomerIds.has(c.id))
+        .map(c => c.id);
+      if (orphanIds.length > 0) await db.customers.bulkDelete(orphanIds);
+    }
   }
 
   return results;
@@ -463,25 +485,48 @@ export async function syncLiveData() {
             }
         }
 
-        // 4. Stock actualizado (productos pueden haber sido vendidos desde otro dispositivo)
-        const { data: productsData } = await supabase
-            .from('products')
-            .select('id, stock, stock_warehouse, price, cost, name, category, unit, sku, business_id, deleted_at')
-            .eq('business_id', businessId);
+        // 4. Productos: SELECT completo para no perder campos al hacer bulkPut
+        const productsData = await fetchAll('products', businessId);
 
-        if (productsData && productsData.length > 0) {
+        if (productsData.length > 0) {
             const cleanProducts = productsData.map((p: any) => ({ ...p, sync_status: 'synced' as const }));
             await safeBulkPut(db.products as never, cleanProducts);
+
+            // Eliminar productos locales que ya no existen en la nube (borrados desde otro dispositivo)
+            const remoteIds = new Set(productsData.map((p: any) => p.id));
+            const localProducts = await db.products.where('business_id').equals(businessId).toArray();
+            const orphanIds = localProducts
+                .filter(p => p.sync_status === 'synced' && !remoteIds.has(p.id))
+                .map(p => p.id);
+            if (orphanIds.length > 0) {
+                await db.products.bulkDelete(orphanIds);
+            }
 
             // Alertar sobre stock negativo (conflicto de ventas simultáneas offline)
             const negativeStock = productsData.filter((p: any) => p.stock < 0 && !p.deleted_at);
             if (negativeStock.length > 0) {
                 const names = negativeStock.map((p: any) => p.name).slice(0, 3).join(', ');
                 console.warn(`⚠️ Stock negativo detectado: ${names}`);
-                // Dispara evento personalizado para que la UI lo muestre
                 window.dispatchEvent(new CustomEvent('nexus-stock-alert', {
                   detail: { products: negativeStock.map((p: any) => ({ id: p.id, name: p.name, stock: p.stock })) }
                 }));
+            }
+        }
+
+        // 5. Clientes: sincronizar desde la nube (cambios hechos desde otro dispositivo)
+        const customersData = await fetchAll('customers', businessId);
+        if (customersData.length > 0) {
+            const cleanCustomers = customersData.map((c: any) => ({ ...c, sync_status: 'synced' as const }));
+            await safeBulkPut(db.customers as never, cleanCustomers);
+
+            // Eliminar clientes locales huérfanos (borrados desde otro dispositivo)
+            const remoteCustomerIds = new Set(customersData.map((c: any) => c.id));
+            const localCustomers = await db.customers.where('business_id').equals(businessId).toArray();
+            const orphanCustomerIds = localCustomers
+                .filter(c => c.sync_status === 'synced' && !remoteCustomerIds.has(c.id))
+                .map(c => c.id);
+            if (orphanCustomerIds.length > 0) {
+                await db.customers.bulkDelete(orphanCustomerIds);
             }
         }
     } catch (error) {
