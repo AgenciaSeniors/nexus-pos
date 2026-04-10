@@ -17,6 +17,7 @@ import {
   ScrollText, Zap, Star, Phone, Mail, MapPin, Info
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { checkForUpdate, type AppVersionInfo } from '../lib/version';
 
 export function SettingsPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
@@ -48,6 +49,28 @@ export function SettingsPage() {
   });
 
   const [showResetDbConfirm, setShowResetDbConfirm] = useState(false);
+
+  // ── VERSIÓN / ACTUALIZACIÓN ──────────────────────────────────
+  const [updateInfo, setUpdateInfo] = useState<AppVersionInfo | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    try {
+      const info = await checkForUpdate(__APP_VERSION__);
+      setUpdateInfo(info);
+      if (!info) toast.success('Estás en la última versión');
+    } catch {
+      toast.error('No se pudo verificar. Revisa tu conexión.');
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  // Check automático al montar
+  useEffect(() => {
+    checkForUpdate(__APP_VERSION__).then(setUpdateInfo).catch(() => {});
+  }, []);
 
   // ── EQUIPO ────────────────────────────────────────────────────
   const [showStaffModal, setShowStaffModal] = useState(false);
@@ -717,6 +740,34 @@ export function SettingsPage() {
                             </div>
                         </div>
 
+                        {/* Banner de actualización disponible */}
+                        {updateInfo && (
+                          <div className="border-t border-gray-100 my-4 pt-4">
+                            <div className="bg-[#7AC142]/10 border border-[#7AC142]/30 rounded-xl p-4">
+                              <div className="flex items-start gap-3">
+                                <div className="bg-[#7AC142] text-white p-2 rounded-lg flex-shrink-0"><Download size={18} /></div>
+                                <div className="flex-1">
+                                  <p className="font-bold text-[#0B3B68]">Nueva versión disponible: v{updateInfo.version}</p>
+                                  {updateInfo.release_notes && <p className="text-sm text-[#6B7280] mt-1">{updateInfo.release_notes}</p>}
+                                  <p className="text-xs text-[#6B7280] mt-2">Contacta a soporte para recibir la actualización.</p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Guía de actualización */}
+                        <div className="border-t border-gray-100 my-4 pt-4">
+                          <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
+                            <p className="font-bold text-[#0B3B68] text-sm flex items-center gap-2 mb-2"><Info size={14} /> Sobre las actualizaciones</p>
+                            <ul className="text-xs text-[#6B7280] space-y-1.5">
+                              <li>Al instalar una actualización, <strong className="text-[#0B3B68]">tus datos se mantienen intactos</strong>.</li>
+                              <li><strong className="text-[#EF4444]">No desinstales la app</strong> antes de actualizar. Instala encima.</li>
+                              <li>El sistema crea backups automáticos cada 15 minutos como protección extra.</li>
+                            </ul>
+                          </div>
+                        </div>
+
                         <div className="border-t border-gray-100 my-4 pt-6 flex items-center justify-between">
                             <div>
                                 <h4 className="text-[#EF4444] font-bold text-sm mb-2 uppercase flex items-center gap-2"><AlertTriangle size={16}/> Zona de Peligro</h4>
@@ -729,7 +780,15 @@ export function SettingsPage() {
                             <div className="text-right pl-6 flex-shrink-0">
                                 <p className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Versión</p>
                                 <p className="text-lg font-black text-[#0B3B68]">v{__APP_VERSION__}</p>
-                                <p className="text-[10px] text-[#6B7280]">Bisne con Talla</p>
+                                <p className="text-[10px] text-[#6B7280] mb-2">Bisne con Talla</p>
+                                <button
+                                  onClick={handleCheckUpdate}
+                                  disabled={checkingUpdate}
+                                  className="text-xs font-bold text-[#0B3B68] bg-[#0B3B68]/10 hover:bg-[#0B3B68]/20 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5 ml-auto"
+                                >
+                                  {checkingUpdate ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                                  Verificar
+                                </button>
                             </div>
                         </div>
                     </div>

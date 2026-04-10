@@ -3,7 +3,7 @@ import { db } from './db';
 const BACKUP_DB_NAME = 'NexusPOS_Backups';
 const BACKUP_DB_VERSION = 1;
 const BACKUP_STORE = 'snapshots';
-const MAX_BACKUPS = 4; // Mantener máx. 4 backups (1h de protección con intervalo de 15min)
+const MAX_BACKUPS = 8; // Mantener máx. 8 backups (2h de protección con intervalo de 15min)
 const BACKUP_INTERVAL_MS = 15 * 60 * 1000; // 15 minutos
 
 let intervalId: ReturnType<typeof setInterval> | null = null;

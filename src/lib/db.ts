@@ -265,6 +265,24 @@ export class NexusDB extends Dexie {
     this.version(10).stores({
       inventory_movements: null // DROP tabla local no utilizada
     });
+
+    // Backup pre-migración: si la versión del schema cambió, crear backup de seguridad
+    this.on('ready', () => {
+      const SCHEMA_KEY = 'nexus_db_schema_version';
+      const currentVersion = 10; // Debe coincidir con la última versión declarada arriba
+      const savedVersion = parseInt(localStorage.getItem(SCHEMA_KEY) || '0');
+
+      if (savedVersion > 0 && savedVersion < currentVersion) {
+        console.log(`🔄 Schema migrado de v${savedVersion} a v${currentVersion}. Creando backup de seguridad...`);
+        import('./backup').then(({ createBackup }) =>
+          createBackup()
+            .then(b => console.log(`✅ Backup pre-migración creado: ${b.id} (${(b.size / 1024).toFixed(0)} KB)`))
+            .catch(err => console.warn('⚠ Error creando backup pre-migración:', err))
+        );
+      }
+
+      localStorage.setItem(SCHEMA_KEY, currentVersion.toString());
+    });
   }
 }
 
