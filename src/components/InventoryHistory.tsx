@@ -132,7 +132,8 @@ function translateReason(reason: string) {
     'damage': 'Merma / Daño',
     'damage_warehouse': 'Merma Almacén',
     'gift': 'Regalo / Promo',
-    'transfer_to_display': 'Traslado a Vitrina'
+    'transfer_to_display': 'Traslado a Vitrina',
+    'transfer_to_warehouse': 'Devuelto a Almacén'
   };
   return map[reason] || reason;
 }
@@ -144,6 +145,7 @@ function getReasonStyle(reason: string) {
         case 'damage': case 'damage_warehouse': return 'bg-red-50 border-red-100 text-red-600';
         case 'initial': return 'bg-indigo-50 border-indigo-100 text-indigo-600';
         case 'transfer_to_display': return 'bg-emerald-50 border-emerald-100 text-emerald-600';
+        case 'transfer_to_warehouse': return 'bg-blue-50 border-blue-100 text-blue-600';
         case 'correction_warehouse': return 'bg-amber-50 border-amber-100 text-amber-600';
         default: return 'bg-slate-50 border-slate-200 text-slate-600';
     }

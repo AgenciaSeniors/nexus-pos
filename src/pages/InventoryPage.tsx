@@ -46,9 +46,10 @@ export function InventoryPage() {
       notes: ''
   });
 
-  // --- MODAL TRANSFERENCIA ALMACÉN → VITRINA ---
+  // --- MODAL TRANSFERENCIA ALMACÉN ↔ VITRINA ---
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [transferQty, setTransferQty] = useState('');
+  const [transferDirection, setTransferDirection] = useState<'to_display' | 'to_warehouse'>('to_display');
 
   // CARGA DE PRODUCTOS
   const products = useLiveQuery(async () => {
@@ -235,23 +236,26 @@ export function InventoryPage() {
       }
   };
 
-  // --- TRANSFERENCIA ALMACÉN → VITRINA ---
+  // --- TRANSFERENCIA ALMACÉN ↔ VITRINA (bidireccional) ---
   const handleTransfer = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!editingProduct || !businessId) return;
       const qty = parseFloat(transferQty);
       const warehouseStock = editingProduct.stock_warehouse ?? 0;
+      const displayStock = editingProduct.stock;
+      const isToDisplay = transferDirection === 'to_display';
 
       if (isNaN(qty) || qty <= 0) { toast.error("Ingresa una cantidad válida"); return; }
-      if (qty > warehouseStock) { toast.error(`Solo hay ${warehouseStock} en almacén`); return; }
+      if (isToDisplay && qty > warehouseStock) { toast.error(`Solo hay ${warehouseStock} en almacén`); return; }
+      if (!isToDisplay && qty > displayStock) { toast.error(`Solo hay ${displayStock} en vitrina`); return; }
 
       setIsLoading(true);
       try {
           await db.transaction('rw', [db.products, db.movements, db.action_queue, db.audit_logs], async () => {
               const updatedProduct = {
                   ...editingProduct,
-                  stock: editingProduct.stock + qty,
-                  stock_warehouse: warehouseStock - qty,
+                  stock: isToDisplay ? displayStock + qty : displayStock - qty,
+                  stock_warehouse: isToDisplay ? warehouseStock - qty : warehouseStock + qty,
                   sync_status: 'pending_update' as const
               };
               await db.products.put(updatedProduct);
@@ -262,8 +266,8 @@ export function InventoryPage() {
                   business_id: businessId,
                   product_id: editingProduct.id,
                   staff_id: currentStaff.id,
-                  qty_change: qty,
-                  reason: 'transfer_to_display',
+                  qty_change: isToDisplay ? qty : -qty,
+                  reason: isToDisplay ? 'transfer_to_display' : 'transfer_to_warehouse',
                   created_at: new Date().toISOString(),
                   sync_status: 'pending_create'
               };
@@ -274,12 +278,12 @@ export function InventoryPage() {
                   product: editingProduct.name,
                   action: 'transfer',
                   qty,
-                  from: 'almacén',
-                  to: 'vitrina'
+                  from: isToDisplay ? 'almacén' : 'vitrina',
+                  to: isToDisplay ? 'vitrina' : 'almacén'
               }, currentStaff);
           });
 
-          toast.success(`${qty} ${editingProduct.unit || 'un'} transferido(s) a vitrina`);
+          toast.success(`${qty} ${editingProduct.unit || 'un'} transferido(s) a ${isToDisplay ? 'vitrina' : 'almacén'}`);
           setIsTransferModalOpen(false);
           setEditingProduct(null);
           setTransferQty('');
@@ -610,6 +614,7 @@ export function InventoryPage() {
   const openTransfer = (p: Product) => {
       setEditingProduct(p);
       setTransferQty('');
+      setTransferDirection('to_display');
       setIsTransferModalOpen(true);
   };
 
@@ -1125,27 +1130,51 @@ export function InventoryPage() {
         </div>
       )}
 
-      {/* --- MODAL: TRANSFERENCIA ALMACÉN → VITRINA --- */}
-      {isTransferModalOpen && editingProduct && (
+      {/* --- MODAL: TRANSFERENCIA ALMACÉN ↔ VITRINA --- */}
+      {isTransferModalOpen && editingProduct && (() => {
+        const isToDisplay = transferDirection === 'to_display';
+        const maxQty = isToDisplay ? (editingProduct.stock_warehouse ?? 0) : editingProduct.stock;
+        const qty = parseFloat(transferQty) || 0;
+        const newWarehouse = isToDisplay ? (editingProduct.stock_warehouse ?? 0) - qty : (editingProduct.stock_warehouse ?? 0) + qty;
+        const newDisplay = isToDisplay ? editingProduct.stock + qty : editingProduct.stock - qty;
+        return (
         <div className="fixed inset-0 bg-[#0B3B68]/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[92vh] flex flex-col overflow-hidden border-t-4 border-emerald-500">
-                <div className="p-4 bg-emerald-50 border-b border-emerald-100 text-center flex-shrink-0">
-                    <h3 className="font-black text-emerald-700 text-lg uppercase tracking-wide mb-1">Abastecer Vitrina</h3>
+            <div className={`bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[92vh] flex flex-col overflow-hidden border-t-4 ${isToDisplay ? 'border-emerald-500' : 'border-blue-500'}`}>
+                <div className={`p-4 border-b text-center flex-shrink-0 ${isToDisplay ? 'bg-emerald-50 border-emerald-100' : 'bg-blue-50 border-blue-100'}`}>
+                    <h3 className={`font-black text-lg uppercase tracking-wide mb-1 ${isToDisplay ? 'text-emerald-700' : 'text-blue-700'}`}>
+                        {isToDisplay ? 'Sacar a Vitrina' : 'Devolver a Almacén'}
+                    </h3>
                     <p className="text-[#0B3B68] font-bold">{editingProduct.name}</p>
                 </div>
 
                 <form onSubmit={handleTransfer} className="flex-1 overflow-y-auto p-5 space-y-4">
+                    {/* Selector de dirección */}
+                    <div className="grid grid-cols-2 gap-2">
+                        <button type="button" onClick={() => { setTransferDirection('to_display'); setTransferQty(''); }}
+                            className={`p-2.5 rounded-xl text-xs font-bold border-2 transition-all ${isToDisplay ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-white border-gray-200 text-[#6B7280] hover:border-gray-300'}`}>
+                            Almacén → Vitrina
+                        </button>
+                        <button type="button" onClick={() => { setTransferDirection('to_warehouse'); setTransferQty(''); }}
+                            className={`p-2.5 rounded-xl text-xs font-bold border-2 transition-all ${!isToDisplay ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-gray-200 text-[#6B7280] hover:border-gray-300'}`}>
+                            Vitrina → Almacén
+                        </button>
+                    </div>
+
                     {/* Estado actual */}
                     <div className="grid grid-cols-2 gap-3">
-                        <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-center">
+                        <div className={`rounded-xl p-3 text-center border ${!isToDisplay ? 'bg-emerald-50 border-emerald-200 ring-2 ring-emerald-300' : 'bg-blue-50 border-blue-100'}`}>
                             <span className="block text-[10px] font-bold text-blue-500 uppercase">Almacén</span>
                             <span className="text-2xl font-black text-blue-700">{editingProduct.stock_warehouse ?? 0}</span>
                             <span className="block text-[9px] font-bold text-blue-400 uppercase">{editingProduct.unit}</span>
+                            {isToDisplay && <span className="text-[9px] text-emerald-600 font-bold">← origen</span>}
+                            {!isToDisplay && <span className="text-[9px] text-blue-600 font-bold">← destino</span>}
                         </div>
-                        <div className="bg-[#7AC142]/10 border border-[#7AC142]/20 rounded-xl p-3 text-center">
+                        <div className={`rounded-xl p-3 text-center border ${isToDisplay ? 'bg-emerald-50 border-emerald-200 ring-2 ring-emerald-300' : 'bg-[#7AC142]/10 border-[#7AC142]/20'}`}>
                             <span className="block text-[10px] font-bold text-[#7AC142] uppercase">Vitrina</span>
                             <span className="text-2xl font-black text-[#5a962e]">{editingProduct.stock}</span>
                             <span className="block text-[9px] font-bold text-[#7AC142] uppercase">{editingProduct.unit}</span>
+                            {isToDisplay && <span className="text-[9px] text-emerald-600 font-bold">← destino</span>}
+                            {!isToDisplay && <span className="text-[9px] text-blue-600 font-bold">← origen</span>}
                         </div>
                     </div>
 
@@ -1154,39 +1183,42 @@ export function InventoryPage() {
                         <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Cantidad a transferir</label>
                         <input
                             type="number" step="0.01" min="0.01" autoFocus required
-                            max={editingProduct.stock_warehouse ?? 0}
+                            max={maxQty}
                             placeholder="0"
-                            className="w-full p-3 text-xl font-bold text-center border-2 border-emerald-200 rounded-xl focus:border-emerald-500 outline-none transition-colors"
+                            className={`w-full p-3 text-xl font-bold text-center border-2 rounded-xl outline-none transition-colors ${isToDisplay ? 'border-emerald-200 focus:border-emerald-500' : 'border-blue-200 focus:border-blue-500'}`}
                             value={transferQty}
                             onChange={e => setTransferQty(e.target.value)}
                         />
+                        <p className="text-[10px] text-[#6B7280] text-center mt-1">Disponible: {maxQty} {editingProduct.unit || 'un'}</p>
                     </div>
 
                     {/* Preview del resultado */}
-                    {transferQty && parseFloat(transferQty) > 0 && (
+                    {transferQty && qty > 0 && (
                         <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
                             <p className="text-[10px] font-bold text-[#6B7280] uppercase mb-2 text-center">Resultado</p>
                             <div className="grid grid-cols-2 gap-3 text-center">
                                 <div>
                                     <span className="text-[9px] font-bold text-blue-500 uppercase">Almacén</span>
-                                    <span className="block text-lg font-black text-blue-700">{Math.max(0, (editingProduct.stock_warehouse ?? 0) - parseFloat(transferQty))}</span>
+                                    <span className="block text-lg font-black text-blue-700">{Math.max(0, newWarehouse)}</span>
                                 </div>
                                 <div>
                                     <span className="text-[9px] font-bold text-[#7AC142] uppercase">Vitrina</span>
-                                    <span className="block text-lg font-black text-[#5a962e]">{editingProduct.stock + (parseFloat(transferQty) || 0)}</span>
+                                    <span className="block text-lg font-black text-[#5a962e]">{Math.max(0, newDisplay)}</span>
                                 </div>
                             </div>
                         </div>
                     )}
 
-                    <button type="submit" disabled={isLoading || !transferQty || parseFloat(transferQty) <= 0 || parseFloat(transferQty) > (editingProduct.stock_warehouse ?? 0)} className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg transition-all flex justify-center items-center gap-2 disabled:opacity-50">
-                        {isLoading ? <Loader2 className="animate-spin"/> : <><ArrowRightLeft size={16}/> Transferir a Vitrina</>}
+                    <button type="submit" disabled={isLoading || !transferQty || qty <= 0 || qty > maxQty}
+                        className={`w-full py-3 text-white font-bold rounded-xl shadow-lg transition-all flex justify-center items-center gap-2 disabled:opacity-50 ${isToDisplay ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                        {isLoading ? <Loader2 className="animate-spin"/> : <><ArrowRightLeft size={16}/> {isToDisplay ? 'Sacar a Vitrina' : 'Devolver a Almacén'}</>}
                     </button>
                     <button type="button" onClick={() => { setIsTransferModalOpen(false); setEditingProduct(null); }} className="w-full text-xs text-[#6B7280] hover:text-[#1F2937] font-bold">Cancelar</button>
                 </form>
             </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* --- MODAL 3: HISTORIAL --- */}
       {isHistoryModalOpen && editingProduct && (
