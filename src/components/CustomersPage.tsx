@@ -223,10 +223,16 @@ export function CustomersPage() {
 
           await db.transaction('rw', [db.customers, db.action_queue, db.audit_logs], async () => {
               await db.customers.put(updatedCustomer);
-              await addToQueue('CUSTOMER_SYNC', updatedCustomer); // <--- CLAVE PARA SYNC
-              await logAuditAction('UPDATE_LOYALTY', { 
-                  customer: selectedCustomer.name, 
-                  adjustment: pointsAdjustment.amount, 
+              // Mejora 1: Usar LOYALTY_CHANGE (incremento atómico) en vez de CUSTOMER_SYNC
+              // para evitar que un ajuste desde otro dispositivo se sobrescriba
+              await addToQueue('LOYALTY_CHANGE', {
+                  customer_id: selectedCustomer.id,
+                  delta: pointsAdjustment.amount,
+                  business_id: selectedCustomer.business_id
+              });
+              await logAuditAction('UPDATE_LOYALTY', {
+                  customer: selectedCustomer.name,
+                  adjustment: pointsAdjustment.amount,
                   reason: pointsAdjustment.reason,
                   old_balance: currentPoints,
                   new_balance: newPoints

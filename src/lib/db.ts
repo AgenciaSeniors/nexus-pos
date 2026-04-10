@@ -180,24 +180,26 @@ export interface AuditLog {
 export type SalePayload = { sale: Sale; items: SaleItem[] };
 export type VoidSalePayload = { saleId: string };
 export type PartialRefundPayload = { saleId: string; refunded_items: RefundedItem[] };
+export type LoyaltyChangePayload = { customer_id: string; delta: number; business_id: string };
 
-export type QueuePayload = 
-    | SalePayload 
-    | InventoryMovement 
-    | AuditLog 
-    | Product 
+export type QueuePayload =
+    | SalePayload
+    | InventoryMovement
+    | AuditLog
+    | Product
     | Customer
     | BusinessConfig
-    | CashShift      
+    | CashShift
     | CashMovement
     | Staff
     | VoidSalePayload
-    | PartialRefundPayload;
+    | PartialRefundPayload
+    | LoyaltyChangePayload;
 
 export interface QueueItem {
   id: string;
-  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT' | 'STAFF_SYNC' | 'VOID_SALE' | 'PARTIAL_REFUND';
-  payload: QueuePayload; 
+  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT' | 'STAFF_SYNC' | 'VOID_SALE' | 'PARTIAL_REFUND' | 'LOYALTY_CHANGE';
+  payload: QueuePayload;
   timestamp: number;
   retries: number;
   status: 'pending' | 'processing' | 'failed';

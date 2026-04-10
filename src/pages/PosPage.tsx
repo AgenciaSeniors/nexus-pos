@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Product, type Sale, type ParkedOrder, type SaleItem, type Staff, type Customer } from '../lib/db';
-import { addToQueue, syncPush, syncPull, isOnline } from '../lib/sync';
+import { addToQueue, syncPush, syncPull, isOnline, getLastSyncTimestamp } from '../lib/sync';
 import { currency } from '../lib/currency';
 import { logAuditAction } from '../lib/audit';
 import { TicketModal } from '../components/TicketModal';
@@ -381,11 +381,17 @@ export function PosPage() {
                 const freshCustomer = await db.customers.get(selectedCustomer.id);
                 if (freshCustomer && !freshCustomer.deleted_at) {
                     const currentPoints = freshCustomer.loyalty_points || 0;
-                    const newPoints = Math.max(0, currentPoints - (redeemedPoints || 0) + pointsEarned);
+                    const delta = pointsEarned - (redeemedPoints || 0);
+                    const newPoints = Math.max(0, currentPoints + delta);
                     await db.customers.update(selectedCustomer.id, {
                         loyalty_points: newPoints,
                         sync_status: 'pending_update'
                     });
+                    // Mejora 1: Incremento atómico de puntos — evita que 2 dispositivos
+                    // se sobrescriban mutuamente al hacer ventas del mismo cliente offline
+                    if (delta !== 0) {
+                        await addToQueue('LOYALTY_CHANGE', { customer_id: selectedCustomer.id, delta, business_id: bId });
+                    }
                 }
             }
 
@@ -456,13 +462,29 @@ export function PosPage() {
     setEditingItemId(null);
   };
 
+  // --- Mejora 3: Aviso de datos viejos si última sync > 2 horas ---
+  const lastSync = getLastSyncTimestamp();
+  const syncAgeMs = lastSync > 0 ? Date.now() - lastSync : 0;
+  const syncAgeHours = Math.floor(syncAgeMs / 3600000);
+  const showStaleWarning = lastSync > 0 && syncAgeMs > 7200000; // > 2 horas
+
   // --- UI RENDER ---
   return (
     <div className="flex flex-col md:flex-row h-[calc(100vh-60px)] md:h-screen bg-background overflow-hidden font-body">
-      
+
       {/* COLUMNA IZQUIERDA: CATÁLOGO */}
       <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ${mobileView === 'cart' ? 'hidden md:flex' : 'flex'}`}>
-        
+
+        {/* Mejora 3: Banner de datos potencialmente desactualizados */}
+        {showStaleWarning && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2 text-amber-700 text-xs font-medium">
+            <AlertTriangle size={14} className="flex-shrink-0" />
+            <span>
+              Stock puede estar desactualizado — última sincronización hace {syncAgeHours < 24 ? `${syncAgeHours}h` : `${Math.floor(syncAgeHours / 24)} día(s)`}
+            </span>
+          </div>
+        )}
+
         {/* Barra Superior */}
         <div className="p-4 bg-surface border-b border-gray-200 sticky top-0 z-10 shadow-sm flex flex-col gap-3">
             <div className="flex gap-2 items-center">

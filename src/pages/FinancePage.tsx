@@ -450,6 +450,32 @@ export function FinancePage() {
             return;
         }
 
+        // Fix 5: Verificar en Supabase que no haya un turno abierto desde otro dispositivo
+        if (isOnline()) {
+            try {
+                const { data: remoteOpenShifts } = await supabase
+                    .from('cash_shifts')
+                    .select('id, staff_id, opened_at')
+                    .eq('business_id', bId)
+                    .eq('status', 'open')
+                    .limit(1);
+                if (remoteOpenShifts && remoteOpenShifts.length > 0) {
+                    // Traer el turno remoto a local para que se vea en la UI
+                    const { data: fullShift } = await supabase
+                        .from('cash_shifts').select('*').eq('id', remoteOpenShifts[0].id).single();
+                    if (fullShift) {
+                        await db.cash_shifts.put({ ...fullShift, sync_status: 'synced' });
+                    }
+                    toast.error('Ya hay un turno abierto desde otro dispositivo. Se sincronizó automáticamente.');
+                    setIsLoading(false);
+                    return;
+                }
+            } catch {
+                // Si falla la verificación remota, continuar con check local
+                console.warn('No se pudo verificar turnos remotos, usando check local');
+            }
+        }
+
         const shiftId = crypto.randomUUID();
         const newShift: CashShift = {
             id: shiftId,
@@ -464,7 +490,7 @@ export function FinancePage() {
         const staffPayload = { id: sId, name: currentStaff?.name || 'Cajero', business_id: bId };
 
         await db.transaction('rw', [db.cash_shifts, db.action_queue, db.audit_logs], async () => {
-            // Fix: Prevenir turnos simultáneos (race condition multi-dispositivo)
+            // Check local también (por si estamos offline)
             const existingOpen = await db.cash_shifts.where({ business_id: bId, status: 'open' }).first();
             if (existingOpen) throw new Error('Ya existe un turno abierto. Ciérralo primero.');
 
@@ -631,10 +657,15 @@ export function FinancePage() {
                       // Quitar puntos ganados en esta venta y devolver los canjeados
                       const pointsEarned = Math.floor(safeFloat(sale.total) / 10);
                       const pointsRedeemed = sale.redeemed_points || 0;
+                      const delta = -pointsEarned + pointsRedeemed; // negativo = quita puntos ganados
                       await db.customers.update(sale.customer_id, {
-                          loyalty_points: Math.max(0, (customer.loyalty_points || 0) - pointsEarned + pointsRedeemed),
+                          loyalty_points: Math.max(0, (customer.loyalty_points || 0) + delta),
                           sync_status: 'pending_update'
                       });
+                      // Mejora 1: Incremento atómico en servidor (multi-dispositivo safe)
+                      if (delta !== 0) {
+                          await addToQueue('LOYALTY_CHANGE', { customer_id: sale.customer_id, delta, business_id: safeBid });
+                      }
                   }
               }
 
@@ -762,10 +793,13 @@ export function FinancePage() {
           if (customer) {
             const pointsToRevert = Math.floor(refundTotal / 10);
             if (pointsToRevert > 0) {
+              const delta = -pointsToRevert;
               await db.customers.update(refundSale.customer_id, {
-                loyalty_points: Math.max(0, (customer.loyalty_points || 0) - pointsToRevert),
+                loyalty_points: Math.max(0, (customer.loyalty_points || 0) + delta),
                 sync_status: 'pending_update'
               });
+              // Mejora 1: Incremento atómico en servidor (multi-dispositivo safe)
+              await addToQueue('LOYALTY_CHANGE', { customer_id: refundSale.customer_id, delta, business_id: safeBid });
             }
           }
         }

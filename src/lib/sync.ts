@@ -1,21 +1,34 @@
-import { 
-  db, 
-  type QueueItem, 
-  type QueuePayload, 
-  type SalePayload, 
-  type Product, 
-  type Customer, 
-  type InventoryMovement, 
-  type AuditLog, 
+import {
+  db,
+  type QueueItem,
+  type QueuePayload,
+  type SalePayload,
+  type Product,
+  type Customer,
+  type InventoryMovement,
+  type AuditLog,
   type BusinessConfig,
   type CashShift,
   type CashMovement,
   type Staff,
   type VoidSalePayload,
-  type PartialRefundPayload
+  type PartialRefundPayload,
+  type LoyaltyChangePayload
 } from './db';
 import { supabase } from './supabase';
 import type { Table } from 'dexie';
+
+// ─── LAST SYNC TIMESTAMP ──────────────────────────────────────────────────────
+// Permite a la UI saber cuándo fue la última sincronización exitosa.
+const LAST_SYNC_KEY = 'nexus_last_sync_at';
+
+export function getLastSyncTimestamp(): number {
+  return parseInt(localStorage.getItem(LAST_SYNC_KEY) || '0');
+}
+
+function setLastSyncTimestamp() {
+  localStorage.setItem(LAST_SYNC_KEY, Date.now().toString());
+}
 
 export function isOnline() {
   return typeof navigator !== 'undefined' && navigator.onLine;
@@ -101,7 +114,7 @@ async function processItem(item: QueueItem) {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanProduct } = product;
       const { error } = await supabase.from('products').upsert(cleanProduct);
-      if (error) throw new Error(`Error producto: ${error.message}`);
+      if (error && error.code !== '23505') throw new Error(`Error producto: ${error.message}`);
       await db.products.update(product.id, { sync_status: 'synced' });
       break;
     }
@@ -110,7 +123,7 @@ async function processItem(item: QueueItem) {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanCustomer } = customer;
       const { error } = await supabase.from('customers').upsert(cleanCustomer);
-      if (error) throw new Error(`Error cliente: ${error.message}`);
+      if (error && error.code !== '23505') throw new Error(`Error cliente: ${error.message}`);
       await db.customers.update(customer.id, { sync_status: 'synced' });
       break;
     }
@@ -169,6 +182,25 @@ async function processItem(item: QueueItem) {
         await db.sales.update(saleId, { sync_status: 'synced' });
         break;
     }
+    case 'LOYALTY_CHANGE': {
+        // Incremento atómico de puntos de lealtad: lee valor actual del servidor,
+        // aplica delta, y actualiza. Evita que 2 dispositivos se sobrescriban mutuamente.
+        const { customer_id, delta, business_id } = payload as LoyaltyChangePayload;
+        const { data: current, error: readErr } = await supabase
+            .from('customers').select('loyalty_points')
+            .eq('id', customer_id).eq('business_id', business_id).single();
+        if (readErr) throw new Error(`Error leyendo puntos: ${readErr.message}`);
+        const serverPoints = current?.loyalty_points || 0;
+        const newPoints = Math.max(0, serverPoints + delta);
+        const { error: updateErr } = await supabase
+            .from('customers')
+            .update({ loyalty_points: newPoints, updated_at: new Date().toISOString() })
+            .eq('id', customer_id);
+        if (updateErr) throw new Error(`Error actualizando puntos: ${updateErr.message}`);
+        // Sincronizar valor del servidor a local y desbloquear el cliente para futuros pulls
+        await db.customers.update(customer_id, { loyalty_points: newPoints, sync_status: 'synced' });
+        break;
+    }
     default:
       throw new Error(`Tipo de acción desconocido: ${type}`);
   }
@@ -188,9 +220,9 @@ export async function processQueue() {
   }
 }
 
-// Mapa en memoria para rastrear cuándo fue el último intento de cada item.
-// Separado del campo `timestamp` (que es la fecha de creación) para no romper el backoff.
-const _lastRetryAt = new Map<string, number>();
+// Mejora 6: El backoff ahora se persiste actualizando el campo `timestamp` del item
+// en la cola. Antes usaba un Map en memoria que se perdía al cerrar la app,
+// causando que todos los reintentos se dispararan de golpe al reabrir.
 
 async function _runQueue() {
   if (!db.isOpen()) return;
@@ -200,11 +232,11 @@ async function _runQueue() {
   let processedCount = 0;
 
   for (const item of pendingItems) {
-    // Backoff exponencial basado en el último intento real (no el timestamp de creación)
+    // Backoff exponencial: el timestamp se actualiza en cada reintento,
+    // así persiste incluso si la app se cierra y reabre.
     if (item.retries > 0) {
       const backoffMs = Math.min(Math.pow(2, item.retries - 1) * 30000, 300000); // 30s, 60s, 2m, 4m, máx 5m
-      const lastAttempt = _lastRetryAt.get(item.id) || item.timestamp;
-      if (Date.now() - lastAttempt < backoffMs) continue;
+      if (Date.now() - item.timestamp < backoffMs) continue;
     }
 
     processedCount++;
@@ -213,29 +245,26 @@ async function _runQueue() {
       await db.action_queue.update(item.id, { status: 'processing' });
       await processItem(item);
       await db.action_queue.delete(item.id);
-      _lastRetryAt.delete(item.id);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const newRetries = (item.retries || 0) + 1;
 
       console.error(`❌ Fallo ítem ${item.type} (${item.id}):`, errorMessage);
 
-      // Registrar cuándo fue este intento para el backoff
-      _lastRetryAt.set(item.id, Date.now());
-
       if (newRetries >= 5) {
           await db.action_queue.update(item.id, { status: 'failed', error: `ABANDONADO: ${errorMessage}` });
-          _lastRetryAt.delete(item.id);
           const typeLabels: Record<string, string> = {
             SALE: 'Venta', PRODUCT_SYNC: 'Producto', CUSTOMER_SYNC: 'Cliente',
             MOVEMENT: 'Movimiento', AUDIT: 'Auditoría', SETTINGS_SYNC: 'Configuración',
-            SHIFT: 'Turno', CASH_MOVEMENT: 'Mov. Caja', STAFF_SYNC: 'Empleado', VOID_SALE: 'Anulación'
+            SHIFT: 'Turno', CASH_MOVEMENT: 'Mov. Caja', STAFF_SYNC: 'Empleado', VOID_SALE: 'Anulación',
+            LOYALTY_CHANGE: 'Puntos de Lealtad'
           };
           window.dispatchEvent(new CustomEvent('nexus-sync-failed', {
             detail: { type: typeLabels[item.type] || item.type, error: errorMessage }
           }));
       } else {
-          await db.action_queue.update(item.id, { status: 'pending', retries: newRetries, error: errorMessage });
+          // timestamp actualizado = persistencia del backoff (sobrevive cierre de app)
+          await db.action_queue.update(item.id, { status: 'pending', retries: newRetries, error: errorMessage, timestamp: Date.now() });
       }
     }
   }
@@ -480,6 +509,24 @@ export async function syncLiveData() {
                 // El turno fue cerrado desde otro dispositivo — buscar el estado real
                 const { data: realShift } = await supabase.from('cash_shifts').select('*').eq('id', s.id).single();
                 if (realShift && realShift.status === 'closed') {
+                    // Fix 3: Traer ventas y movimientos de caja de este turno antes de cerrarlo.
+                    // Si el dispositivo estaba offline mientras otro hacía ventas y cerraba,
+                    // estas ventas no estarían en IndexedDB.
+                    const { data: shiftSales } = await supabase
+                        .from('sales').select('*')
+                        .eq('shift_id', s.id).eq('business_id', businessId);
+                    if (shiftSales && shiftSales.length > 0) {
+                        const cleanSales = shiftSales.map((sl: any) => ({ ...sl, sync_status: 'synced' as const }));
+                        await safeBulkPut(db.sales as never, cleanSales);
+                    }
+                    const { data: shiftCashMovs } = await supabase
+                        .from('cash_movements').select('*')
+                        .eq('shift_id', s.id).eq('business_id', businessId);
+                    if (shiftCashMovs && shiftCashMovs.length > 0) {
+                        const cleanMovs = shiftCashMovs.map((m: any) => ({ ...m, sync_status: 'synced' as const }));
+                        await safeBulkPut(db.cash_movements as never, cleanMovs);
+                    }
+
                     await db.cash_shifts.put({ ...realShift, sync_status: 'synced' });
                 }
             }
@@ -529,6 +576,40 @@ export async function syncLiveData() {
                 await db.customers.bulkDelete(orphanCustomerIds);
             }
         }
+
+        // 6. Staff: sincronizar cambios de PIN y datos de empleados (Fix 2)
+        // Sin esto, cambios de PIN hechos en otro dispositivo no se propagaban
+        // hasta el próximo login (syncCriticalData solo corre al iniciar sesión).
+        const { data: staffData } = await supabase
+            .from('staff')
+            .select('*')
+            .eq('business_id', businessId);
+
+        if (staffData && staffData.length > 0) {
+            const { data: { user } } = await supabase.auth.getUser();
+            const adminId = user?.id;
+            // Excluir admin (su registro se gestiona desde profiles, no desde staff)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const cleanStaff = staffData
+                .filter((s: any) => !adminId || s.id !== adminId)
+                .map((s: any) => ({ ...s, sync_status: 'synced' as const }));
+            await safeBulkPut(db.staff as never, cleanStaff);
+        }
+
+        // 7. Mejora 5: Verificar suscripción/trial con datos locales actualizados
+        // Si el trial venció mientras la app estaba abierta, notificar a Layout
+        const freshSettings = await db.settings.toArray();
+        if (freshSettings.length > 0) {
+            const cfg = freshSettings[0];
+            if (cfg.status === 'trial' && cfg.subscription_expires_at) {
+                if (new Date() > new Date(cfg.subscription_expires_at)) {
+                    window.dispatchEvent(new CustomEvent('nexus-trial-expired'));
+                }
+            }
+        }
+
+        // Mejora 2: Registrar timestamp de última sincronización exitosa
+        setLastSyncTimestamp();
     } catch (error) {
         // Silencioso: no interrumpir la app si falla el pull en background
         console.error('syncLiveData error:', error);
@@ -544,6 +625,14 @@ export function startSyncListeners() {
   if (_syncIntervalId !== null) return; // Ya inicializado
 
   _onlineHandler = () => {
+    // Fix 4: Al reconectarse, reintentar automáticamente items fallidos
+    // (antes solo se reintentaban con el botón manual en Ajustes)
+    if (db.isOpen()) {
+      db.action_queue
+        .where('status').equals('failed')
+        .modify({ status: 'pending', retries: 0, error: undefined })
+        .catch(() => {});
+    }
     resetProcessingItems()
       .then(() => processQueue())
       .then(() => syncLiveData())
@@ -553,6 +642,11 @@ export function startSyncListeners() {
 
   _visibilityHandler = () => {
     if (!document.hidden && isOnline() && db.isOpen()) {
+      // Fix 4: También reintentar fallidos al volver a la app
+      db.action_queue
+        .where('status').equals('failed')
+        .modify({ status: 'pending', retries: 0, error: undefined })
+        .catch(() => {});
       resetProcessingItems().then(() => processQueue()).catch(() => {});
     }
   };

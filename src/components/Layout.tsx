@@ -7,7 +7,7 @@ import {
 import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff } from '../lib/db';
-import { syncManualFull } from '../lib/sync'; 
+import { syncManualFull, getLastSyncTimestamp } from '../lib/sync';
 import { supabase } from '../lib/supabase';
 import { toast } from 'sonner';
 
@@ -83,6 +83,9 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
     };
   }, []);
 
+  // Mejora 5: Trial expirado detectado durante uso
+  const [trialJustExpired, setTrialJustExpired] = useState(false);
+
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
@@ -99,11 +102,17 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
         });
     };
     const handleOffline = () => { setIsOnline(false); setJustReconnected(false); };
+    const handleTrialExpired = () => {
+      setTrialJustExpired(true);
+      toast.error('Tu período de prueba ha vencido. Contacta al administrador.', { duration: 15000 });
+    };
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('nexus-trial-expired', handleTrialExpired);
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('nexus-trial-expired', handleTrialExpired);
     };
   }, []);
 
@@ -208,20 +217,30 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
     { path: '/configuracion', icon: <Settings size={22} />, label: 'Configuración', show: isAdmin }
   ];
 
+  // Mejora 2: Calcular tiempo desde última sincronización
+  const lastSyncAt = getLastSyncTimestamp();
+  const lastSyncAgeMs = lastSyncAt > 0 ? Date.now() - lastSyncAt : 0;
+  const lastSyncLabel = lastSyncAt === 0 ? '' : lastSyncAgeMs < 60000 ? ' (hace <1 min)' :
+    lastSyncAgeMs < 3600000 ? ` (hace ${Math.floor(lastSyncAgeMs / 60000)} min)` :
+    lastSyncAgeMs < 86400000 ? ` (hace ${Math.floor(lastSyncAgeMs / 3600000)}h)` :
+    ` (hace ${Math.floor(lastSyncAgeMs / 86400000)} día(s))`;
+  // Mejora 4: Alerta si lleva más de 3 días sin sincronizar
+  const daysWithoutSync = lastSyncAt > 0 ? Math.floor(lastSyncAgeMs / 86400000) : 0;
+
   const getButtonState = () => {
     if (isSyncing) {
       return { className: "bg-amber-50 text-amber-600 ring-1 ring-amber-200", icon: <RefreshCw size={20} className="animate-spin"/>, title: "Sincronizando..." };
     }
     if (!isOnline && (pendingCount > 0 || failedCount > 0)) {
-      return { className: "bg-red-50 text-[#EF4444] ring-1 ring-red-200 animate-pulse", icon: <AlertCircle size={20} />, title: "Sin conexión — cambios pendientes de subir" };
+      return { className: "bg-red-50 text-[#EF4444] ring-1 ring-red-200 animate-pulse", icon: <AlertCircle size={20} />, title: "Sin conexión — cambios pendientes de subir" + lastSyncLabel };
     }
     if (pendingCount > 0) {
-      return { className: "bg-amber-50 text-[#F59E0B] ring-1 ring-amber-200", icon: <RefreshCw size={20} />, title: "Hay cambios pendientes de subir" };
+      return { className: "bg-amber-50 text-[#F59E0B] ring-1 ring-amber-200", icon: <RefreshCw size={20} />, title: "Hay cambios pendientes de subir" + lastSyncLabel };
     }
     if (failedCount > 0) {
       return { className: "bg-orange-50 text-orange-500 ring-1 ring-orange-200", icon: <AlertCircle size={20} />, title: `${failedCount} elemento(s) con error — toca para reintentar` };
     }
-    return { className: "bg-[#7AC142]/10 text-[#7AC142] ring-1 ring-[#7AC142]/30 hover:bg-[#7AC142]/20", icon: <CheckCircle2 size={20} />, title: "Sistema actualizado y seguro" };
+    return { className: "bg-[#7AC142]/10 text-[#7AC142] ring-1 ring-[#7AC142]/30 hover:bg-[#7AC142]/20", icon: <CheckCircle2 size={20} />, title: "Sistema actualizado y seguro" + lastSyncLabel };
   };
 
   const buttonState = getButtonState();
@@ -368,6 +387,33 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
             <span className={`flex-shrink-0 px-3 py-0.5 rounded-full text-xs font-black border border-white/30 ${trialInfo.daysLeft <= 2 ? 'bg-red-600' : trialInfo.daysLeft <= 5 ? 'bg-orange-600' : 'bg-amber-600'}`}>
               {trialInfo.daysLeft === 0 ? 'Vence hoy' : `${trialInfo.daysLeft} día${trialInfo.daysLeft !== 1 ? 's' : ''} restante${trialInfo.daysLeft !== 1 ? 's' : ''}`}
             </span>
+          </div>
+        )}
+
+        {/* Mejora 5: Trial expirado detectado durante uso */}
+        {trialJustExpired && (
+          <div className="bg-red-600 text-white px-4 py-2 flex items-center gap-2 z-20 animate-in slide-in-from-top duration-300">
+            <AlertCircle size={16} className="flex-shrink-0" />
+            <span className="text-xs sm:text-sm font-bold">
+              Tu período de prueba ha vencido. Contacta al administrador para activar tu cuenta.
+            </span>
+          </div>
+        )}
+
+        {/* Mejora 4: Alerta de días sin sincronizar */}
+        {daysWithoutSync >= 3 && !trialJustExpired && (
+          <div className="bg-orange-500 text-white px-4 py-2 flex items-center justify-between gap-3 z-20">
+            <div className="flex items-center gap-2 min-w-0">
+              <Cloud size={15} className="flex-shrink-0" />
+              <span className="text-xs sm:text-sm font-bold truncate">
+                Llevas {daysWithoutSync} día(s) sin sincronizar — tus datos solo existen en este dispositivo
+              </span>
+            </div>
+            {isOnline && (
+              <button onClick={handleManualSync} disabled={isSyncing} className="flex-shrink-0 bg-white/20 hover:bg-white/30 px-3 py-1 rounded-lg text-xs font-black transition-colors">
+                Sincronizar
+              </button>
+            )}
           </div>
         )}
 
