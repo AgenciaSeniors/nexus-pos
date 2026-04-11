@@ -1058,6 +1058,7 @@ export function SettingsPage() {
                   'Para agregar existencia después: toca el producto → "Ajustar Stock" → ingresa la cantidad a sumar',
                   'El stock se descuenta automáticamente con cada venta realizada',
                   'Edita precio, nombre o categoría tocando el lápiz en cualquier momento',
+                  'Transferencia almacén ↔ vitrina: toca el producto → "Transferir" → elige la dirección (al mostrador o de vuelta al almacén) y la cantidad — el movimiento queda registrado en el historial',
                 ],
               },
               {
@@ -1085,6 +1086,7 @@ export function SettingsPage() {
                   'Para canjear puntos: selecciona el cliente → en la pantalla de cobro activa "Canjear puntos"',
                   '10 puntos = $1.00 de descuento (el máximo canjeable no puede exceder el total de la venta)',
                   'El historial completo de compras y puntos de cada cliente está en la sección Clientes',
+                  'Multi-dispositivo: si dos vendedores atienden al mismo cliente desde dispositivos distintos, los puntos se suman correctamente — ningún cambio se pierde al sincronizar',
                 ],
               },
               {
@@ -1093,11 +1095,13 @@ export function SettingsPage() {
                 steps: [
                   'Todo se guarda en el dispositivo primero — la app funciona completamente sin internet',
                   'Cuando hay conexión, cada acción se sube a la nube automáticamente en segundos',
-                  'El ícono en la barra lateral indica el estado: 🟢 todo sincronizado · 🟡 subiendo · 🟠 error al subir',
+                  'El ícono en la barra lateral muestra el tiempo desde la última sync y el estado: 🟢 al día · 🟡 subiendo · 🟠 error',
                   'Sin internet: la app funciona igual, los cambios quedan en cola y suben solos al reconectarse',
-                  'Si el ícono queda en 🟠 (error), toca el botón de sync para reintentar manualmente',
-                  'La sincronización manual solo es necesaria si hay errores que no se resolvieron automáticamente',
-                  'Todos tus datos están en la nube: si cambias de dispositivo, solo inicia sesión y todo aparece',
+                  'Si el ícono queda en 🟠 (error), al reconectarte se reintenta automáticamente — también puedes forzarlo manualmente',
+                  'Aviso amarillo en el POS: si el stock tiene más de 2 horas sin actualizarse desde la nube, aparece una alerta — útil cuando hay varios dispositivos',
+                  'Aviso naranja: si llevas 3 o más días sin sincronizar, la app te recuerda que tus datos solo existen en ese dispositivo',
+                  'Varios dispositivos: la app funciona en múltiples teléfonos — los puntos de lealtad y el stock se sincronizan correctamente aunque cada uno haya trabajado offline',
+                  'Si cambias de dispositivo: instala la app, inicia sesión y en segundos descargarás todos los productos, clientes y configuración',
                 ],
               },
               {

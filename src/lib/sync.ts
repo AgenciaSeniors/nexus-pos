@@ -447,6 +447,8 @@ export async function syncManualFull() {
     }
     await syncPush();
     await syncPull();
+    // Actualizar timestamp para que el contador "días sin sync" se resetee
+    setLastSyncTimestamp();
 }
 
 // ─── SYNC LIVE: pull periódico para multi-dispositivo ───────────────────────
