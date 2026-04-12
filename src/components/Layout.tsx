@@ -8,6 +8,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff } from '../lib/db';
 import { syncManualFull, getLastSyncTimestamp } from '../lib/sync';
+import { checkForUpdate } from '../lib/version';
 import { supabase } from '../lib/supabase';
 import { toast } from 'sonner';
 
@@ -31,6 +32,16 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   const guideCheckedRef = useRef(false); // evita re-disparar si staff cambia mid-sesión
 
   const [justReconnected, setJustReconnected] = useState(false);
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+
+  // Check de actualización al montar (solo online, silencioso)
+  useEffect(() => {
+    if (!navigator.onLine) return;
+    checkForUpdate(__APP_VERSION__)
+      .then(info => { if (info) setUpdateVersion(info.version); })
+      .catch(() => {});
+  }, []);
 
   // Mostrar guía rápida: una vez por cuenta (clave por business_id) o cuando es registro nuevo.
   // guideCheckedRef garantiza que no se repita si el empleado activo cambia durante la sesión.
@@ -285,6 +296,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
             const isActive = location.pathname === item.path;
             const showInventoryBadge = item.path === '/inventario' && inventoryAlertCount > 0;
             const showConflictBadge = item.path === '/finanzas' && conflictCount > 0;
+            const showUpdateBadge = item.path === '/configuracion' && !!updateVersion;
             return (
               <Link key={item.path} to={item.path} className={`flex flex-col items-center justify-center p-3 rounded-xl transition-all duration-200 group relative ${isActive ? 'bg-[#7AC142] text-[#0B3B68] shadow-lg shadow-[#7AC142]/20 font-bold translate-x-1' : 'text-gray-300 hover:text-white hover:bg-white/10'}`}>
                 {item.icon}
@@ -300,8 +312,14 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
                     <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-orange-500 border border-white/50"></span>
                   </span>
                 )}
+                {showUpdateBadge && (
+                  <span className="absolute top-1.5 right-1.5 flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#7AC142] opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#7AC142] border border-white/50"></span>
+                  </span>
+                )}
                 <span className="absolute left-full ml-4 px-3 py-2 bg-[#1F2937] text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 shadow-xl font-bold uppercase tracking-wide border border-gray-700">
-                  {item.label}{showInventoryBadge ? ` (${inventoryAlertCount})` : ''}{showConflictBadge ? ` — ${conflictCount} conflicto(s)` : ''}
+                  {item.label}{showInventoryBadge ? ` (${inventoryAlertCount})` : ''}{showConflictBadge ? ` — ${conflictCount} conflicto(s)` : ''}{showUpdateBadge ? ` — v${updateVersion} disponible` : ''}
                 </span>
               </Link>
             );
@@ -417,6 +435,33 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
           </div>
         )}
 
+        {/* Banner discreto de actualización disponible */}
+        {updateVersion && !updateDismissed && (
+          <div className="bg-[#0B3B68]/90 backdrop-blur-sm text-white px-4 py-2 flex items-center justify-between gap-3 z-20 animate-in slide-in-from-top duration-300">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="flex-shrink-0 w-2 h-2 rounded-full bg-[#7AC142] shadow-[0_0_6px_#7AC142]"></span>
+              <span className="text-xs font-medium truncate">
+                Nueva versión <strong>v{updateVersion}</strong> disponible
+              </span>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Link
+                to="/configuracion"
+                className="text-xs font-bold text-[#7AC142] hover:text-[#7AC142]/80 transition-colors whitespace-nowrap"
+              >
+                Ver en Configuración →
+              </Link>
+              <button
+                onClick={() => setUpdateDismissed(true)}
+                className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-white/20 transition-colors text-white/60 hover:text-white"
+                aria-label="Cerrar"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          </div>
+        )}
+
         <main className="flex-1 overflow-y-auto overflow-x-hidden relative bg-[#F3F4F6] scroll-smooth pb-safe">
             <Outlet context={{ currentStaff, onChangeStaff }} />
         </main>
@@ -466,10 +511,17 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
                     <div className="flex-1 overflow-y-auto p-4 space-y-2">
                         {menuItems.filter(i => i.show).map(item => {
                              const isActive = location.pathname === item.path;
+                             const showUpdateDot = item.path === '/configuracion' && !!updateVersion;
                              return (
-                                <Link key={item.path} to={item.path} onClick={() => setIsMobileMenuOpen(false)} className={`flex items-center gap-4 p-4 rounded-xl transition-all ${isActive ? 'bg-[#0B3B68] text-white shadow-md font-bold' : 'text-[#1F2937] hover:bg-gray-100'}`}>
+                                <Link key={item.path} to={item.path} onClick={() => setIsMobileMenuOpen(false)} className={`flex items-center gap-4 p-4 rounded-xl transition-all relative ${isActive ? 'bg-[#0B3B68] text-white shadow-md font-bold' : 'text-[#1F2937] hover:bg-gray-100'}`}>
                                     <span className={isActive ? 'text-[#7AC142]' : 'text-[#0B3B68]'}>{item.icon}</span>
-                                    <span>{item.label}</span>
+                                    <span className="flex-1">{item.label}</span>
+                                    {showUpdateDot && (
+                                      <span className="flex items-center gap-1.5 text-[10px] font-bold text-[#7AC142] bg-[#7AC142]/10 px-2 py-0.5 rounded-full border border-[#7AC142]/30">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-[#7AC142]"></span>
+                                        v{updateVersion}
+                                      </span>
+                                    )}
                                 </Link>
                              )
                         })}
