@@ -112,7 +112,9 @@ async function processItem(item: QueueItem) {
     case 'PRODUCT_SYNC': {
       const product = payload as Product;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { sync_status, ...cleanProduct } = product;
+      const { sync_status, low_stock_threshold, ...cleanProduct } = product as Product & { low_stock_threshold?: number };
+      // SKU vacío → null para no violar UNIQUE(business_id, sku) en Supabase
+      if (cleanProduct.sku === '') (cleanProduct as Record<string, unknown>).sku = null;
       const { error } = await supabase.from('products').upsert(cleanProduct);
       if (error && error.code !== '23505') throw new Error(`Error producto: ${error.message}`);
       await db.products.update(product.id, { sync_status: 'synced' });
