@@ -153,6 +153,10 @@ export function PosPage() {
         }
         return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
       }
+      if (product.stock <= 0) {
+        toast.error(`"${product.name}" no tiene stock disponible`);
+        return prev;
+      }
       return [...prev, { ...product, quantity: 1 }];
     });
     
