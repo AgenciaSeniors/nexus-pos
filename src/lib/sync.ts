@@ -112,7 +112,7 @@ async function processItem(item: QueueItem) {
     case 'PRODUCT_SYNC': {
       const product = payload as Product;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { sync_status, low_stock_threshold, ...cleanProduct } = product as Product & { low_stock_threshold?: number };
+      const { sync_status, ...cleanProduct } = product;
       // SKU vacío → null para no violar UNIQUE(business_id, sku) en Supabase
       if (cleanProduct.sku === '') (cleanProduct as Record<string, unknown>).sku = null;
       const { error } = await supabase.from('products').upsert(cleanProduct);
@@ -197,7 +197,8 @@ async function processItem(item: QueueItem) {
         const { error: updateErr } = await supabase
             .from('customers')
             .update({ loyalty_points: newPoints, updated_at: new Date().toISOString() })
-            .eq('id', customer_id);
+            .eq('id', customer_id)
+            .eq('business_id', business_id);
         if (updateErr) throw new Error(`Error actualizando puntos: ${updateErr.message}`);
         // Sincronizar valor del servidor a local y desbloquear el cliente para futuros pulls
         await db.customers.update(customer_id, { loyalty_points: newPoints, sync_status: 'synced' });
