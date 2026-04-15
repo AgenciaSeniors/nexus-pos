@@ -9,7 +9,7 @@ export interface Product {
   cost?: number;
   stock: number;
   stock_warehouse?: number;
-  sku: string;
+  sku: string | null;
   category?: string;
   unit?: string;
   expiration_date?: string;

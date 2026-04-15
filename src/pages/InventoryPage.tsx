@@ -113,7 +113,7 @@ export function InventoryPage() {
             name: formData.name.trim(),
             price: parseFloat(formData.price) || 0,
             cost: parseFloat(formData.cost) || 0,
-            sku: formData.sku.trim(),
+            sku: formData.sku.trim() || null,
             category: formData.category.trim() || 'General',
             unit: formData.unit.trim() || 'un',
             expiration_date: formData.expiration_date,
