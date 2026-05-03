@@ -121,7 +121,20 @@ export async function restoreBackup(backupId: string): Promise<void> {
 
   if (!entry) throw new Error('Backup no encontrado');
 
-  const data = JSON.parse(entry.data) as Record<string, unknown[]>;
+  let data: Record<string, unknown[]>;
+  try {
+    data = JSON.parse(entry.data) as Record<string, unknown[]>;
+  } catch {
+    throw new Error('El backup está corrupto y no se puede leer');
+  }
+
+  // Validación básica: debe tener al menos 'settings' y ser un objeto plano
+  if (typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('El backup tiene un formato inválido');
+  }
+  if (!data['settings'] || !Array.isArray(data['settings']) || data['settings'].length === 0) {
+    throw new Error('El backup no contiene datos de configuración del negocio');
+  }
 
   // Importar datos tabla por tabla dentro de una transacción
   await db.transaction('rw',

@@ -63,7 +63,8 @@ export function AuthGuard({ children }: AuthGuardProps) {
   /** Retorna true si el trial está vencido */
   function checkTrialExpired(status?: string, subscriptionExpiresAt?: string): boolean {
     if (status !== 'trial') return false;
-    if (!subscriptionExpiresAt) return true;
+    // Sin fecha de expiración → trial activo (no vencido)
+    if (!subscriptionExpiresAt) return false;
     return new Date() > new Date(subscriptionExpiresAt);
   }
 
