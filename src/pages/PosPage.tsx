@@ -222,7 +222,7 @@ export function PosPage() {
                   ...(i.note && { note: i.note }),
                   ...(i.custom_price !== undefined && { custom_price: i.custom_price }),
               })),
-              total: subtotal,
+              total: finalTotal,
               customer_id: selectedCustomer?.id,
               customer_name: selectedCustomer?.name,
               note: orderNote.trim() // ✅ SE GUARDA LA NOTA/MESA AQUÍ
@@ -248,9 +248,13 @@ export function PosPage() {
       for (const item of order.items) {
           const product = await db.products.get(item.product_id);
           if (product && product.stock > 0) {
+              // Limitar quantity al stock actual (puede haber cambiado desde que se guardó)
+              const qty = Math.min(item.quantity, product.stock);
               restoredCart.push({
                   ...product,
-                  quantity: item.quantity
+                  quantity: qty,
+                  ...(item.custom_price !== undefined && { custom_price: item.custom_price }),
+                  ...(item.note && { note: item.note }),
               });
           }
       }

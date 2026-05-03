@@ -53,11 +53,12 @@ export const currency = {
 
   /**
    * Multiplicación segura (Precio * Cantidad)
+   * Soporta cantidades fraccionarias (ej: 0.5 kg, 1.75 m)
    */
   multiply: (price: number, quantity: number): number => {
-    // Convertimos precio a centavos, multiplicamos y regresamos a decimal
+    // Math.round al final elimina imprecisiones de punto flotante en cantidades fraccionarias
     const priceCents = Math.round(price * 100);
-    return (priceCents * quantity) / 100;
+    return Math.round(priceCents * quantity) / 100;
   },
 
   /**
@@ -65,10 +66,11 @@ export const currency = {
    */
   calculateTotal: (items: { price: number; quantity: number }[]): number => {
     const totalCents = items.reduce((sum, item) => {
-      const itemTotalCents = Math.round(item.price * 100) * item.quantity;
+      // Math.round maneja cantidades fraccionarias correctamente
+      const itemTotalCents = Math.round(Math.round(item.price * 100) * item.quantity);
       return sum + itemTotalCents;
     }, 0);
-    
+
     return totalCents / 100;
   }
 };

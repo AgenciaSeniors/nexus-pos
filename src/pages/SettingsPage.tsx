@@ -146,6 +146,15 @@ export function SettingsPage() {
 
   const handleToggleStaff = async (staff: Staff) => {
     if (staff.id === currentStaff?.id) return toast.error('No puedes desactivar tu propio perfil');
+
+    // Evitar quedar sin ningún admin activo
+    if (staff.active && staff.role === 'admin') {
+      const activeAdmins = (staffList || []).filter(s => s.active && s.role === 'admin');
+      if (activeAdmins.length <= 1) {
+        return toast.error('No puedes desactivar al único administrador activo');
+      }
+    }
+
     try {
       const updated = { ...staff, active: !staff.active, sync_status: 'pending_update' as const };
       await db.staff.put(updated);
