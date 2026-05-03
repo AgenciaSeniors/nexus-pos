@@ -15,6 +15,7 @@ export interface Product {
   expiration_date?: string;
   low_stock_threshold?: number;
   created_at?: string;
+  updated_at?: string;
   sync_status: 'synced' | 'pending_create' | 'pending_update' | 'pending_delete';
   deleted_at?: string | null;
 }

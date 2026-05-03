@@ -293,13 +293,41 @@ async function fetchAll(table: string, businessId: string) {
     const allData: any[] = [];
     let page = 0;
     const size = 1000;
-    
+
     // eslint-disable-next-line no-constant-condition
     while(true) {
         const { data, error } = await supabase.from(table).select('*').eq('business_id', businessId).range(page * size, (page + 1) * size - 1);
         if (error) throw error;
         if (!data || data.length === 0) break;
-        
+
+        allData.push(...data);
+        if (data.length < size) break;
+        page++;
+    }
+    return allData;
+}
+
+// Pull incremental: solo descarga registros con updated_at posterior a la última sync.
+// Si since=0 (nunca se ha sincronizado), hace un fetchAll completo.
+// Esto reduce drásticamente el tráfico en el ciclo de 30s cuando hay muchos productos.
+async function fetchSince(table: string, businessId: string, since: number) {
+    if (since === 0) return fetchAll(table, businessId);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allData: any[] = [];
+    const sinceIso = new Date(since).toISOString();
+    let page = 0;
+    const size = 1000;
+
+    // eslint-disable-next-line no-constant-condition
+    while(true) {
+        const { data, error } = await supabase
+            .from(table).select('*')
+            .eq('business_id', businessId)
+            .gt('updated_at', sinceIso)
+            .range(page * size, (page + 1) * size - 1);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
         allData.push(...data);
         if (data.length < size) break;
         page++;
@@ -420,10 +448,18 @@ export async function syncPush() {
 export async function syncPull() {
     if (!isOnline()) return;
     const settings = await db.settings.toArray();
-    if (settings.length > 0) {
-        const businessId = settings[0].id;
-        await syncCriticalData(businessId);
+    if (settings.length === 0) return;
+
+    const businessId = settings[0].id;
+    await syncCriticalData(businessId);
+
+    // syncHeavyData puede fallar por error de red sin que eso impida
+    // que el timestamp se actualice (el push ya se procesó antes).
+    try {
         await syncHeavyData(businessId);
+    } catch (err) {
+        console.error('syncPull — syncHeavyData falló:', err);
+        // No relanzar: el push ya fue exitoso y el timestamp se actualiza igual.
     }
 }
 
@@ -537,22 +573,18 @@ export async function syncLiveData() {
             }
         }
 
-        // 4. Productos: SELECT completo para no perder campos al hacer bulkPut
-        const productsData = await fetchAll('products', businessId);
+        // 4. Productos: pull incremental — solo descarga lo que cambió desde el último sync.
+        // fetchSince usa updated_at > lastSync para evitar bajar TODO el catálogo cada 30s.
+        // Si lastSync=0 (primer ciclo), hace un fetchAll completo automáticamente.
+        // NOTA: el orphan cleanup (borrar locales que ya no existen en la nube) NO se hace
+        // aquí porque con pull incremental no tenemos el set completo de IDs remotos.
+        // El orphan cleanup vive en syncHeavyData (login + sync manual), donde sí hay fetchAll.
+        const lastSync = getLastSyncTimestamp();
+        const productsData = await fetchSince('products', businessId, lastSync);
 
         if (productsData.length > 0) {
             const cleanProducts = productsData.map((p: any) => ({ ...p, sync_status: 'synced' as const }));
             await safeBulkPut(db.products as never, cleanProducts);
-
-            // Eliminar productos locales que ya no existen en la nube (borrados desde otro dispositivo)
-            const remoteIds = new Set(productsData.map((p: any) => p.id));
-            const localProducts = await db.products.where('business_id').equals(businessId).toArray();
-            const orphanIds = localProducts
-                .filter(p => p.sync_status === 'synced' && !remoteIds.has(p.id))
-                .map(p => p.id);
-            if (orphanIds.length > 0) {
-                await db.products.bulkDelete(orphanIds);
-            }
 
             // Alertar sobre stock negativo (conflicto de ventas simultáneas offline)
             const negativeStock = productsData.filter((p: any) => p.stock < 0 && !p.deleted_at);
@@ -565,21 +597,11 @@ export async function syncLiveData() {
             }
         }
 
-        // 5. Clientes: sincronizar desde la nube (cambios hechos desde otro dispositivo)
-        const customersData = await fetchAll('customers', businessId);
+        // 5. Clientes: pull incremental (mismo razonamiento que productos)
+        const customersData = await fetchSince('customers', businessId, lastSync);
         if (customersData.length > 0) {
             const cleanCustomers = customersData.map((c: any) => ({ ...c, sync_status: 'synced' as const }));
             await safeBulkPut(db.customers as never, cleanCustomers);
-
-            // Eliminar clientes locales huérfanos (borrados desde otro dispositivo)
-            const remoteCustomerIds = new Set(customersData.map((c: any) => c.id));
-            const localCustomers = await db.customers.where('business_id').equals(businessId).toArray();
-            const orphanCustomerIds = localCustomers
-                .filter(c => c.sync_status === 'synced' && !remoteCustomerIds.has(c.id))
-                .map(c => c.id);
-            if (orphanCustomerIds.length > 0) {
-                await db.customers.bulkDelete(orphanCustomerIds);
-            }
         }
 
         // 6. Staff: sincronizar cambios de PIN y datos de empleados (Fix 2)

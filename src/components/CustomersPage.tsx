@@ -174,6 +174,7 @@ export function CustomersPage() {
         const deleted = {
             ...customer,
             deleted_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
             sync_status: 'pending_update' as const
         };
 
