@@ -359,12 +359,18 @@ function BusinessApp() {
   const isRegisteringRef = useRef(false);
   // Bandera para saber si el staff ya fue cargado (evita doble-carga y loop de efectos)
   const isStaffLoadedRef = useRef(false);
+  // Bandera: hay datos locales en IndexedDB (permite modo offline si la sesión expira)
+  const hasLocalDataRef = useRef(false);
+  // Bandera: el logout fue solicitado explícitamente por el usuario o por el sistema
+  // (NO por expiración de token). Evita sacar al usuario cuando el token expira offline.
+  const intentionalLogoutRef = useRef(false);
 
   // BOTÓN DE PÁNICO: Destruye todo rastro de caché corrupta
   // No es async: redirige inmediatamente para evitar que el timer de sync
   // dispare sobre la DB eliminada (DatabaseClosedError).
   const handleForceLogout = () => {
       try {
+          intentionalLogoutRef.current = true; // Marcar como logout intencional
           Object.keys(localStorage).forEach(key => {
               if (key.startsWith('sb-') || key.startsWith('nexus_')) {
                   localStorage.removeItem(key);
@@ -394,6 +400,7 @@ function BusinessApp() {
             setLoading(false);
             toast.error("Tu cuenta está pendiente de aprobación. Espera la confirmación del administrador.");
           }
+          intentionalLogoutRef.current = true;
           await supabase.auth.signOut();
           return;
         }
@@ -471,6 +478,7 @@ function BusinessApp() {
             setLoading(false);
             toast.error("El perfil de tu cuenta aún no está configurado. Contacta al administrador.");
           }
+          intentionalLogoutRef.current = true;
           await supabase.auth.signOut();
           return;
       }
@@ -514,6 +522,7 @@ function BusinessApp() {
           if (localStaff.length > 0 && localBizId) {
               // Tenemos datos locales: mostrar la app inmediatamente sin esperar la red
               isStaffLoadedRef.current = true;
+              hasLocalDataRef.current = true; // Marcar para proteger contra SIGNED_OUT offline
 
               // Restaurar selección de vendedor guardada en este dispositivo
               const savedStaffId = localStorage.getItem('nexus_staff_id');
@@ -537,11 +546,9 @@ function BusinessApp() {
                       setSession(session);
                       fetchProfileAndSync(session.user.id, true).catch(() => {});
                   } else {
-                      // Sesión expirada y no renovable: cerrar sesión limpiamente
-                      toast.error("Tu sesión expiró. Por favor inicia sesión de nuevo.");
-                      setCurrentStaff(null);
-                      setSession(null);
-                      isStaffLoadedRef.current = false;
+                      // Sesión expirada — pero tenemos datos locales, no sacar al usuario.
+                      // Puede seguir trabajando offline; al reconectarse Supabase renovará el token.
+                      console.log('Sesión expirada con datos locales — manteniendo modo offline');
                   }
               }).catch(() => {
                   // Error de red validando: se queda en modo offline, no hace nada
@@ -595,9 +602,28 @@ function BusinessApp() {
             await fetchProfileAndSync(newSession.user.id, false);
         }
       }
+      else if (event === 'TOKEN_REFRESHED' && newSession) {
+        // Token renovado exitosamente — actualizar sesión en estado
+        setSession(newSession);
+      }
       else if (event === 'SIGNED_OUT') {
+        const wasIntentional = intentionalLogoutRef.current;
+        intentionalLogoutRef.current = false; // Reset siempre
         isStaffLoadedRef.current = false;
         setSession(null);
+
+        if (!wasIntentional && hasLocalDataRef.current) {
+          // El token expiró (no fue logout del usuario).
+          // Mantenemos al usuario en la app: sus datos están en IndexedDB y puede seguir
+          // trabajando. El sync fallará hasta que reconecte y Supabase renueve el token.
+          toast.warning("Tu sesión expiró, pero tus datos están seguros. Reconecta cuando puedas.", {
+            duration: 8000
+          });
+          // NO limpiar currentStaff ni showStaffSelector → usuario permanece en la app
+          return;
+        }
+
+        // Logout real o sin datos locales → ir al login
         setCurrentStaff(null);
         setShowStaffSelector(false);
       }
@@ -635,7 +661,10 @@ function BusinessApp() {
     );
   }
 
-  if (!session) return (
+  // Si no hay sesión activa PERO hay un staff cargado (token expiró offline),
+  // mantener al usuario en la app. Los datos están en IndexedDB. Al reconectarse,
+  // TOKEN_REFRESHED actualizará la sesión automáticamente.
+  if (!session && !currentStaff) return (
     <LoginScreen
       onRegistrationStart={() => { isRegisteringRef.current = true; }}
       onRegistrationEnd={() => { isRegisteringRef.current = false; }}
