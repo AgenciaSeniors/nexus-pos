@@ -4,7 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import {
   Shield, Check, X, Search, RefreshCw, UserCheck, Inbox,
   CalendarPlus, Key, User, LogOut, Store, Trash2, AlertTriangle, Calendar, AlertOctagon,
-  History, TrendingUp, Award, KeyRound, Eye, EyeOff, DollarSign, CheckCircle2, Edit2, FlaskConical, Zap, Star
+  History, TrendingUp, Award, KeyRound, Eye, EyeOff, DollarSign, CheckCircle2, Edit2, FlaskConical, Zap, Star,
+  Bell, Clock, PhoneCall
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -48,11 +49,24 @@ type ConfirmAction = {
     item: Profile;
 };
 
+interface SubscriptionRow {
+  business_id: string;
+  business_name: string;
+  business_phone?: string;
+  biz_status: string;
+  subscription_expires_at?: string;
+  owner_name: string;
+  owner_email?: string;
+  owner_phone?: string;
+  profile_id?: string;
+}
+
 export function SuperAdminPage() {
   const navigate = useNavigate();
   
   // --- ESTADOS DE LA INTERFAZ ---
-  const [activeTab, setActiveTab] = useState<'requests' | 'active' | 'history' | 'billing'>('requests');
+  const [activeTab, setActiveTab] = useState<'subscriptions' | 'active' | 'history' | 'billing'>('subscriptions');
+  const [subscriptionRows, setSubscriptionRows] = useState<SubscriptionRow[]>([]);
   const [dataList, setDataList] = useState<Profile[]>([]);
   const [historyList, setHistoryList] = useState<LicenseEvent[]>([]);
   const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>('month');
@@ -242,7 +256,86 @@ export function SuperAdminPage() {
   const [newPassword, setNewPassword] = useState('');
   const [showNewPassword, setShowNewPassword] = useState(false);
 
-  // 1. CARGA DE DATOS (Solicitudes y Clientes)
+  // 0. CARGA DE SUSCRIPCIONES
+  const fetchSubscriptions = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data: bizData, error: bizError } = await supabase
+        .from('businesses')
+        .select('id, name, phone, status, subscription_expires_at')
+        .order('subscription_expires_at', { ascending: true });
+      if (bizError) throw bizError;
+
+      const bizIds = (bizData || []).map(b => b.id);
+      if (!bizIds.length) { setSubscriptionRows([]); return; }
+
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, phone, business_id')
+        .in('business_id', bizIds);
+
+      const rows: SubscriptionRow[] = (bizData || []).map(biz => {
+        const owner = (profileData || []).find(p => p.business_id === biz.id);
+        return {
+          business_id: biz.id,
+          business_name: biz.name,
+          business_phone: biz.phone,
+          biz_status: biz.status,
+          subscription_expires_at: biz.subscription_expires_at,
+          owner_name: owner?.full_name || '—',
+          owner_email: owner?.email,
+          owner_phone: owner?.phone,
+          profile_id: owner?.id,
+        };
+      });
+      setSubscriptionRows(rows);
+    } catch (err) {
+      console.error(err);
+      toast.error('Error cargando suscripciones');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // EXTENSIÓN RÁPIDA desde pestaña Suscripciones
+  const quickExtend = async (row: SubscriptionRow, months: number) => {
+    try {
+      const current = row.subscription_expires_at ? new Date(row.subscription_expires_at) : new Date();
+      const base = current > new Date() ? current : new Date();
+      base.setMonth(base.getMonth() + months);
+      const newExpiry = base.toISOString();
+
+      await supabase.from('businesses')
+        .update({ status: 'active', subscription_expires_at: newExpiry })
+        .eq('id', row.business_id);
+
+      if (row.profile_id) {
+        await supabase.from('profiles')
+          .update({ status: 'active', license_expiry: newExpiry })
+          .eq('id', row.profile_id);
+      }
+
+      const { id: adminId, name: adminName } = await getAdminInfo();
+      await supabase.from('license_history').insert({
+        profile_id: row.profile_id,
+        client_name: row.owner_name,
+        client_email: row.owner_email,
+        event_type: 'extension',
+        months_granted: months,
+        new_expiry_at: newExpiry,
+        performed_by: adminId,
+        performed_by_name: adminName,
+      });
+
+      toast.success(`+${months} mes(es) aplicado a ${row.business_name}`);
+      fetchSubscriptions();
+    } catch (err) {
+      console.error(err);
+      toast.error('Error al extender suscripción');
+    }
+  };
+
+  // 1. CARGA DE DATOS (Clientes)
   const fetchData = useCallback(async () => {
     if (activeTab === 'history') return;
     setLoading(true);
@@ -252,11 +345,7 @@ export function SuperAdminPage() {
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (activeTab === 'requests') {
-        query = query.eq('status', 'pending');
-      } else {
-        query = query.in('status', ['active', 'suspended', 'rejected']);
-      }
+      query = query.in('status', ['active', 'suspended', 'rejected']);
 
       const { data, error } = await query;
       if (error) throw error;
@@ -309,8 +398,9 @@ export function SuperAdminPage() {
   useEffect(() => {
     if (activeTab === 'history') fetchHistory();
     else if (activeTab === 'billing') fetchBilling(billingPeriod);
+    else if (activeTab === 'subscriptions') fetchSubscriptions();
     else fetchData();
-  }, [activeTab, fetchData, fetchHistory]);
+  }, [activeTab, fetchData, fetchHistory, fetchSubscriptions]);
 
   // 3. APROBACIÓN DE USUARIO (Con Modal Integrado)
   const executeApproval = async () => {
@@ -577,10 +667,19 @@ export function SuperAdminPage() {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div className="bg-white p-1 rounded-xl shadow-sm border border-slate-200 grid grid-cols-4 sm:flex w-full sm:w-auto gap-0.5 sm:gap-0">
                 <button
-                    onClick={() => setActiveTab('requests')}
-                    className={`flex items-center justify-center gap-1.5 px-3 sm:px-5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'requests' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                    onClick={() => setActiveTab('subscriptions')}
+                    className={`relative flex items-center justify-center gap-1.5 px-3 sm:px-5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'subscriptions' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
                 >
-                    <Inbox size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Solicitudes</span><span className="sm:hidden">Solic.</span>
+                    <Bell size={14} className="sm:w-4 sm:h-4" />
+                    <span className="hidden sm:inline">Suscripciones</span><span className="sm:hidden">Suscr.</span>
+                    {subscriptionRows.filter(r => {
+                      const d = getDaysUntilExpiry(r.subscription_expires_at);
+                      return d !== null && d <= 7;
+                    }).length > 0 && (
+                      <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full animate-pulse border-2 border-white shadow-sm">
+                        {subscriptionRows.filter(r => { const d = getDaysUntilExpiry(r.subscription_expires_at); return d !== null && d <= 7; }).length}
+                      </span>
+                    )}
                 </button>
                 <button
                     onClick={() => setActiveTab('active')}
@@ -620,6 +719,141 @@ export function SuperAdminPage() {
                 </div>
             )}
         </div>
+
+        {/* ===== PESTAÑA SUSCRIPCIONES ===== */}
+        {activeTab === 'subscriptions' && (() => {
+          const now = new Date();
+          const getDays = (s?: string) => s ? Math.ceil((new Date(s).getTime() - now.getTime()) / 86400000) : null;
+
+          const expired   = subscriptionRows.filter(r => { const d = getDays(r.subscription_expires_at); return d !== null && d < 0; });
+          const urgent    = subscriptionRows.filter(r => { const d = getDays(r.subscription_expires_at); return d !== null && d >= 0 && d <= 7; });
+          const trial     = subscriptionRows.filter(r => r.biz_status === 'trial' && getDays(r.subscription_expires_at) !== null && getDays(r.subscription_expires_at)! > 7);
+          const active    = subscriptionRows.filter(r => r.biz_status === 'active' && getDays(r.subscription_expires_at) !== null && getDays(r.subscription_expires_at)! > 7);
+          const noExpiry  = subscriptionRows.filter(r => !r.subscription_expires_at);
+
+          const RowCard = ({ row, accent }: { row: SubscriptionRow; accent: string }) => {
+            const days = getDays(row.subscription_expires_at);
+            const phone = row.owner_phone || row.business_phone || '';
+            const waMsg = encodeURIComponent(`Hola ${row.owner_name}, te contactamos de Bisne con Talla sobre tu suscripción del negocio "${row.business_name}".`);
+            return (
+              <div className={`bg-white rounded-2xl border ${accent} shadow-sm p-4 flex flex-col sm:flex-row sm:items-center gap-3`}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-black text-slate-800 text-sm truncate">{row.business_name}</p>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      row.biz_status === 'trial' ? 'bg-blue-100 text-blue-700' :
+                      row.biz_status === 'active' ? 'bg-emerald-100 text-emerald-700' :
+                      'bg-red-100 text-red-700'
+                    }`}>
+                      {row.biz_status === 'trial' ? 'TRIAL' : row.biz_status === 'active' ? 'ACTIVO' : row.biz_status.toUpperCase()}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">{row.owner_name} · {row.owner_email || '—'}</p>
+                  <div className="flex items-center gap-1.5 mt-1.5">
+                    <Clock size={11} className={days !== null && days < 0 ? 'text-red-500' : days !== null && days <= 7 ? 'text-amber-500' : 'text-slate-400'} />
+                    <span className={`text-xs font-bold ${days !== null && days < 0 ? 'text-red-600' : days !== null && days <= 7 ? 'text-amber-600' : 'text-slate-500'}`}>
+                      {days === null ? 'Sin fecha' :
+                       days < 0 ? `Venció hace ${Math.abs(days)} día(s)` :
+                       days === 0 ? '¡Vence hoy!' :
+                       `Vence en ${days} día(s) — ${row.subscription_expires_at ? new Date(row.subscription_expires_at).toLocaleDateString('es-ES', { day:'2-digit', month:'short' }) : ''}`}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+                  {phone && (
+                    <a href={`https://wa.me/${phone.replace(/\D/g,'')}?text=${waMsg}`} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-2 bg-[#25D366]/10 text-[#128C7E] border border-[#25D366]/30 rounded-xl text-xs font-bold hover:bg-[#25D366]/20 transition-colors">
+                      <PhoneCall size={13} /> Contactar
+                    </a>
+                  )}
+                  <div className="flex items-center gap-1 bg-slate-50 rounded-xl border border-slate-200 p-1">
+                    {[1, 3, 12].map(m => (
+                      <button key={m} onClick={() => quickExtend(row, m)}
+                        className="px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-emerald-600 hover:text-white rounded-lg transition-all">
+                        +{m}m
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          };
+
+          return (
+            <div className="space-y-6">
+              {/* Tarjetas de resumen */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { label: 'Vencidas',      count: expired.length,  color: 'bg-red-500',    bg: 'bg-red-50',    border: 'border-red-100' },
+                  { label: 'Vencen pronto', count: urgent.length,   color: 'bg-amber-500',  bg: 'bg-amber-50',  border: 'border-amber-100' },
+                  { label: 'En trial',      count: trial.length,    color: 'bg-blue-500',   bg: 'bg-blue-50',   border: 'border-blue-100' },
+                  { label: 'Activas',       count: active.length,   color: 'bg-emerald-500', bg: 'bg-emerald-50', border: 'border-emerald-100' },
+                ].map(s => (
+                  <div key={s.label} className={`${s.bg} ${s.border} border rounded-2xl p-4 flex items-center gap-3`}>
+                    <div className={`w-2.5 h-10 ${s.color} rounded-full flex-shrink-0`} />
+                    <div>
+                      <p className="text-2xl font-black text-slate-800">{s.count}</p>
+                      <p className="text-xs text-slate-500 font-medium">{s.label}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="relative flex-1 max-w-sm">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4"/>
+                  <input type="text" placeholder="Buscar negocio o dueño..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500" />
+                </div>
+                <button onClick={fetchSubscriptions} className="ml-3 p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors border border-slate-200 bg-white">
+                  <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                </button>
+              </div>
+
+              {loading ? (
+                <div className="flex justify-center py-16"><RefreshCw className="animate-spin text-indigo-500" size={28}/></div>
+              ) : subscriptionRows.length === 0 ? (
+                <div className="bg-white rounded-2xl p-12 text-center text-slate-400 border border-slate-100">
+                  <Bell size={36} className="mx-auto mb-3 opacity-20"/>
+                  <p className="font-bold">Sin negocios registrados</p>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {expired.length > 0 && (
+                    <div>
+                      <p className="text-xs font-black text-red-600 uppercase tracking-wider mb-2 flex items-center gap-1.5"><span className="w-2 h-2 bg-red-500 rounded-full"/> Vencidas ({expired.length})</p>
+                      <div className="space-y-2">{expired.filter(r => r.owner_name.toLowerCase().includes(searchTerm.toLowerCase()) || r.business_name.toLowerCase().includes(searchTerm.toLowerCase())).map(r => <RowCard key={r.business_id} row={r} accent="border-red-200" />)}</div>
+                    </div>
+                  )}
+                  {urgent.length > 0 && (
+                    <div>
+                      <p className="text-xs font-black text-amber-600 uppercase tracking-wider mb-2 flex items-center gap-1.5"><span className="w-2 h-2 bg-amber-500 rounded-full"/> Vencen en ≤7 días ({urgent.length})</p>
+                      <div className="space-y-2">{urgent.filter(r => r.owner_name.toLowerCase().includes(searchTerm.toLowerCase()) || r.business_name.toLowerCase().includes(searchTerm.toLowerCase())).map(r => <RowCard key={r.business_id} row={r} accent="border-amber-200" />)}</div>
+                    </div>
+                  )}
+                  {trial.length > 0 && (
+                    <div>
+                      <p className="text-xs font-black text-blue-600 uppercase tracking-wider mb-2 flex items-center gap-1.5"><span className="w-2 h-2 bg-blue-500 rounded-full"/> En trial ({trial.length})</p>
+                      <div className="space-y-2">{trial.filter(r => r.owner_name.toLowerCase().includes(searchTerm.toLowerCase()) || r.business_name.toLowerCase().includes(searchTerm.toLowerCase())).map(r => <RowCard key={r.business_id} row={r} accent="border-blue-200" />)}</div>
+                    </div>
+                  )}
+                  {active.length > 0 && (
+                    <div>
+                      <p className="text-xs font-black text-emerald-600 uppercase tracking-wider mb-2 flex items-center gap-1.5"><span className="w-2 h-2 bg-emerald-500 rounded-full"/> Activos ({active.length})</p>
+                      <div className="space-y-2">{active.filter(r => r.owner_name.toLowerCase().includes(searchTerm.toLowerCase()) || r.business_name.toLowerCase().includes(searchTerm.toLowerCase())).map(r => <RowCard key={r.business_id} row={r} accent="border-emerald-200" />)}</div>
+                    </div>
+                  )}
+                  {noExpiry.length > 0 && (
+                    <div>
+                      <p className="text-xs font-black text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5"><span className="w-2 h-2 bg-slate-300 rounded-full"/> Sin fecha asignada ({noExpiry.length})</p>
+                      <div className="space-y-2">{noExpiry.filter(r => r.owner_name.toLowerCase().includes(searchTerm.toLowerCase()) || r.business_name.toLowerCase().includes(searchTerm.toLowerCase())).map(r => <RowCard key={r.business_id} row={r} accent="border-slate-200" />)}</div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ===== PESTAÑA COBROS ===== */}
         {activeTab === 'billing' && (
@@ -917,8 +1151,8 @@ export function SuperAdminPage() {
           </div>
         )}
 
-        {/* ===== PESTAÑAS SOLICITUDES / CLIENTES ===== */}
-        {activeTab !== 'history' && (
+        {/* ===== PESTAÑA CLIENTES ===== */}
+        {activeTab === 'active' && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden min-h-[400px]">
             {loading ? (
                 <div className="h-96 flex flex-col items-center justify-center text-slate-400">
@@ -941,7 +1175,7 @@ export function SuperAdminPage() {
                                 <th className="p-5">Contacto</th>
                                 <th className="p-5 text-center">Estado</th>
                                 <th className="p-5">Detalles</th>
-                                {activeTab === 'active' && <th className="p-5">Aprobado por</th>}
+                                <th className="p-5">Aprobado por</th>
                                 <th className="p-5 text-right">Acciones</th>
                             </tr>
                         </thead>
@@ -1005,80 +1239,52 @@ export function SuperAdminPage() {
                                             </div>
                                         </div>
                                     </td>
-                                    {activeTab === 'active' && (
-                                        <td className="p-5">
-                                            {item.approved_by_name ? (
-                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-bold border border-indigo-100 whitespace-nowrap">
-                                                    <Shield size={10} /> {item.approved_by_name}
-                                                </span>
-                                            ) : (
-                                                <span className="text-xs text-slate-400 italic">—</span>
-                                            )}
-                                        </td>
-                                    )}
+                                    <td className="p-5">
+                                        {item.approved_by_name ? (
+                                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-bold border border-indigo-100 whitespace-nowrap">
+                                                <Shield size={10} /> {item.approved_by_name}
+                                            </span>
+                                        ) : (
+                                            <span className="text-xs text-slate-400 italic">—</span>
+                                        )}
+                                    </td>
                                     <td className="p-5 text-right">
                                         <div className="flex items-center justify-end gap-2">
-                                            {activeTab === 'requests' ? (
-                                                <>
-                                                    <button
-                                                        onClick={() => { setApprovingItem(item); setMonthsToGrant(item.months_requested || 1); setAdminPin('1234'); }}
-                                                        className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg shadow-sm transition-colors text-xs font-bold"
-                                                    >
-                                                        <Check size={14} /> Aprobar
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleGrantTrial(item)}
-                                                        className="flex items-center gap-1 bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg shadow-sm transition-colors text-xs font-bold"
-                                                        title="Dar 7 días de prueba gratuita"
-                                                    >
-                                                        <FlaskConical size={14} /> Prueba
-                                                    </button>
-                                                    <button
-                                                        onClick={() => setConfirmModal({ type: 'delete', item })}
-                                                        className="flex items-center gap-1 bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-slate-500 px-3 py-1.5 rounded-lg transition-colors text-xs font-bold"
-                                                    >
-                                                        <X size={14} /> Rechazar
-                                                    </button>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <button
-                                                        onClick={() => { setExtendingItem(item); setExtendMonths(1); }}
-                                                        className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                                                        title="Extender Licencia"
-                                                    >
-                                                        <CalendarPlus size={18} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleGrantTrial(item)}
-                                                        className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
-                                                        title="Dar Prueba 7 días"
-                                                    >
-                                                        <FlaskConical size={18} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => { setResetPasswordItem(item); setNewPassword(''); setShowNewPassword(false); }}
-                                                        className="p-2 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
-                                                        title="Restablecer Contraseña"
-                                                    >
-                                                        <KeyRound size={18} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => setConfirmModal({ type: 'suspend', item })}
-                                                        className={`p-2 rounded-lg transition-colors ${item.status === 'active' ? 'text-slate-400 hover:text-amber-600 hover:bg-amber-50' : 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100'}`}
-                                                        title={item.status === 'active' ? "Suspender Cuenta" : "Reactivar Cuenta"}
-                                                    >
-                                                        {item.status === 'active' ? <UserCheck size={18} /> : <Check size={18} />}
-                                                    </button>
-                                                    <button
-                                                        onClick={() => setConfirmModal({ type: 'delete', item })}
-                                                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                                        title="Eliminar Definitivamente"
-                                                    >
-                                                        <Trash2 size={18} />
-                                                    </button>
-                                                </>
-                                            )}
+                                            <button
+                                                onClick={() => { setExtendingItem(item); setExtendMonths(1); }}
+                                                className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                                title="Extender Licencia"
+                                            >
+                                                <CalendarPlus size={18} />
+                                            </button>
+                                            <button
+                                                onClick={() => handleGrantTrial(item)}
+                                                className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                                title="Dar Prueba 7 días"
+                                            >
+                                                <FlaskConical size={18} />
+                                            </button>
+                                            <button
+                                                onClick={() => { setResetPasswordItem(item); setNewPassword(''); setShowNewPassword(false); }}
+                                                className="p-2 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
+                                                title="Restablecer Contraseña"
+                                            >
+                                                <KeyRound size={18} />
+                                            </button>
+                                            <button
+                                                onClick={() => setConfirmModal({ type: 'suspend', item })}
+                                                className={`p-2 rounded-lg transition-colors ${item.status === 'active' ? 'text-slate-400 hover:text-amber-600 hover:bg-amber-50' : 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100'}`}
+                                                title={item.status === 'active' ? "Suspender Cuenta" : "Reactivar Cuenta"}
+                                            >
+                                                {item.status === 'active' ? <UserCheck size={18} /> : <Check size={18} />}
+                                            </button>
+                                            <button
+                                                onClick={() => setConfirmModal({ type: 'delete', item })}
+                                                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                title="Eliminar Definitivamente"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
                                         </div>
                                     </td>
                                 </tr>
