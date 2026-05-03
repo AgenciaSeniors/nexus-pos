@@ -94,7 +94,6 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [businessName, setBusinessName] = useState('');
-  const [monthsRequested, setMonthsRequested] = useState(1);
   const [showPassword, setShowPassword] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -113,6 +112,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!phone.trim()) return toast.error('El teléfono es obligatorio');
     setLoading(true);
     onRegistrationStart();
     try {
@@ -129,29 +129,20 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
         return;
       }
 
-      // Crear perfil + negocio en Supabase
-      const { error: rpcError } = await supabase.rpc('submit_registration_request', {
-        p_owner_name: fullName, p_business_name: businessName, p_phone: phone, p_months_requested: 0
+      // Crear negocio + perfil en Supabase con trial automático de 7 días
+      const { error: rpcError } = await supabase.rpc('register_business', {
+        p_owner_name:    fullName.trim(),
+        p_business_name: businessName.trim(),
+        p_phone:         phone.trim(),
       });
       if (rpcError) throw rpcError;
-
-      // Obtener el business_id recién creado
-      const { data: profile, error: profileErr } = await supabase
-        .from('profiles')
-        .select('business_id')
-        .eq('id', authData.user.id)
-        .single();
-      if (profileErr || !profile?.business_id) throw new Error("No se pudo obtener el negocio creado.");
-
-      // La RPC ya crea el negocio con status='trial' y el perfil como 'active'.
-      // No es necesario actualizar nada más desde el cliente.
 
       toast.success('¡Bienvenido a Bisne con Talla! Tienes 7 días de prueba gratuita.', { duration: 6000 });
 
       // Marcar que es un registro nuevo para que Layout muestre la guía rápida
       sessionStorage.setItem('nexus_new_registration', '1');
 
-      // Entrar a la app directamente sin volver al login
+      // Entrar a la app directamente sin aprobación manual
       onRegistrationEnd();
       onEnterApp(authData.user.id);
 
@@ -256,7 +247,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                     <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Teléfono</label>
                     <div className="relative">
                       <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
-                      <input type="tel" className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="+53 5555 5555" value={phone} onChange={e => setPhone(e.target.value)} />
+                      <input type="tel" required className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="+53 5555 5555" value={phone} onChange={e => setPhone(e.target.value)} />
                     </div>
                   </div>
                   <div className="bg-[#7AC142]/10 border border-[#7AC142]/30 rounded-xl px-4 py-3 flex items-center gap-3">
