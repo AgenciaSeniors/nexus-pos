@@ -121,7 +121,7 @@ export function InventoryPage() {
         };
 
         if (editingProduct) {
-            const updated = { ...editingProduct, ...productData, sync_status: 'pending_update' as const };
+            const updated = { ...editingProduct, ...productData, updated_at: new Date().toISOString(), sync_status: 'pending_update' as const };
             await db.products.put(updated);
             await addToQueue('PRODUCT_SYNC', updated);
             await logAuditAction('UPDATE_PRODUCT', { name: updated.name }, currentStaff);
@@ -131,9 +131,10 @@ export function InventoryPage() {
                 id: crypto.randomUUID(),
                 business_id: businessId,
                 ...productData,
-                stock: 0, 
+                stock: 0,
                 sync_status: 'pending_create',
-                created_at: new Date().toISOString()
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
             };
 
             await db.products.add(newProduct);
@@ -196,6 +197,7 @@ export function InventoryPage() {
                   ...(isWarehouse
                     ? { stock_warehouse: newStock }
                     : { stock: newStock }),
+                  updated_at: new Date().toISOString(),
                   sync_status: 'pending_update' as const
               };
               await db.products.put(updatedProduct);
@@ -256,6 +258,7 @@ export function InventoryPage() {
                   ...editingProduct,
                   stock: isToDisplay ? displayStock + qty : displayStock - qty,
                   stock_warehouse: isToDisplay ? warehouseStock - qty : warehouseStock + qty,
+                  updated_at: new Date().toISOString(),
                   sync_status: 'pending_update' as const
               };
               await db.products.put(updatedProduct);
@@ -445,6 +448,7 @@ export function InventoryPage() {
           expiration_date: item.expiration_date,
           low_stock_threshold: item.low_stock_threshold,
           created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
           sync_status: 'pending_create',
         };
         allProducts.push(product);
@@ -530,7 +534,7 @@ export function InventoryPage() {
             .filter(s => s.status !== 'voided' && (s.items || []).some(i => i.product_id === product.id))
             .count();
 
-          const deleted = { ...product, deleted_at: new Date().toISOString(), sync_status: 'pending_update' as const };
+          const deleted = { ...product, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString(), sync_status: 'pending_update' as const };
           await db.products.put(deleted);
           await addToQueue('PRODUCT_SYNC', deleted);
           await logAuditAction('DELETE_PRODUCT', {

@@ -674,9 +674,10 @@ export function FinancePage() {
                   const product = await db.products.get(item.product_id);
                   if (product) {
                       const newStock = product.stock + item.quantity;
-                      await db.products.update(product.id, { stock: newStock, sync_status: 'pending_update' });
-                      await addToQueue('PRODUCT_SYNC', { ...product, stock: newStock, sync_status: 'pending_update' });
-                      
+                      const nowVoid = new Date().toISOString();
+                      await db.products.update(product.id, { stock: newStock, updated_at: nowVoid, sync_status: 'pending_update' });
+                      await addToQueue('PRODUCT_SYNC', { ...product, stock: newStock, updated_at: nowVoid, sync_status: 'pending_update' });
+
                       const mov: InventoryMovement = {
                           id: crypto.randomUUID(), business_id: safeBid, product_id: product.id,
                           qty_change: item.quantity, reason: `Devolución - Venta #${sale.id.slice(0,6)}`,
@@ -762,8 +763,9 @@ export function FinancePage() {
           const product = await db.products.get(ri.product_id);
           if (product) {
             const newStock = product.stock + ri.quantity;
-            await db.products.update(ri.product_id, { stock: newStock, sync_status: 'pending_update' });
-            await addToQueue('PRODUCT_SYNC', { ...product, stock: newStock, sync_status: 'pending_update' });
+            const nowRefund = new Date().toISOString();
+            await db.products.update(ri.product_id, { stock: newStock, updated_at: nowRefund, sync_status: 'pending_update' });
+            await addToQueue('PRODUCT_SYNC', { ...product, stock: newStock, updated_at: nowRefund, sync_status: 'pending_update' });
 
             const mov: InventoryMovement = {
               id: crypto.randomUUID(), business_id: safeBid, product_id: ri.product_id,
