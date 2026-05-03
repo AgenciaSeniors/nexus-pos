@@ -7,20 +7,28 @@ import { Loader2, AlertTriangle, RefreshCw, LogOut, Clock, MessageCircle } from 
 import { toast } from 'sonner';
 import { ADMIN_WHATSAPP_PHONE } from '../lib/config';
 
-function TrialExpiredScreen({ onSignOut }: { onSignOut: () => void }) {
-  const waMsg = encodeURIComponent("Hola, mi período de prueba de Bisne con Talla ha vencido y deseo activar mi cuenta.");
+function SubscriptionExpiredScreen({ isTrial, onSignOut }: { isTrial: boolean; onSignOut: () => void }) {
+  const waMsg = encodeURIComponent(
+    isTrial
+      ? "Hola, mi período de prueba de Bisne con Talla ha vencido y deseo activar mi cuenta."
+      : "Hola, mi suscripción de Bisne con Talla ha vencido y deseo renovarla."
+  );
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-6 animate-in fade-in duration-500">
       <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full text-center border border-amber-100">
         <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-6">
           <Clock className="text-amber-500 w-10 h-10" />
         </div>
-        <h3 className="text-2xl font-black text-slate-800 mb-2">Prueba Vencida</h3>
+        <h3 className="text-2xl font-black text-slate-800 mb-2">
+          {isTrial ? 'Prueba Vencida' : 'Suscripción Vencida'}
+        </h3>
         <p className="text-slate-500 mb-2 text-sm leading-relaxed">
-          Tu período de prueba gratuito ha terminado.
+          {isTrial
+            ? 'Tu período de prueba gratuito ha terminado.'
+            : 'Tu suscripción ha expirado.'}
         </p>
         <p className="text-slate-500 mb-8 text-sm leading-relaxed">
-          Contacta al administrador para activar tu cuenta y seguir usando <strong>Bisne con Talla</strong>.
+          Tus datos están seguros. Contacta al administrador para {isTrial ? 'activar tu cuenta' : 'renovar tu suscripción'} y seguir usando <strong>Bisne con Talla</strong>.
         </p>
         <div className="space-y-3">
           <a
@@ -51,7 +59,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const [loading, setLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState('Conectando con el servidor...');
   const [error, setError] = useState<string | null>(null);
-  const [trialExpired, setTrialExpired] = useState(false);
+  const [expiredStatus, setExpiredStatus] = useState<'trial' | 'active' | null>(null);
 
   const isChecking = useRef(false);
 
@@ -60,12 +68,20 @@ export function AuthGuard({ children }: AuthGuardProps) {
     navigate('/super-admin-login');
   };
 
-  /** Retorna true si el trial está vencido */
-  function checkTrialExpired(status?: string, subscriptionExpiresAt?: string): boolean {
-    if (status !== 'trial') return false;
-    // Sin fecha de expiración → trial activo (no vencido)
-    if (!subscriptionExpiresAt) return false;
-    return new Date() > new Date(subscriptionExpiresAt);
+  /**
+   * Retorna el status si la suscripción está vencida, null si está vigente.
+   * Cubre tanto trial como suscripciones activas con fecha expirada.
+   */
+  function checkExpired(status?: string, subscriptionExpiresAt?: string): 'trial' | 'active' | null {
+    if (status === 'trial') {
+      if (!subscriptionExpiresAt) return null; // Sin fecha → trial activo
+      return new Date() > new Date(subscriptionExpiresAt) ? 'trial' : null;
+    }
+    if (status === 'active') {
+      if (!subscriptionExpiresAt) return null; // Sin fecha → activo permanente
+      return new Date() > new Date(subscriptionExpiresAt) ? 'active' : null;
+    }
+    return null;
   }
 
   useEffect(() => {
@@ -105,8 +121,9 @@ export function AuthGuard({ children }: AuthGuardProps) {
              throw new Error("Cuenta suspendida. Contacta a soporte.");
           }
 
-          if (checkTrialExpired(localSettings.status, localSettings.subscription_expires_at)) {
-            if (isMounted) { setTrialExpired(true); setLoading(false); }
+          const expired = checkExpired(localSettings.status, localSettings.subscription_expires_at);
+          if (expired) {
+            if (isMounted) { setExpiredStatus(expired); setLoading(false); }
             return;
           }
 
@@ -145,8 +162,9 @@ export function AuthGuard({ children }: AuthGuardProps) {
             // Verificar trial después de sincronizar (businesses.status se habrá descargado)
             const freshSettings = await db.settings.toArray();
             const freshConfig = freshSettings[0];
-            if (freshConfig && checkTrialExpired(freshConfig.status, freshConfig.subscription_expires_at)) {
-              if (isMounted) { setTrialExpired(true); setLoading(false); }
+            const expiredFresh = freshConfig && checkExpired(freshConfig.status, freshConfig.subscription_expires_at);
+            if (expiredFresh) {
+              if (isMounted) { setExpiredStatus(expiredFresh); setLoading(false); }
               return;
             }
 
@@ -194,8 +212,8 @@ export function AuthGuard({ children }: AuthGuardProps) {
     return () => { isMounted = false; };
   }, [navigate]);
 
-  if (trialExpired) {
-    return <TrialExpiredScreen onSignOut={handleSignOut} />;
+  if (expiredStatus) {
+    return <SubscriptionExpiredScreen isTrial={expiredStatus === 'trial'} onSignOut={handleSignOut} />;
   }
 
   if (loading) {
