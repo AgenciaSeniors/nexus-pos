@@ -35,3 +35,9 @@ release
 release/
 android/app/build/
 android/.gradle/
+
+# Archivos temporales de depuración / IA
+tmp_*.json
+tmp_*.txt
+GEMINI_CONTEXT.md
+.gemini/

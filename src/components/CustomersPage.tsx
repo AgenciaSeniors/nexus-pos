@@ -2,14 +2,15 @@ import { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { db, type Customer, type Staff, type Sale } from '../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { 
-    UserPlus, Search, Edit2, Trash2, Users, Loader2, Phone, Mail, MapPin, 
-    Star, Gift, History, X, TrendingUp, Calendar, ChevronRight
+import {
+    UserPlus, Search, Edit2, Trash2, Users, Loader2, Phone, Mail, MapPin,
+    Star, Gift, History, X, TrendingUp, Calendar, ChevronRight, Download
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { addToQueue, syncPush } from '../lib/sync';
 import { logAuditAction } from '../lib/audit';
 import { currency } from '../lib/currency';
+import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
 
 export function CustomersPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
@@ -265,6 +266,25 @@ export function CustomersPage() {
       setIsDetailsOpen(true);
   };
 
+  const handleExportCSV = () => {
+      if (customers.length === 0) {
+          toast.error('No hay clientes para exportar');
+          return;
+      }
+      const columns: CsvColumn<Customer>[] = [
+          { label: 'Nombre', value: c => c.name },
+          { label: 'Teléfono', value: c => c.phone || '' },
+          { label: 'Email', value: c => c.email || '' },
+          { label: 'Dirección', value: c => c.address || '' },
+          { label: 'Puntos', value: c => c.loyalty_points ?? 0 },
+          { label: 'Notas', value: c => c.notes || '' },
+          { label: 'Fecha registro', value: c => formatLocalDateTime(c.created_at) },
+      ];
+      const today = new Date().toISOString().split('T')[0];
+      downloadCsv(`Clientes_Bisne_${today}`, customers, columns);
+      toast.success(`${customers.length} cliente(s) exportado(s)`);
+  };
+
   const resetForm = () => {
       setFormData({ name: '', phone: '', email: '', address: '' });
       setEditingId(null);
@@ -292,7 +312,15 @@ export function CustomersPage() {
                     className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0B3B68] outline-none shadow-sm text-[#1F2937]"
                 />
             </div>
-            <button 
+            <button
+                onClick={handleExportCSV}
+                disabled={customers.length === 0}
+                className="bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50 hover:text-[#0B3B68] px-3 py-2 rounded-xl flex items-center gap-2 font-bold text-sm transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Exportar clientes a CSV"
+            >
+                <Download size={16}/> <span className="hidden sm:inline">CSV</span>
+            </button>
+            <button
                 onClick={() => { resetForm(); setIsFormOpen(true); }}
                 className="bg-[#7AC142] hover:bg-[#7AC142]/90 text-white px-4 py-2 rounded-xl flex items-center gap-2 font-bold shadow-lg shadow-[#7AC142]/20 transition-colors"
             >

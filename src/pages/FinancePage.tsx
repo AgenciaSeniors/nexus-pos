@@ -20,6 +20,7 @@ import {
   ArrowRightLeft, History, Ban, TrendingDown, Users, Hash, Download, RotateCcw, Package, AlertTriangle, ChevronRight, Calculator
 } from 'lucide-react';
 import { BillCounter } from '../components/BillCounter';
+import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
 
 const EMPTY_ARRAY: never[] = [];
 
@@ -856,29 +857,19 @@ export function FinancePage() {
   
   const handleExportCSV = () => {
     if (!allSales.length) { toast.error('No hay ventas para exportar'); return; }
-    const header = ['ID', 'Fecha', 'Hora', 'Método', 'Estado', 'Vendedor', 'Cliente', 'Items', 'Total'];
-    const rows = allSales.map(s => [
-      s.id.slice(0, 8).toUpperCase(),
-      new Date(s.date).toLocaleDateString(),
-      new Date(s.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      s.payment_method,
-      s.status || 'completed',
-      s.staff_name || '',
-      s.customer_name || '',
-      (s.items || []).map(i => `${i.quantity}x ${i.name}`).join(' | '),
-      safeFloat(s.total).toFixed(2)
-    ]);
-    const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Ventas_${localDateStr()}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    toast.success('Reporte CSV descargado');
+    const columns: CsvColumn<Sale>[] = [
+      { label: 'ID', value: s => s.id.slice(0, 8).toUpperCase() },
+      { label: 'Fecha', value: s => formatLocalDateTime(s.date) },
+      { label: 'Método', value: s => s.payment_method },
+      { label: 'Estado', value: s => s.status || 'completed' },
+      { label: 'Vendedor', value: s => s.staff_name || '' },
+      { label: 'Cliente', value: s => s.customer_name || '' },
+      { label: 'Items', value: s => (s.items || []).map(i => `${i.quantity}x ${i.name}`).join(' | ') },
+      { label: 'Descuento', value: s => safeFloat(s.discount_amount).toFixed(2) },
+      { label: 'Total', value: s => safeFloat(s.total).toFixed(2) },
+    ];
+    downloadCsv(`Ventas_${localDateStr()}`, allSales, columns);
+    toast.success(`${allSales.length} venta(s) exportada(s)`);
   };
 
   // En Electron usar el IPC nativo (evita el "no admite vista previa" de Chromium)

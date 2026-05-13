@@ -37,6 +37,48 @@ export function SettingsPage() {
     []
   ) || 0;
 
+  // Métricas detalladas de sync para el panel
+  const syncMetrics = useLiveQuery(async () => {
+    const [pendingItems, failed] = await Promise.all([
+      db.action_queue.where('status').anyOf(['pending', 'processing']).toArray(),
+      db.action_queue.where('status').equals('failed').count(),
+    ]);
+
+    const labels: Record<string, string> = {
+      SALE: 'ventas', PRODUCT_SYNC: 'productos', CUSTOMER_SYNC: 'clientes',
+      MOVEMENT: 'movimientos', AUDIT: 'auditorías', SETTINGS_SYNC: 'config.',
+      SHIFT: 'turnos', CASH_MOVEMENT: 'mov. caja', STAFF_SYNC: 'empleados',
+      VOID_SALE: 'anulaciones', PARTIAL_REFUND: 'devoluciones', LOYALTY_CHANGE: 'puntos'
+    };
+    const breakdown: Record<string, number> = {};
+    pendingItems.forEach(i => {
+      const lbl = labels[i.type] || i.type.toLowerCase();
+      breakdown[lbl] = (breakdown[lbl] || 0) + 1;
+    });
+
+    // Última sync timestamp
+    const { getLastSyncTimestamp } = await import('../lib/sync');
+    const ts = getLastSyncTimestamp();
+    const ageMs = ts > 0 ? Date.now() - ts : 0;
+    let lastSyncLabel = 'Nunca';
+    let lastSyncAbsolute = '—';
+    if (ts > 0) {
+      if (ageMs < 60000) lastSyncLabel = 'Hace <1 min';
+      else if (ageMs < 3600000) lastSyncLabel = `Hace ${Math.floor(ageMs / 60000)} min`;
+      else if (ageMs < 86400000) lastSyncLabel = `Hace ${Math.floor(ageMs / 3600000)}h`;
+      else lastSyncLabel = `Hace ${Math.floor(ageMs / 86400000)}d`;
+      lastSyncAbsolute = new Date(ts).toLocaleTimeString('es-CU', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    return {
+      pending: pendingItems.length,
+      failed,
+      lastSyncLabel,
+      lastSyncAbsolute,
+      breakdown: Object.keys(breakdown).length > 0 ? breakdown : null,
+    };
+  }, []) || { pending: 0, failed: 0, lastSyncLabel: '—', lastSyncAbsolute: '—', breakdown: null };
+
   // ✅ REF PARA EL SELECTOR DE ARCHIVOS DE RESPALDO
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -654,7 +696,7 @@ export function SettingsPage() {
                         <Shield className="text-[#0B3B68]"/> Estado y Respaldos
                     </h2>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                         <div className={`p-4 rounded-xl border flex items-center gap-4 ${onlineStatus ? 'bg-[#7AC142]/5 border-[#7AC142]/20' : 'bg-[#EF4444]/5 border-[#EF4444]/20'}`}>
                             {onlineStatus ? <Wifi className="text-[#7AC142]" size={28}/> : <WifiOff className="text-[#EF4444]" size={28}/>}
                             <div>
@@ -671,6 +713,42 @@ export function SettingsPage() {
                                 <p className="text-xs text-blue-600">Sincronización Activa</p>
                             </div>
                         </div>
+                    </div>
+
+                    {/* PANEL DE MÉTRICAS DE SYNC */}
+                    <div className="mb-6 p-4 rounded-xl border border-gray-200 bg-gradient-to-br from-gray-50/80 to-white">
+                        <h4 className="font-bold text-[#1F2937] text-sm mb-3 flex items-center gap-2">
+                            <BarChart2 size={16} className="text-[#0B3B68]"/> Estado de Sincronización
+                        </h4>
+                        <div className="grid grid-cols-3 gap-3">
+                            <div className={`p-3 rounded-lg border text-center ${syncMetrics.pending === 0 ? 'bg-[#7AC142]/5 border-[#7AC142]/20' : 'bg-amber-50 border-amber-200'}`}>
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Pendientes</p>
+                                <p className={`text-2xl font-black ${syncMetrics.pending === 0 ? 'text-[#7AC142]' : 'text-amber-600'}`}>{syncMetrics.pending}</p>
+                                <p className="text-[9px] text-[#6B7280] mt-0.5">Por subir</p>
+                            </div>
+                            <div className={`p-3 rounded-lg border text-center ${syncMetrics.failed === 0 ? 'bg-[#7AC142]/5 border-[#7AC142]/20' : 'bg-red-50 border-red-200'}`}>
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Fallidos</p>
+                                <p className={`text-2xl font-black ${syncMetrics.failed === 0 ? 'text-[#7AC142]' : 'text-red-600'}`}>{syncMetrics.failed}</p>
+                                <p className="text-[9px] text-[#6B7280] mt-0.5">Abandonados</p>
+                            </div>
+                            <div className="p-3 rounded-lg border bg-blue-50 border-blue-100 text-center">
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Última sync</p>
+                                <p className="text-sm font-black text-blue-700 leading-tight pt-1">{syncMetrics.lastSyncLabel}</p>
+                                <p className="text-[9px] text-[#6B7280] mt-0.5">{syncMetrics.lastSyncAbsolute}</p>
+                            </div>
+                        </div>
+                        {syncMetrics.breakdown && (
+                            <div className="mt-3 pt-3 border-t border-gray-100">
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280] mb-2">Desglose de pendientes</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {Object.entries(syncMetrics.breakdown).map(([label, count]) => (
+                                        <span key={label} className="text-[11px] font-bold px-2 py-1 rounded-lg bg-amber-100 text-amber-800 border border-amber-200">
+                                            {count} {label}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className="space-y-3">

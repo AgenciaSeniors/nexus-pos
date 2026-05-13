@@ -211,6 +211,28 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
     return await db.action_queue.where('status').equals('failed').count();
   }, []) || 0;
 
+  // Desglose detallado de items pendientes por tipo — para banner informativo
+  const pendingBreakdown = useLiveQuery(async () => {
+    const items = await db.action_queue.where('status').anyOf(['pending', 'processing']).toArray();
+    if (items.length === 0) return null;
+    const labels: Record<string, string> = {
+      SALE: 'venta', PRODUCT_SYNC: 'producto', CUSTOMER_SYNC: 'cliente',
+      MOVEMENT: 'movimiento', AUDIT: 'auditoría', SETTINGS_SYNC: 'configuración',
+      SHIFT: 'turno', CASH_MOVEMENT: 'mov. caja', STAFF_SYNC: 'empleado',
+      VOID_SALE: 'anulación', PARTIAL_REFUND: 'devolución', LOYALTY_CHANGE: 'puntos'
+    };
+    const counts: Record<string, number> = {};
+    items.forEach(i => {
+      const label = labels[i.type] || i.type.toLowerCase();
+      counts[label] = (counts[label] || 0) + 1;
+    });
+    const parts = Object.entries(counts).map(([label, count]) => {
+      const plural = count > 1 ? (label.endsWith('a') || label.endsWith('o') ? label + 's' : label + 'es') : label;
+      return `${count} ${plural}`;
+    });
+    return { parts, total: items.length };
+  }, []) ?? null;
+
   const handleManualSync = async () => {
     if (!isOnline) {
         toast.error("No hay conexión para sincronizar");
@@ -270,11 +292,12 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
     if (isSyncing) {
       return { className: "bg-amber-50 text-amber-600 ring-1 ring-amber-200", icon: <RefreshCw size={20} className="animate-spin"/>, title: "Sincronizando..." };
     }
+    const detailLabel = pendingBreakdown ? ` (${pendingBreakdown.parts.join(', ')})` : '';
     if (!isOnline && (pendingCount > 0 || failedCount > 0)) {
-      return { className: "bg-red-50 text-[#EF4444] ring-1 ring-red-200 animate-pulse", icon: <AlertCircle size={20} />, title: "Sin conexión — cambios pendientes de subir" + lastSyncLabel };
+      return { className: "bg-red-50 text-[#EF4444] ring-1 ring-red-200 animate-pulse", icon: <AlertCircle size={20} />, title: `Sin conexión — cambios pendientes${detailLabel}${lastSyncLabel}` };
     }
     if (pendingCount > 0) {
-      return { className: "bg-amber-50 text-[#F59E0B] ring-1 ring-amber-200", icon: <RefreshCw size={20} />, title: "Hay cambios pendientes de subir" + lastSyncLabel };
+      return { className: "bg-amber-50 text-[#F59E0B] ring-1 ring-amber-200", icon: <RefreshCw size={20} />, title: `Cambios pendientes${detailLabel}${lastSyncLabel}` };
     }
     if (failedCount > 0) {
       return { className: "bg-orange-50 text-orange-500 ring-1 ring-orange-200", icon: <AlertCircle size={20} />, title: `${failedCount} elemento(s) con error — toca para reintentar` };
@@ -403,17 +426,24 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
 
         {/* BANNER OFFLINE / RECONEXIÓN */}
         {!isOnline && (
-          <div className="bg-red-600 text-white px-4 py-2 flex items-center justify-between gap-3 z-20 animate-in slide-in-from-top duration-300">
-            <div className="flex items-center gap-2 min-w-0">
-              <WifiOff size={16} className="flex-shrink-0" />
-              <span className="text-xs sm:text-sm font-bold truncate">
-                Sin conexión — modo offline activo
-              </span>
+          <div className="bg-red-600 text-white px-4 py-2 flex flex-col gap-1 z-20 animate-in slide-in-from-top duration-300">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <WifiOff size={16} className="flex-shrink-0" />
+                <span className="text-xs sm:text-sm font-bold truncate">
+                  Sin conexión — modo offline activo
+                </span>
+              </div>
+              {pendingCount > 0 && (
+                <span className="bg-white/20 text-white px-2.5 py-0.5 rounded-full text-xs font-black flex-shrink-0">
+                  {pendingCount} pendiente{pendingCount !== 1 ? 's' : ''}
+                </span>
+              )}
             </div>
-            {pendingCount > 0 && (
-              <span className="bg-white/20 text-white px-2.5 py-0.5 rounded-full text-xs font-black flex-shrink-0">
-                {pendingCount} pendiente{pendingCount !== 1 ? 's' : ''}
-              </span>
+            {pendingBreakdown && pendingBreakdown.parts.length > 0 && (
+              <p className="text-[10px] sm:text-xs font-medium text-white/80 ml-6 truncate">
+                {pendingBreakdown.parts.join(' · ')}
+              </p>
             )}
           </div>
         )}

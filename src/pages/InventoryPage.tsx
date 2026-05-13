@@ -12,6 +12,7 @@ import { currency } from '../lib/currency';
 import { toast } from 'sonner';
 import { logAuditAction } from '../lib/audit';
 import { InventoryHistory } from '../components/InventoryHistory';
+import { downloadCsv, type CsvColumn } from '../lib/csv';
 
 export function InventoryPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
@@ -575,37 +576,21 @@ export function InventoryPage() {
         return;
     }
 
-    const headers = ['Nombre del Producto', 'SKU', 'Categoría', 'Precio Venta', 'Costo', 'Stock Vitrina', 'Stock Almacén', 'Stock Total', 'Unidad de Medida', 'Vencimiento'];
-
-    const csvRows = products.map(p => {
-        const warehouse = p.stock_warehouse ?? 0;
-        return [
-            `"${p.name.replace(/"/g, '""')}"`,
-            `"${p.sku || ''}"`,
-            `"${p.category || 'General'}"`,
-            p.price,
-            p.cost || 0,
-            p.stock,
-            warehouse,
-            p.stock + warehouse,
-            `"${p.unit || 'un'}"`,
-            `"${p.expiration_date || ''}"`
-        ].join(',');
-    });
-
-    const csvContent = [headers.join(','), ...csvRows].join('\n');
-    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `Inventario_Bisne_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    
-    toast.success("Inventario exportado correctamente");
+    const columns: CsvColumn<Product>[] = [
+        { label: 'Nombre del Producto', value: p => p.name },
+        { label: 'SKU', value: p => p.sku || '' },
+        { label: 'Categoría', value: p => p.category || 'General' },
+        { label: 'Precio Venta', value: p => p.price.toFixed(2) },
+        { label: 'Costo', value: p => (p.cost ?? 0).toFixed(2) },
+        { label: 'Stock Vitrina', value: p => p.stock },
+        { label: 'Stock Almacén', value: p => p.stock_warehouse ?? 0 },
+        { label: 'Stock Total', value: p => p.stock + (p.stock_warehouse ?? 0) },
+        { label: 'Umbral Stock Bajo', value: p => p.low_stock_threshold ?? 5 },
+        { label: 'Unidad', value: p => p.unit || 'un' },
+        { label: 'Vencimiento', value: p => p.expiration_date || '' },
+    ];
+    downloadCsv(`Inventario_Bisne_${new Date().toISOString().split('T')[0]}`, products, columns);
+    toast.success(`${products.length} producto(s) exportado(s)`);
   };
 
   const openEdit = (p: Product) => {

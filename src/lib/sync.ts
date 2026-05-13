@@ -219,6 +219,29 @@ export async function processQueue() {
   }
 }
 
+/**
+ * Limpieza de mantenimiento de la cola: elimina items `failed` con más de
+ * 30 días de antigüedad (ya marcados como ABANDONADOS, sin posibilidad de recuperación).
+ * Evita que IndexedDB crezca indefinidamente con basura no procesable.
+ */
+export async function pruneOldQueueItems(maxAgeDays = 30): Promise<number> {
+  if (!db.isOpen()) return 0;
+  const cutoff = Date.now() - maxAgeDays * 86400000;
+  try {
+    const oldFailed = await db.action_queue
+      .where('status').equals('failed')
+      .filter(item => item.timestamp < cutoff)
+      .toArray();
+    if (oldFailed.length === 0) return 0;
+    await db.action_queue.bulkDelete(oldFailed.map(i => i.id));
+    console.log(`🧹 Cola: ${oldFailed.length} item(s) failed >${maxAgeDays}d eliminados`);
+    return oldFailed.length;
+  } catch (err) {
+    console.warn('Error en pruneOldQueueItems:', err);
+    return 0;
+  }
+}
+
 // Mejora 6: El backoff ahora se persiste actualizando el campo `timestamp` del item
 // en la cola. Antes usaba un Map en memoria que se perdía al cerrar la app,
 // causando que todos los reintentos se dispararan de golpe al reabrir.
@@ -533,6 +556,8 @@ export async function retryFailedItems() {
 
 export async function syncManualFull() {
     if (!isOnline()) throw new Error("Sin conexión a internet");
+    // Mantenimiento: borrar items failed muy antiguos (>30d) antes de reintentar
+    await pruneOldQueueItems(30);
     // Reintentar ítems que fallaron previamente (en sync automático solo se reintenta hasta 5 veces)
     if (db.isOpen()) {
         await db.action_queue
