@@ -8,6 +8,7 @@ import { syncCriticalData, syncHeavyData, stopSyncListeners } from './lib/sync';
 import { startAutoBackup, stopAutoBackup } from './lib/backup';
 
 import { ADMIN_WHATSAPP_PHONE } from './lib/config';
+import { checkLockout, recordFailure, recordSuccess, formatLockoutTime, RATE_LIMIT_CONFIG } from './lib/loginRateLimit';
 import { Layout } from './components/Layout';
 import { StaffSelectorModal } from './components/StaffSelectorModal';
 
@@ -98,16 +99,61 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
 
   const [loading, setLoading] = useState(false);
 
+  // Estado de rate limit (se actualiza al cambiar el email para mostrar al usuario)
+  const [lockoutStatus, setLockoutStatus] = useState(() => checkLockout(''));
+
+  // Re-evaluar el estado de bloqueo cada vez que el email cambia
+  useEffect(() => {
+    if (mode !== 'login') return;
+    setLockoutStatus(checkLockout(email));
+    // Si está bloqueado, actualizar cada segundo para mostrar el countdown
+    if (!email.trim()) return;
+    const status = checkLockout(email);
+    if (!status.isLocked) return;
+    const interval = setInterval(() => {
+      const next = checkLockout(email);
+      setLockoutStatus(next);
+      if (!next.isLocked) clearInterval(interval);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [email, mode]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Verificar rate limit ANTES de hacer la llamada
+    const preCheck = checkLockout(email);
+    if (preCheck.isLocked) {
+      toast.error(`Demasiados intentos. Espera ${formatLockoutTime(preCheck.secondsLeft)} antes de intentar de nuevo.`);
+      setLockoutStatus(preCheck);
+      return;
+    }
+
     setLoading(true);
     try {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
+      // Éxito → limpiar el contador de intentos para este email
+      recordSuccess(email);
+      setLockoutStatus({ isLocked: false, secondsLeft: 0, attemptsLeft: RATE_LIMIT_CONFIG.MAX_ATTEMPTS });
     } catch (error: any) {
-      toast.error(error.message === 'Invalid login credentials' ? 'Credenciales incorrectas' : error.message);
+      const isCredentialError = error.message === 'Invalid login credentials';
+      // Solo penalizar errores de credenciales — no por red u otros fallos.
+      if (isCredentialError) {
+        const status = recordFailure(email);
+        setLockoutStatus(status);
+        if (status.isLocked) {
+          toast.error(`Demasiados intentos fallidos. Cuenta bloqueada ${formatLockoutTime(status.secondsLeft)}.`);
+        } else if (status.attemptsLeft <= 2) {
+          toast.error(`Credenciales incorrectas. Te quedan ${status.attemptsLeft} intento(s) antes de bloquearse.`);
+        } else {
+          toast.error('Credenciales incorrectas');
+        }
+      } else {
+        toast.error(error.message);
+      }
       setLoading(false);
-    } 
+    }
   };
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -281,10 +327,24 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                   </div>
               )}
 
-              <button disabled={loading} type="submit" className="w-full bg-[#0B3B68] text-white font-bold py-3.5 rounded-xl hover:bg-[#092b4d] transition-all flex items-center justify-center gap-2 mt-6 shadow-xl shadow-[#0B3B68]/20 disabled:opacity-70 active:scale-95 text-lg">
+              {/* Aviso de rate limit (solo en modo login) */}
+              {mode === 'login' && lockoutStatus.isLocked && (
+                <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-xl text-center">
+                  <p className="text-xs font-bold text-red-700">
+                    Cuenta bloqueada temporalmente
+                  </p>
+                  <p className="text-[11px] text-red-600 mt-0.5">
+                    Demasiados intentos fallidos. Vuelve a intentar en {formatLockoutTime(lockoutStatus.secondsLeft)}.
+                  </p>
+                </div>
+              )}
+
+              <button disabled={loading || (mode === 'login' && lockoutStatus.isLocked)} type="submit" className="w-full bg-[#0B3B68] text-white font-bold py-3.5 rounded-xl hover:bg-[#092b4d] transition-all flex items-center justify-center gap-2 mt-6 shadow-xl shadow-[#0B3B68]/20 disabled:opacity-70 disabled:cursor-not-allowed active:scale-95 text-lg">
                 {loading && <Loader2 className="animate-spin w-5 h-5" />}
-                {mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? 'Contactar por WhatsApp' : 'Registrar Negocio'}
-                {!loading && mode !== 'forgot' && <ArrowRight className="w-5 h-5" />}
+                {mode === 'login' && lockoutStatus.isLocked
+                  ? `Bloqueado · ${formatLockoutTime(lockoutStatus.secondsLeft)}`
+                  : mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? 'Contactar por WhatsApp' : 'Registrar Negocio'}
+                {!loading && mode !== 'forgot' && !(mode === 'login' && lockoutStatus.isLocked) && <ArrowRight className="w-5 h-5" />}
               </button>
             </form>
 

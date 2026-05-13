@@ -350,20 +350,52 @@ export function InventoryPage() {
     return result;
   };
 
+  /** Extrae filas (header + datos) de un archivo CSV o Excel. */
+  const extractRowsFromFile = async (file: File): Promise<string[][]> => {
+    const name = file.name.toLowerCase();
+    const isExcel = name.endsWith('.xlsx') || name.endsWith('.xls');
+
+    if (isExcel) {
+      // Excel: usar SheetJS para extraer la primera hoja como array de filas
+      const XLSX = await import('xlsx');
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      if (!firstSheet) return [];
+      // sheet_to_json con header:1 → cada fila es un array de strings (en el orden de columnas)
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, { header: 1, raw: false, defval: '' });
+      return rows
+        .map(r => (r as unknown[]).map(c => String(c ?? '').trim()))
+        .filter(r => r.some(c => c !== '')); // descartar filas completamente vacías
+    }
+
+    // CSV / TXT: parsing manual con detección de separador
+    const text = await file.text();
+    const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim());
+    if (lines.length === 0) return [];
+    const separator = (lines[0].split(';').length > lines[0].split(',').length) ? ';' : ',';
+    return lines.map(line => parseCSVLine(line, separator));
+  };
+
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (importFileRef.current) importFileRef.current.value = '';
 
-    const text = await file.text();
-    const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim());
-    if (lines.length < 2) { toast.error('El archivo está vacío o no tiene datos'); return; }
+    let allRows: string[][];
+    try {
+      allRows = await extractRowsFromFile(file);
+    } catch (err) {
+      console.error('Error leyendo archivo:', err);
+      toast.error('No se pudo leer el archivo. Verifica que sea un CSV o Excel válido.');
+      return;
+    }
 
-    // Detect separator: if first line has more ; than , use ;
-    const separator = (lines[0].split(';').length > lines[0].split(',').length) ? ';' : ',';
+    if (allRows.length < 2) { toast.error('El archivo está vacío o no tiene datos'); return; }
 
     // Parse headers
-    const rawHeaders = parseCSVLine(lines[0], separator);
+    const rawHeaders = allRows[0];
+    const dataRows = allRows.slice(1);
     const fieldMap: (keyof Product | null)[] = rawHeaders.map(h => {
       const normalized = h.toLowerCase().replace(/['"]/g, '').trim();
       return HEADER_MAP[normalized] || null;
@@ -386,12 +418,12 @@ export function InventoryPage() {
     const skipped: { row: number; sku: string; name: string }[] = [];
     const csvSKUs = new Set<string>();
 
-    for (let i = 1; i < lines.length; i++) {
-      const values = parseCSVLine(lines[i], separator);
+    for (let i = 0; i < dataRows.length; i++) {
+      const values = dataRows[i];
       const row: Record<string, string> = {};
       fieldMap.forEach((field, idx) => { if (field && values[idx] !== undefined) row[field] = values[idx]; });
 
-      const rowNum = i + 1;
+      const rowNum = i + 2; // +1 por base 0, +1 por header
       const name = (row.name || '').replace(/^["']|["']$/g, '').trim();
       if (!name) { errors.push({ row: rowNum, message: 'Nombre vacío' }); continue; }
 
@@ -399,7 +431,7 @@ export function InventoryPage() {
       if (isNaN(price) || price < 0) { errors.push({ row: rowNum, message: `Precio inválido: "${row.price}"` }); continue; }
 
       let sku = (row.sku || '').replace(/^["']|["']$/g, '').trim();
-      if (!sku) sku = `IMP-${String(i).padStart(4, '0')}`;
+      if (!sku) sku = `IMP-${String(i + 1).padStart(4, '0')}`;
 
       // SKU duplicate in DB
       if (existingSKUs.has(sku.toLowerCase())) { skipped.push({ row: rowNum, sku, name }); continue; }
@@ -683,7 +715,7 @@ export function InventoryPage() {
                 <button
                     onClick={() => { setIsImportModalOpen(true); setImportStep('instructions'); }}
                     className="bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50 hover:text-[#0B3B68] px-3 py-2.5 rounded-xl flex items-center gap-2 font-bold text-sm transition-colors shadow-sm"
-                    title="Importar desde CSV"
+                    title="Importar desde CSV o Excel"
                 >
                     <Upload size={18}/> <span className="hidden sm:inline">Importar</span>
                 </button>
@@ -1310,9 +1342,9 @@ export function InventoryPage() {
                       <Download size={16} /> Descargar plantilla CSV
                     </button>
                     <button onClick={() => importFileRef.current?.click()} className="w-full py-3 bg-[#0B3B68] text-white rounded-xl font-bold text-sm hover:bg-[#0B3B68]/90 transition-colors flex items-center justify-center gap-2 shadow-lg shadow-[#0B3B68]/20">
-                      <Upload size={16} /> Seleccionar archivo .csv
+                      <Upload size={16} /> Seleccionar archivo (.csv o .xlsx)
                     </button>
-                    <input type="file" accept=".csv,.txt" className="hidden" ref={importFileRef} onChange={handleImportFile} />
+                    <input type="file" accept=".csv,.txt,.xlsx,.xls" className="hidden" ref={importFileRef} onChange={handleImportFile} />
                   </div>
                 </div>
               )}
