@@ -52,15 +52,15 @@ export async function addToQueue(type: QueueItem['type'], payload: QueuePayload)
       retries: 0,
       status: 'pending'
     });
-    
+
+    // Disparar processQueue inmediatamente (sin setTimeout — el guard interno
+    // _isProcessingQueue evita ejecuciones concurrentes; el loop de 30s sirve de red).
     if (isOnline()) {
-      setTimeout(() => {
-        processQueue().catch(err => console.error("Error en sync background:", err));
-      }, 50);
+      processQueue().catch(err => console.error("Error en sync background:", err));
     }
   } catch (error) {
     console.error("Error crítico al añadir a la cola:", error);
-    throw error; 
+    throw error;
   }
 }
 
@@ -185,23 +185,19 @@ async function processItem(item: QueueItem) {
         break;
     }
     case 'LOYALTY_CHANGE': {
-        // Incremento atómico de puntos de lealtad: lee valor actual del servidor,
-        // aplica delta, y actualiza. Evita que 2 dispositivos se sobrescriban mutuamente.
+        // Incremento atómico de puntos de lealtad via RPC. El RPC ejecuta
+        // UPDATE ... SET loyalty_points = loyalty_points + delta en una sola transacción,
+        // evitando el race condition del patrón read-modify-write anterior.
         const { customer_id, delta, business_id } = payload as LoyaltyChangePayload;
-        const { data: current, error: readErr } = await supabase
-            .from('customers').select('loyalty_points')
-            .eq('id', customer_id).eq('business_id', business_id).single();
-        if (readErr) throw new Error(`Error leyendo puntos: ${readErr.message}`);
-        const serverPoints = current?.loyalty_points || 0;
-        const newPoints = Math.max(0, serverPoints + delta);
-        const { error: updateErr } = await supabase
-            .from('customers')
-            .update({ loyalty_points: newPoints, updated_at: new Date().toISOString() })
-            .eq('id', customer_id)
-            .eq('business_id', business_id);
-        if (updateErr) throw new Error(`Error actualizando puntos: ${updateErr.message}`);
-        // Sincronizar valor del servidor a local y desbloquear el cliente para futuros pulls
-        await db.customers.update(customer_id, { loyalty_points: newPoints, sync_status: 'synced' });
+        const { data: newPoints, error } = await supabase.rpc('add_loyalty_points', {
+            p_customer_id: customer_id,
+            p_business_id: business_id,
+            p_delta: delta,
+        });
+        if (error) throw new Error(`Error actualizando puntos: ${error.message}`);
+        // El RPC retorna el nuevo total; lo reflejamos en local y desbloqueamos sync.
+        const finalPoints = typeof newPoints === 'number' ? newPoints : 0;
+        await db.customers.update(customer_id, { loyalty_points: finalPoints, sync_status: 'synced' });
         break;
     }
     default:
@@ -278,13 +274,68 @@ async function _runQueue() {
   }
 }
 
-async function safeBulkPut<T extends { id: string; sync_status?: string }>(table: Table<T, string>, items: T[]) {
-  const dirtyItems = await table.filter(i => i.sync_status !== undefined && i.sync_status !== 'synced').primaryKeys();
-  const dirtySet = new Set(dirtyItems);
-  const safeItems = items.filter(i => !dirtySet.has(i.id));
+/**
+ * Resuelve conflictos al hacer pull de datos remotos:
+ * - Si el item local NO está dirty (synced) → sobrescribir con el remoto
+ * - Si el item local está dirty (pending_*) PERO el remoto es más nuevo (updated_at) → sobrescribir
+ *   (asumimos que el cambio remoto es la versión más reciente y nuestro pending lleva atrás)
+ * - Si el item local está dirty y es más nuevo o igual → preservar el local
+ *
+ * Esto arregla el bug donde edits locales pending bloqueaban actualizaciones legítimas
+ * de otros dispositivos.
+ */
+async function safeBulkPut<T extends { id: string; sync_status?: string; updated_at?: string }>(table: Table<T, string>, items: T[]) {
+  // Cargar items locales dirty con su updated_at
+  const localDirty = await table.filter(i => i.sync_status !== undefined && i.sync_status !== 'synced').toArray();
+  const localDirtyMap = new Map<string, T>(localDirty.map(i => [i.id, i]));
+
+  const safeItems = items.filter(remote => {
+    const local = localDirtyMap.get(remote.id);
+    if (!local) return true; // no hay conflicto, sobrescribir
+    // Hay conflicto: comparar updated_at. Si el remoto es más nuevo (estrictamente), sobrescribir.
+    const remoteAt = remote.updated_at ? new Date(remote.updated_at).getTime() : 0;
+    const localAt = local.updated_at ? new Date(local.updated_at).getTime() : 0;
+    return remoteAt > localAt;
+  });
 
   if (safeItems.length > 0) {
     await table.bulkPut(safeItems);
+  }
+}
+
+/**
+ * Reintenta ventas en estado 'stock_conflict' si el stock local actual
+ * ya es suficiente (fue repuesto por otro dispositivo o por un ajuste manual).
+ * Se llama después del pull de productos en syncLiveData.
+ */
+async function autoResolveStockConflicts(businessId: string) {
+  try {
+    const conflictedSales = await db.sales
+      .where('business_id').equals(businessId)
+      .filter(s => s.status === 'stock_conflict')
+      .toArray();
+
+    if (conflictedSales.length === 0) return;
+
+    for (const sale of conflictedSales) {
+      // Verificar que todos los items tengan stock suficiente ahora
+      let canResolve = true;
+      for (const item of (sale.items || [])) {
+        const product = await db.products.get(item.product_id);
+        if (!product || product.deleted_at) { canResolve = false; break; }
+        if ((product.stock ?? 0) < item.quantity) { canResolve = false; break; }
+      }
+
+      if (canResolve) {
+        await db.transaction('rw', [db.sales, db.action_queue], async () => {
+          await db.sales.update(sale.id, { status: 'completed', sync_status: 'pending_update' });
+          await addToQueue('SALE', { sale: { ...sale, status: 'completed', sync_status: 'pending_update' }, items: sale.items || [] });
+        });
+        console.log(`✅ Conflicto de stock auto-resuelto para venta ${sale.id}`);
+      }
+    }
+  } catch (err) {
+    console.warn('autoResolveStockConflicts error:', err);
   }
 }
 
@@ -445,21 +496,25 @@ export async function syncPush() {
     await processQueue();
 }
 
-export async function syncPull() {
-    if (!isOnline()) return;
+/**
+ * Hace pull completo. Retorna true si TODO (crítico + heavy) tuvo éxito.
+ * Si syncHeavyData falla, retorna false para que el caller no actualice el
+ * timestamp "última sincronización" (los productos/clientes quedan desactualizados).
+ */
+export async function syncPull(): Promise<boolean> {
+    if (!isOnline()) return false;
     const settings = await db.settings.toArray();
-    if (settings.length === 0) return;
+    if (settings.length === 0) return false;
 
     const businessId = settings[0].id;
     await syncCriticalData(businessId);
 
-    // syncHeavyData puede fallar por error de red sin que eso impida
-    // que el timestamp se actualice (el push ya se procesó antes).
     try {
         await syncHeavyData(businessId);
+        return true;
     } catch (err) {
         console.error('syncPull — syncHeavyData falló:', err);
-        // No relanzar: el push ya fue exitoso y el timestamp se actualiza igual.
+        return false;
     }
 }
 
@@ -485,9 +540,15 @@ export async function syncManualFull() {
             .modify({ status: 'pending', retries: 0, error: undefined });
     }
     await syncPush();
-    await syncPull();
-    // Actualizar timestamp para que el contador "días sin sync" se resetee
-    setLastSyncTimestamp();
+    const pullOk = await syncPull();
+    // Solo actualizar timestamp si TODO (push + pull completo) fue exitoso.
+    // Si el pull heavy falló, los datos locales están desactualizados y el contador
+    // "días sin sync" debe reflejarlo para que el usuario sepa que necesita reintentar.
+    if (pullOk) {
+        setLastSyncTimestamp();
+    } else {
+        throw new Error("Sincronización parcial: los datos pudieron no haberse actualizado completamente. Reintenta cuando la conexión sea estable.");
+    }
 }
 
 // ─── SYNC LIVE: pull periódico para multi-dispositivo ───────────────────────
@@ -595,6 +656,11 @@ export async function syncLiveData() {
                   detail: { products: negativeStock.map((p: any) => ({ id: p.id, name: p.name, stock: p.stock })) }
                 }));
             }
+
+            // Auto-resolver ventas en stock_conflict: si el stock fue repuesto desde
+            // otro dispositivo, reintentar la venta automáticamente. El usuario ya no
+            // tendrá que aceptar manualmente conflictos que ya se resolvieron solos.
+            await autoResolveStockConflicts(businessId);
         }
 
         // 5. Clientes: pull incremental (mismo razonamiento que productos)

@@ -1,8 +1,8 @@
 // Librería de Manejo Seguro de Moneda
 // Evita errores de punto flotante (0.1 + 0.2 = 0.300000004)
 
-const LOCALE = 'es-MX'; // Ajusta a tu país (es-AR, es-CL, es-CO, etc.)
-const CURRENCY = 'MXN'; // Ajusta a tu moneda (ARS, CLP, COP, etc.)
+const LOCALE = 'es-CU';
+const CURRENCY = 'CUP';
 
 export const currency = {
   /**

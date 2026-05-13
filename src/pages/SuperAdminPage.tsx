@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Shield, Check, X, Search, RefreshCw, UserCheck, Inbox,
   CalendarPlus, Key, User, LogOut, Store, Trash2, AlertTriangle, Calendar, AlertOctagon,
-  History, TrendingUp, Award, KeyRound, Eye, EyeOff, DollarSign, CheckCircle2, Edit2, FlaskConical, Zap, Star,
+  History, TrendingUp, Award, KeyRound, Eye, EyeOff, DollarSign, CheckCircle2, Edit2, FlaskConical,
   Bell, Clock, PhoneCall
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -65,7 +65,7 @@ export function SuperAdminPage() {
   const navigate = useNavigate();
   
   // --- ESTADOS DE LA INTERFAZ ---
-  const [activeTab, setActiveTab] = useState<'subscriptions' | 'active' | 'history' | 'billing'>('subscriptions');
+  const [activeTab, setActiveTab] = useState<'subscriptions' | 'active' | 'history'>('subscriptions');
   const [subscriptionRows, setSubscriptionRows] = useState<SubscriptionRow[]>([]);
   const [dataList, setDataList] = useState<Profile[]>([]);
   const [historyList, setHistoryList] = useState<LicenseEvent[]>([]);
@@ -73,118 +73,6 @@ export function SuperAdminPage() {
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // --- BILLING ---
-  interface BillingRow {
-    business_id: string;
-    business_name: string;
-    owner_name: string;
-    total_sales: number;
-    rate: number;          // porcentaje auto-detectado: 1% (≤500k) | 0.5% (>500k)
-    tier: 'standard' | 'plus'; // standard = hasta 500k, plus = más de 500k
-    fee: number;           // total_sales * rate / 100
-    paid_until: string | null;
-    billing_id: string | null;
-    period: string;        // 'YYYY-MM'
-  }
-  const [billingRows, setBillingRows] = useState<BillingRow[]>([]);
-  const [billingLoading, setBillingLoading] = useState(false);
-  const [billingPeriod, setBillingPeriod] = useState(() => {
-    const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;
-  });
-  const fetchBilling = async (period: string) => {
-    setBillingLoading(true);
-    try {
-      // 1. Negocios activos
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('id, full_name, business_id')
-        .in('status', ['active', 'suspended'])
-        .not('business_id', 'is', null);
-
-      if (!profiles?.length) { setBillingRows([]); return; }
-
-      // 2. Totales de ventas del período (mes seleccionado) por business_id
-      const [year, month] = period.split('-').map(Number);
-      const from = new Date(year, month - 1, 1).toISOString();
-      const to   = new Date(year, month, 1).toISOString();
-
-      const { data: salesData } = await supabase
-        .from('sales')
-        .select('business_id, total, status')
-        .gte('date', from)
-        .lt('date', to)
-        .neq('status', 'voided');
-
-      // 3. Configuración de billing guardada
-      const bizIds = profiles.map(p => p.business_id!);
-      const { data: billingData } = await supabase
-        .from('billing')
-        .select('*')
-        .in('business_id', bizIds);
-
-      // 4. Nombres de negocios
-      const { data: businesses } = await supabase
-        .from('businesses')
-        .select('id, name')
-        .in('id', bizIds);
-
-      const salesByBiz: Record<string, number> = {};
-      (salesData || []).forEach(s => {
-        salesByBiz[s.business_id] = (salesByBiz[s.business_id] || 0) + Number(s.total || 0);
-      });
-
-      // Deduplicar por business_id (un negocio puede tener varios perfiles)
-      const seenBiz = new Set<string>();
-      const uniqueProfiles = profiles.filter(p => {
-        if (seenBiz.has(p.business_id!)) return false;
-        seenBiz.add(p.business_id!);
-        return true;
-      });
-
-      const rows: BillingRow[] = uniqueProfiles.map(p => {
-        const billing = (billingData || []).find(b => b.business_id === p.business_id);
-        const bizName = (businesses || []).find(b => b.id === p.business_id)?.name || p.full_name;
-        const totalSales = salesByBiz[p.business_id!] || 0;
-        // Tarifa auto-detectada según volumen mensual de ventas
-        const tier: 'standard' | 'plus' = totalSales > 500_000 ? 'plus' : 'standard';
-        const rate = tier === 'plus' ? 0.5 : 1.0;
-        return {
-          business_id: p.business_id!,
-          business_name: bizName,
-          owner_name: p.full_name,
-          total_sales: totalSales,
-          rate,
-          tier,
-          fee: totalSales * rate / 100,
-          paid_until: billing?.paid_until ?? null,
-          billing_id: billing?.id ?? null,
-          period,
-        };
-      });
-
-      setBillingRows(rows.sort((a, b) => b.total_sales - a.total_sales));
-    } catch (e) {
-      console.error(e);
-      toast.error('Error cargando facturación');
-    } finally {
-      setBillingLoading(false);
-    }
-  };
-
-
-  const handleMarkPaid = async (row: BillingRow) => {
-    const [py, pm] = row.period.split('-').map(Number);
-    const d = new Date(py, pm, 0); // último día del mes en hora local
-    const paidUntil = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    try {
-      await supabase.from('billing').upsert(
-        { ...(row.billing_id ? { id: row.billing_id } : {}), business_id: row.business_id, rate: row.rate, paid_until: paidUntil, updated_at: new Date().toISOString() },
-        { onConflict: 'business_id' }
-      );
-      fetchBilling(billingPeriod);
-      toast.success(`Pago de ${row.business_name} confirmado`);
-    } catch { toast.error('Error confirmando pago'); }
-  };
 
   const handleGrantTrial = async (profile: Profile, days = 7) => {
     if (!profile.business_id) return toast.error("Este perfil no tiene un negocio asignado");
@@ -226,23 +114,6 @@ export function SuperAdminPage() {
     }
   };
 
-  const handleRevertPaid = async (row: BillingRow) => {
-    if (!row.billing_id) return;
-    try {
-      await supabase.from('billing').update({ paid_until: null, updated_at: new Date().toISOString() }).eq('id', row.billing_id);
-      fetchBilling(billingPeriod);
-      toast.success(`Pago de ${row.business_name} revertido`);
-    } catch { toast.error('Error revirtiendo pago'); }
-  };
-
-  const isPaid = (row: BillingRow) => {
-    if (!row.paid_until) return false;
-    const [y, m] = row.period.split('-').map(Number);
-    const lastDay = new Date(y, m, 0).getDate();
-    const lastDayStr = `${row.period}-${String(lastDay).padStart(2,'0')}`;
-    return row.paid_until >= lastDayStr; // comparación de strings ISO es segura
-  };
-
   // --- MODALES ---
   const [approvingItem, setApprovingItem] = useState<Profile | null>(null);
   const [extendingItem, setExtendingItem] = useState<Profile | null>(null);
@@ -252,9 +123,21 @@ export function SuperAdminPage() {
   // --- VALORES DE FORMULARIO ---
   const [monthsToGrant, setMonthsToGrant] = useState(1);
   const [extendMonths, setExtendMonths] = useState(1);
-  const [adminPin, setAdminPin] = useState('1234'); // Estado para el PIN (Ya no prompt)
+  const [adminPin, setAdminPin] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [showNewPassword, setShowNewPassword] = useState(false);
+
+  // Modal post-aprobación: muestra el PIN de forma segura con botón "Copiar"
+  const [pinDeliveryModal, setPinDeliveryModal] = useState<{ clientName: string; pin: string } | null>(null);
+
+  // Genera un PIN aleatorio de 4 dígitos cuando se abre el modal de aprobación.
+  // Evita el bug previo donde el PIN quedaba en '1234' si el admin no lo cambiaba.
+  useEffect(() => {
+    if (approvingItem) {
+      const randomPin = String(Math.floor(1000 + Math.random() * 9000));
+      setAdminPin(randomPin);
+    }
+  }, [approvingItem]);
 
   // 0. CARGA DE SUSCRIPCIONES
   const fetchSubscriptions = useCallback(async () => {
@@ -397,7 +280,6 @@ export function SuperAdminPage() {
 
   useEffect(() => {
     if (activeTab === 'history') fetchHistory();
-    else if (activeTab === 'billing') fetchBilling(billingPeriod);
     else if (activeTab === 'subscriptions') fetchSubscriptions();
     else fetchData();
   }, [activeTab, fetchData, fetchHistory, fetchSubscriptions]);
@@ -455,9 +337,11 @@ export function SuperAdminPage() {
         performed_by_name: approverName,
       });
 
-      toast.success(`Cliente aprobado. PIN Maestro: ${adminPin}`);
+      // Mostrar PIN en modal seguro (no en toast) con opción de copiar al portapapeles.
+      setPinDeliveryModal({ clientName: approvingItem.full_name, pin: adminPin });
+      toast.success(`Cliente ${approvingItem.full_name} aprobado`);
       setApprovingItem(null);
-      setAdminPin('1234');
+      setAdminPin('');
       fetchData();
 
     } catch (err: unknown) {
@@ -698,12 +582,6 @@ export function SuperAdminPage() {
                 >
                     <History size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Historial</span><span className="sm:hidden">Hist.</span>
                 </button>
-                <button
-                    onClick={() => setActiveTab('billing')}
-                    className={`flex items-center justify-center gap-1.5 px-3 sm:px-5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'billing' ? 'bg-emerald-700 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                >
-                    <DollarSign size={14} className="sm:w-4 sm:h-4" /> Cobros
-                </button>
             </div>
 
             {activeTab !== 'history' && (
@@ -854,153 +732,6 @@ export function SuperAdminPage() {
             </div>
           );
         })()}
-
-        {/* ===== PESTAÑA COBROS ===== */}
-        {activeTab === 'billing' && (
-          <div className="space-y-4">
-            {/* Cabecera: período + totales */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
-              <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-                <label className="text-xs sm:text-sm font-bold text-slate-600">Período:</label>
-                <input
-                  type="month"
-                  value={billingPeriod}
-                  onChange={e => { setBillingPeriod(e.target.value); fetchBilling(e.target.value); }}
-                  className="border border-slate-200 rounded-lg px-2 sm:px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500 bg-white flex-1 sm:flex-none min-w-0"
-                />
-                <button
-                  onClick={() => fetchBilling(billingPeriod)}
-                  className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors flex-shrink-0"
-                  title="Actualizar"
-                >
-                  <RefreshCw size={18} className={billingLoading ? 'animate-spin' : ''} />
-                </button>
-              </div>
-              {billingRows.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-slate-100 space-y-3">
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <div>
-                      <p className="text-xs text-slate-400 font-medium">Negocios</p>
-                      <p className="text-lg font-black text-slate-700">{billingRows.length}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-400 font-medium">Total ventas</p>
-                      <p className="text-lg font-black text-emerald-700">${billingRows.reduce((s,r)=>s+r.total_sales,0).toFixed(2)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-400 font-medium">A cobrar</p>
-                      <p className="text-lg font-black text-amber-600">${billingRows.reduce((s,r)=>s+r.fee,0).toFixed(2)}</p>
-                    </div>
-                  </div>
-                  <div className="flex gap-2 text-[10px] font-bold">
-                    <span className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 rounded-lg">
-                      <Zap size={10}/> Estándar (≤$500k): {billingRows.filter(r=>r.tier==='standard').length} negocio(s) · 1%
-                    </span>
-                    <span className="flex items-center gap-1 px-2 py-1 bg-violet-50 text-violet-700 rounded-lg">
-                      <Star size={10} className="fill-violet-600"/> Plus (&gt;$500k): {billingRows.filter(r=>r.tier==='plus').length} negocio(s) · 0.5%
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {billingLoading ? (
-              <div className="flex justify-center py-16"><RefreshCw className="animate-spin text-emerald-500" size={32}/></div>
-            ) : billingRows.length === 0 ? (
-              <div className="bg-white rounded-2xl p-12 text-center text-slate-400 border border-slate-100">
-                <DollarSign size={40} className="mx-auto mb-3 opacity-30"/>
-                <p className="font-bold">No hay negocios activos</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {billingRows.map(row => {
-                  const paid = isPaid(row);
-                  return (
-                    <div key={row.business_id} className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${paid ? 'border-emerald-100' : row.total_sales > 0 ? 'border-amber-200' : 'border-slate-100'}`}>
-                      {/* Fila superior: nombre + estado + tier */}
-                      <div className={`flex items-center justify-between px-4 py-3 ${paid ? 'bg-emerald-50/60' : row.total_sales > 0 ? 'bg-amber-50/60' : 'bg-slate-50/60'}`}>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className="font-black text-slate-800 text-sm">{row.business_name}</p>
-                            {row.tier === 'plus' ? (
-                              <span className="inline-flex items-center gap-0.5 px-2 py-0.5 bg-violet-100 text-violet-700 rounded-full text-[10px] font-black uppercase">
-                                <Star size={9} className="fill-violet-600"/> Plus 0.5%
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-0.5 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[10px] font-black uppercase">
-                                <Zap size={9}/> Estándar 1%
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-slate-400">{row.owner_name}</p>
-                        </div>
-                        <div>
-                          {paid ? (
-                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-black uppercase">
-                              <CheckCircle2 size={12}/> Pagado
-                            </span>
-                          ) : row.total_sales === 0 ? (
-                            <span className="inline-flex px-3 py-1 bg-slate-100 text-slate-400 rounded-full text-xs font-bold uppercase">Sin ventas</span>
-                          ) : (
-                            <span className="inline-flex px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-black uppercase">Pendiente</span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Fila inferior: métricas + acciones */}
-                      <div className="px-4 py-3">
-                        <div className="grid grid-cols-3 gap-2 mb-3">
-                          {/* Ventas */}
-                          <div>
-                            <p className="text-[10px] text-slate-400 font-bold uppercase">Ventas</p>
-                            <p className="font-black text-slate-700 text-sm font-mono">${row.total_sales.toFixed(2)}</p>
-                          </div>
-
-                          {/* % auto-detectado */}
-                          <div>
-                            <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">% Cobro</p>
-                            <div className="flex items-center gap-1">
-                              <span className={`px-2 py-1 rounded-lg font-black text-sm ${row.tier === 'plus' ? 'bg-violet-100 text-violet-700' : 'bg-blue-100 text-blue-700'}`}>
-                                {row.rate}%
-                              </span>
-                              <span className="text-[9px] text-slate-400 font-bold">AUTO</span>
-                            </div>
-                          </div>
-
-                          {/* Monto a pagar */}
-                          <div>
-                            <p className="text-[10px] text-slate-400 font-bold uppercase">A pagar</p>
-                            <p className={`font-black text-base font-mono ${row.fee > 0 ? 'text-emerald-700' : 'text-slate-300'}`}>${row.fee.toFixed(2)}</p>
-                          </div>
-                        </div>
-
-                        {/* Botón acción */}
-                        <div className="flex justify-end">
-                          {!paid && row.total_sales > 0 && (
-                            <button
-                              onClick={() => handleMarkPaid(row)}
-                              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all active:scale-95 shadow-sm flex items-center gap-1.5 w-full sm:w-auto justify-center"
-                            >
-                              <CheckCircle2 size={13}/> Confirmar pago
-                            </button>
-                          )}
-                          {paid && (
-                            <button
-                              onClick={() => handleRevertPaid(row)}
-                              className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
-                            >
-                              Revertir
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* ===== PESTAÑA HISTORIAL ===== */}
         {activeTab === 'history' && (
@@ -1341,7 +1072,7 @@ export function SuperAdminPage() {
 
                     {/* Acciones */}
                     <div className="flex gap-3 pt-2">
-                        <button onClick={() => setApprovingItem(null)} className="flex-1 py-3 text-slate-500 font-bold bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors text-xs">CANCELAR</button>
+                        <button onClick={() => { setApprovingItem(null); setAdminPin(''); }} className="flex-1 py-3 text-slate-500 font-bold bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors text-xs">CANCELAR</button>
                         <button onClick={executeApproval} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-200 transition-all text-xs">CONFIRMAR</button>
                     </div>
                 </div>
@@ -1432,6 +1163,48 @@ export function SuperAdminPage() {
                     </div>
                 </div>
             </div>
+        </div>
+      )}
+
+      {/* MODAL POST-APROBACIÓN: ENTREGA DE PIN MAESTRO (seguro, copy-to-clipboard) */}
+      {pinDeliveryModal && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border-t-4 border-emerald-500">
+            <div className="p-6 bg-emerald-50 border-b border-emerald-100">
+              <h3 className="text-lg font-black text-emerald-900 flex items-center gap-2">
+                <Key className="w-5 h-5 text-emerald-600"/> PIN MAESTRO GENERADO
+              </h3>
+              <p className="text-xs text-emerald-700 mt-1 font-medium">Cliente: {pinDeliveryModal.clientName}</p>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Comparte este PIN con el cliente por un canal seguro (WhatsApp directo, llamada). Es de un solo uso para mostrar aquí — al cerrar este modal ya no podrás verlo de nuevo.
+              </p>
+              <div className="bg-slate-900 text-white rounded-xl p-5 text-center">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">PIN Maestro</p>
+                <p className="text-4xl font-black font-mono tracking-[0.4em] select-all">{pinDeliveryModal.pin}</p>
+              </div>
+              <button
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(pinDeliveryModal.pin);
+                    toast.success('PIN copiado al portapapeles');
+                  } catch {
+                    toast.error('No se pudo copiar. Cópialo manualmente.');
+                  }
+                }}
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md transition-all text-sm flex items-center justify-center gap-2"
+              >
+                <CheckCircle2 size={16}/> Copiar PIN
+              </button>
+              <button
+                onClick={() => setPinDeliveryModal(null)}
+                className="w-full py-3 text-slate-500 font-bold bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors text-xs"
+              >
+                CERRAR
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

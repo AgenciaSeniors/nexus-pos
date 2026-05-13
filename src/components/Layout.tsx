@@ -2,8 +2,10 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Package, PieChart, Settings,
   Cloud, AlertCircle, RefreshCw, LogOut, Menu, X, Users as UsersIcon, CheckCircle2, Loader2,
-  ArrowLeftRight, WifiOff, Wifi, Clock, HelpCircle
+  ArrowLeftRight, WifiOff, Wifi, Clock, HelpCircle, MessageCircle, Calculator
 } from 'lucide-react';
+import { ADMIN_WHATSAPP_PHONE } from '../lib/config';
+import { BillCounter } from './BillCounter';
 import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff } from '../lib/db';
@@ -28,6 +30,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [isBillCounterOpen, setIsBillCounterOpen] = useState(false);
   const [showGuidePrompt, setShowGuidePrompt] = useState(false);
   const guideCheckedRef = useRef(false); // evita re-disparar si staff cambia mid-sesión
 
@@ -135,6 +138,31 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
     const daysLeft = Math.max(0, Math.ceil(msLeft / (1000 * 60 * 60 * 24)));
     return { daysLeft };
   }, []) ?? null;
+
+  // Banner de suscripción activa próxima a vencer (≤7 días)
+  const subscriptionWarning = useLiveQuery(async () => {
+    const settings = await db.settings.toArray();
+    const s = settings[0];
+    if (!s || s.status !== 'active' || !s.subscription_expires_at) return null;
+    const msLeft = new Date(s.subscription_expires_at).getTime() - Date.now();
+    const daysLeft = Math.ceil(msLeft / (1000 * 60 * 60 * 24));
+    if (daysLeft > 7) return null; // solo mostrar dentro de los últimos 7 días
+    return { daysLeft: Math.max(0, daysLeft) };
+  }, []) ?? null;
+
+  const [subBannerDismissed, setSubBannerDismissed] = useState(() => {
+    return sessionStorage.getItem('nexus_sub_banner_dismissed') === '1';
+  });
+
+  const dismissSubBanner = () => {
+    sessionStorage.setItem('nexus_sub_banner_dismissed', '1');
+    setSubBannerDismissed(true);
+  };
+
+  const renewWaUrl = (() => {
+    const msg = encodeURIComponent('Hola, quiero renovar mi suscripción de Bisne con Talla.');
+    return `https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=${msg}`;
+  })();
 
   const multipleStaff = useLiveQuery(async () => {
     const bId = localStorage.getItem('nexus_business_id');
@@ -327,6 +355,12 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
         </nav>
 
         <div className="flex flex-col gap-3 w-full px-3 mt-4 border-t border-white/10 pt-6">
+            <button onClick={() => setIsBillCounterOpen(true)} className="p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group border bg-white/5 hover:bg-[#7AC142]/15 text-gray-300 hover:text-[#7AC142] border-white/5" title="Contador de Efectivo">
+                <Calculator size={20} />
+                <span className="absolute left-full ml-4 px-3 py-2 bg-[#1F2937] text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 shadow-xl font-bold uppercase tracking-wide border border-gray-700">
+                    Contador de Efectivo
+                </span>
+            </button>
             <button onClick={handleManualSync} disabled={!isOnline || isSyncing} className={`p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group border ${!isOnline ? 'bg-red-500/20 text-red-400 border-red-500/50' : pendingCount > 0 ? 'bg-white/5 hover:bg-white/10 text-[#F59E0B] border-[#F59E0B]/50' : failedCount > 0 ? 'bg-white/5 hover:bg-white/10 text-orange-400 border-orange-400/50' : 'bg-white/5 hover:bg-white/10 text-[#7AC142] border-white/5'}`} title={!isOnline ? 'Sin conexión' : buttonState.title}>
                 {!isOnline ? <WifiOff size={20} /> : buttonState.icon}
                 {(pendingCount > 0 || failedCount > 0) && (
@@ -405,6 +439,35 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
             <span className={`flex-shrink-0 px-3 py-0.5 rounded-full text-xs font-black border border-white/30 ${trialInfo.daysLeft <= 2 ? 'bg-red-600' : trialInfo.daysLeft <= 5 ? 'bg-orange-600' : 'bg-amber-600'}`}>
               {trialInfo.daysLeft === 0 ? 'Vence hoy' : `${trialInfo.daysLeft} día${trialInfo.daysLeft !== 1 ? 's' : ''} restante${trialInfo.daysLeft !== 1 ? 's' : ''}`}
             </span>
+          </div>
+        )}
+
+        {/* BANNER SUSCRIPCIÓN PRÓXIMA A VENCER (≤7 días, status='active') */}
+        {subscriptionWarning !== null && !subBannerDismissed && (
+          <div className={`px-4 py-2 flex items-center justify-between gap-3 z-20 ${subscriptionWarning.daysLeft <= 2 ? 'bg-red-500' : subscriptionWarning.daysLeft <= 4 ? 'bg-orange-500' : 'bg-amber-500'} text-white animate-in slide-in-from-top duration-300`}>
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <Clock size={15} className="flex-shrink-0" />
+              <span className="text-xs sm:text-sm font-bold truncate">
+                Tu suscripción {subscriptionWarning.daysLeft === 0 ? 'vence hoy' : `vence en ${subscriptionWarning.daysLeft} día${subscriptionWarning.daysLeft !== 1 ? 's' : ''}`}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <a
+                href={renewWaUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 px-3 py-1 rounded-lg text-xs font-black transition-colors"
+              >
+                <MessageCircle size={13} /> Renovar
+              </a>
+              <button
+                onClick={dismissSubBanner}
+                className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/20 transition-colors"
+                aria-label="Cerrar"
+              >
+                <X size={12} />
+              </button>
+            </div>
           </div>
         )}
 
@@ -528,6 +591,12 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
                     </div>
                     
                     <div className="p-6 border-t border-gray-200 bg-white space-y-3">
+                        <button
+                          onClick={() => { setIsMobileMenuOpen(false); setIsBillCounterOpen(true); }}
+                          className="flex items-center justify-center gap-3 text-[#0B3B68] w-full p-4 hover:bg-[#7AC142]/10 rounded-xl font-bold transition-colors border border-[#7AC142]/30 bg-[#7AC142]/5"
+                        >
+                          <Calculator size={20} className="text-[#7AC142]" /> Contador de Efectivo
+                        </button>
                         {multipleStaff && onChangeStaff && (
                           <button
                             onClick={() => { setIsMobileMenuOpen(false); onChangeStaff(); }}
@@ -585,6 +654,12 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
         </div>
       )}
       </div>
+
+      {/* MODAL CONTADOR DE EFECTIVO (global, accesible desde sidebar/menú) */}
+      <BillCounter
+        isOpen={isBillCounterOpen}
+        onClose={() => setIsBillCounterOpen(false)}
+      />
     </div>
   );
 }

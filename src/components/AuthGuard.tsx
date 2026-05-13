@@ -92,10 +92,12 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
     async function checkSessionAndData() {
       try {
-        // AUMENTAMOS EL TIEMPO DE ESPERA A 15 SEGUNDOS (15000ms)
+        // Timeout 8s: si la red está lenta y hay datos locales, el catch nos pasa
+        // a "modo offline forzado" sin bloquear al usuario en una pantalla de loading
+        // durante 15s. En 3G cubano, esto cambia drásticamente la percepción de velocidad.
         const sessionPromise = supabase.auth.getSession();
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout')), 15000)
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout')), 8000)
         );
 
         const { data: sessionData, error: authError } = await Promise.race([sessionPromise, timeoutPromise]) as any;

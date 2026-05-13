@@ -14,7 +14,7 @@ import {
   Download, Upload, Database,
   Users, Plus, Edit2, UserCheck, UserX, X, Lock, DollarSign, CheckCircle2, Clock,
   HelpCircle, ShoppingCart, Package, BarChart2, Settings, UserCircle, ChevronRight, Repeat,
-  ScrollText, Zap, Star, Phone, Mail, MapPin, Info
+  ScrollText, Phone, Mail, MapPin, Info
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { checkForUpdate, type AppVersionInfo } from '../lib/version';
@@ -133,8 +133,10 @@ export function SettingsPage() {
         business_id: businessId,
         sync_status: editingStaff ? 'pending_update' : 'pending_create'
       };
-      await db.staff.put(staffRecord);
-      await addToQueue('STAFF_SYNC', staffRecord);
+      await db.transaction('rw', [db.staff, db.action_queue], async () => {
+        await db.staff.put(staffRecord);
+        await addToQueue('STAFF_SYNC', staffRecord);
+      });
       toast.success(editingStaff ? 'Empleado actualizado' : 'Empleado agregado');
       setShowStaffModal(false);
       syncPush().catch(() => {});
@@ -157,8 +159,10 @@ export function SettingsPage() {
 
     try {
       const updated = { ...staff, active: !staff.active, sync_status: 'pending_update' as const };
-      await db.staff.put(updated);
-      await addToQueue('STAFF_SYNC', updated);
+      await db.transaction('rw', [db.staff, db.action_queue], async () => {
+        await db.staff.put(updated);
+        await addToQueue('STAFF_SYNC', updated);
+      });
       toast.success(updated.active ? 'Empleado activado' : 'Empleado desactivado');
       syncPush().catch(() => {});
     } catch (err) {
@@ -352,39 +356,12 @@ export function SettingsPage() {
       reader.readAsText(file);
   };
 
-  // ── BILLING ────────────────────────────────────────────────────────────────
-  const [billingMeta, setBillingMeta] = useState<{rate: number; paid_until: string | null}>({ rate: 1.0, paid_until: null });
-
-  // Ventas del mes desde Dexie (reactivo — se actualiza al vender)
-  const localMonthSalesTotal = useLiveQuery(async () => {
-    if (!businessId) return 0;
-    const now = new Date();
-    const fromLocal = new Date(now.getFullYear(), now.getMonth(), 1);
-    const toLocal   = new Date(now.getFullYear(), now.getMonth()+1, 1);
-    const allSales = await db.sales.where('business_id').equals(businessId).toArray();
-    return allSales
-      .filter(s => s.status !== 'voided' && new Date(s.date) >= fromLocal && new Date(s.date) < toLocal)
-      .reduce((sum, s) => sum + Number(s.total || 0), 0);
-  }, [businessId]) ?? 0;
-
-  // Solo paid_until desde Supabase (la tasa se calcula automáticamente igual que SuperAdmin)
-  useEffect(() => {
-    if (!businessId) return;
-    supabase.from('billing').select('paid_until').eq('business_id', businessId).maybeSingle()
-      .then(({ data }) => {
-        if (data) setBillingMeta(prev => ({ ...prev, paid_until: data.paid_until ?? null }));
-      })
-      .catch(() => {});
-  }, [businessId]);
-
-  // Tasa auto-calculada: igual lógica que SuperAdmin (≤500k CUP → 1%, >500k CUP → 0.5%)
-  const autoRate = localMonthSalesTotal > 500_000 ? 0.5 : 1.0;
-  const billing = {
-    rate: autoRate,
-    total_sales: localMonthSalesTotal,
-    fee: localMonthSalesTotal * autoRate / 100,
-    paid_until: billingMeta.paid_until,
-  };
+  // ── SUSCRIPCIÓN ────────────────────────────────────────────────────────────
+  const subscriptionDaysLeft = (() => {
+    if (!settings?.subscription_expires_at) return null;
+    const ms = new Date(settings.subscription_expires_at).getTime() - Date.now();
+    return Math.ceil(ms / (1000 * 60 * 60 * 24));
+  })();
   // ──────────────────────────────────────────────────────────────────────────
 
   return (
@@ -466,38 +443,41 @@ export function SettingsPage() {
                         </div>
                     </form>
 
-                    {/* ── CARD FACTURACIÓN ─────────────────────────────── */}
-                    {(() => {
-                      const now = new Date();
-                      const y = now.getFullYear(), m = now.getMonth() + 1;
-                      const lastDay = new Date(y, m, 0).getDate();
-                      const lastDayStr = `${y}-${String(m).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
-                      const billingPaid = !!billing.paid_until && billing.paid_until >= lastDayStr;
+                    {/* ── CARD SUSCRIPCIÓN ─────────────────────────────── */}
+                    {settings?.status === 'active' && (() => {
+                      const days = subscriptionDaysLeft;
+                      const expiry = settings.subscription_expires_at
+                        ? new Date(settings.subscription_expires_at).toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' })
+                        : null;
+                      const isOk = days === null || days > 7;
+                      const isWarning = days !== null && days >= 0 && days <= 7;
+                      const waMsg = encodeURIComponent('Hola, quiero renovar mi suscripción de Bisne con Talla.');
                       return (
-                      <div className={`mt-6 rounded-2xl border p-5 flex items-center gap-4 ${billingPaid ? 'bg-[#7AC142]/5 border-[#7AC142]/20' : billing.fee > 0 ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'}`}>
-                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${billingPaid ? 'bg-[#7AC142]/10 text-[#7AC142]' : billing.fee > 0 ? 'bg-amber-100 text-amber-600' : 'bg-gray-100 text-gray-400'}`}>
-                          <DollarSign size={22}/>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-bold text-[#6B7280] uppercase tracking-wide mb-1">Servicio Bisne con Talla — {now.toLocaleString('es',{month:'long',year:'numeric'})}</p>
-                          <div className="flex flex-wrap gap-x-6 gap-y-1">
-                            <span className="text-sm text-[#1F2937]">Ventas del mes: <strong className="font-black">${billing.total_sales.toFixed(2)}</strong></span>
-                            <span className="text-sm text-[#1F2937]">Tarifa: <strong className="font-black">{billing.rate}%</strong></span>
-                            <span className="text-sm text-[#1F2937]">A pagar: <strong className={`font-black text-base ${billing.fee > 0 ? 'text-amber-600' : 'text-[#6B7280]'}`}>${billing.fee.toFixed(2)}</strong></span>
+                        <div className={`mt-6 rounded-2xl border p-5 flex items-center gap-4 ${isOk ? 'bg-[#7AC142]/5 border-[#7AC142]/20' : isWarning ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200'}`}>
+                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${isOk ? 'bg-[#7AC142]/10 text-[#7AC142]' : isWarning ? 'bg-amber-100 text-amber-600' : 'bg-red-100 text-red-500'}`}>
+                            <CheckCircle2 size={22}/>
                           </div>
-                        </div>
-                        <div className="shrink-0">
-                          {billingPaid ? (
-                            <span className="flex items-center gap-1.5 px-3 py-1.5 bg-[#7AC142]/10 text-[#7AC142] rounded-full text-xs font-black uppercase">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold text-[#6B7280] uppercase tracking-wide mb-1">Suscripción Activa</p>
+                            <p className="text-sm text-[#1F2937] font-medium">
+                              {days === null ? 'Sin fecha de vencimiento asignada' :
+                               days < 0 ? `Venció el ${expiry}` :
+                               days === 0 ? 'Vence hoy' :
+                               `Vence el ${expiry} · ${days} día${days !== 1 ? 's' : ''} restantes`}
+                            </p>
+                          </div>
+                          {isWarning && (
+                            <a href={`https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=${waMsg}`} target="_blank" rel="noopener noreferrer"
+                              className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-[#25D366]/10 text-[#128C7E] border border-[#25D366]/30 rounded-xl text-xs font-bold hover:bg-[#25D366]/20 transition-colors">
+                              Renovar
+                            </a>
+                          )}
+                          {isOk && (
+                            <span className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-[#7AC142]/10 text-[#7AC142] rounded-full text-xs font-black uppercase">
                               <CheckCircle2 size={13}/> Al día
                             </span>
-                          ) : billing.fee > 0 ? (
-                            <span className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 text-amber-700 rounded-full text-xs font-black uppercase">
-                              <Clock size={13}/> Pendiente
-                            </span>
-                          ) : null}
+                          )}
                         </div>
-                      </div>
                       );
                     })()}
 
@@ -909,31 +889,29 @@ export function SettingsPage() {
           <div className="border-2 border-[#0B3B68]/20 bg-[#0B3B68]/03 rounded-2xl p-4 space-y-3">
             <h3 className="font-black text-[#0B3B68] text-sm flex items-center gap-2"><DollarSign size={15}/> 4. Tarifas y Modelo de Cobro</h3>
             <p className="text-sm text-[#4B5563] leading-relaxed">
-              El cobro del servicio se basa en el <strong>volumen mensual de ventas registradas</strong> en la plataforma. El nivel tarifario se detecta automáticamente al cierre de cada mes:
+              El servicio se contrata mediante una <strong>suscripción mensual de tarifa plana</strong>. El monto es acordado con el proveedor al momento del registro y puede variar según el plan negociado con <strong>Agencia Señores</strong>.
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Zap size={16} className="text-blue-600"/>
-                  <span className="font-black text-blue-800 text-sm">Tier Estándar</span>
-                </div>
-                <p className="text-xs text-blue-700 font-bold mb-1">Ventas mensuales hasta $500,000 CUP</p>
-                <p className="text-2xl font-black text-blue-800">1%</p>
-                <p className="text-xs text-blue-600 mt-1">sobre el total de ventas del mes</p>
+            <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 space-y-2">
+              <div className="flex items-center gap-2">
+                <Clock size={16} className="text-indigo-600"/>
+                <span className="font-black text-indigo-800 text-sm">Período de Prueba</span>
               </div>
-              <div className="bg-violet-50 border border-violet-200 rounded-xl p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Star size={16} className="text-violet-600 fill-violet-600"/>
-                  <span className="font-black text-violet-800 text-sm">Tier Plus</span>
-                </div>
-                <p className="text-xs text-violet-700 font-bold mb-1">Ventas mensuales superiores a $500,000 CUP</p>
-                <p className="text-2xl font-black text-violet-800">0.5%</p>
-                <p className="text-xs text-violet-600 mt-1">sobre el total de ventas del mes</p>
-              </div>
+              <p className="text-xs text-indigo-700 leading-relaxed">
+                Todo negocio registrado accede a un período de prueba gratuito de <strong>7 días</strong> para evaluar el sistema sin ningún costo. Al vencer el período, se requiere activar una suscripción para continuar.
+              </p>
             </div>
-            <p className="text-xs text-[#6B7280] mt-2">
-              El monto a pagar se calcula automáticamente y debe abonarse dentro de los primeros <strong>5 días hábiles</strong> del mes siguiente al período facturado. Las ventas anuladas no se incluyen en el cálculo.
-            </p>
+            <ul className="space-y-1.5 text-xs text-[#6B7280]">
+              {[
+                'La suscripción se renueva mensualmente y debe pagarse antes de la fecha de vencimiento para evitar interrupciones.',
+                'Los datos del negocio se conservan íntegros durante la suspensión por falta de pago.',
+                'Para renovar o consultar tarifas vigentes, contacta a Agencia Señores por WhatsApp.',
+              ].map((item, i) => (
+                <li key={i} className="flex gap-2 leading-relaxed">
+                  <CheckCircle2 size={13} className="text-[#7AC142] flex-shrink-0 mt-0.5"/>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
           </div>
 
           {/* Sección 5 — Privacidad y datos */}

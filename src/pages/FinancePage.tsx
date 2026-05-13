@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useOutletContext, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff, type InventoryMovement, type RefundedItem } from '../lib/db';
 import { addToQueue, syncPull, syncPush, isOnline } from '../lib/sync';
@@ -17,8 +17,9 @@ import {
   Calendar, CalendarRange, TrendingUp, ArrowLeft, ArrowRight, RefreshCw,
   BarChart3, DollarSign, Wallet, PieChart as PieChartIcon, ClipboardCheck,
   Printer, Trophy, Lock, Unlock, PlusCircle, MinusCircle, ShoppingBag, Loader2, X,
-  ArrowRightLeft, History, Ban, TrendingDown, Users, Hash, Download, RotateCcw, Package
+  ArrowRightLeft, History, Ban, TrendingDown, Users, Hash, Download, RotateCcw, Package, AlertTriangle, ChevronRight, Calculator
 } from 'lucide-react';
+import { BillCounter } from '../components/BillCounter';
 
 const EMPTY_ARRAY: never[] = [];
 
@@ -44,6 +45,7 @@ const saleMatchesLocalDate = (saleDate: string, localDay: string): boolean =>
 
 export function FinancePage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
+  const navigate = useNavigate();
 
   const isAdmin = currentStaff?.role === 'admin';
 
@@ -70,6 +72,9 @@ export function FinancePage() {
   // Paginación tabla de ventas
   const [salesPage, setSalesPage] = useState(1);
   const SALES_PER_PAGE = 50;
+
+  // Contador de efectivo (al cerrar turno)
+  const [isCashCounterOpen, setIsCashCounterOpen] = useState(false);
 
   // ESTADOS DEL PIN PAD (Incluye 'void_sale' para anular ventas)
   const [pinModal, setPinModal] = useState<{isOpen: boolean, action: 'out' | 'close' | 'void_sale' | null, data?: any}>({isOpen: false, action: null});
@@ -138,6 +143,14 @@ export function FinancePage() {
     if (!bId) return [];
     return await db.products.where('business_id').equals(bId).toArray();
   }, []) || EMPTY_ARRAY;
+
+  // Productos por reponer: stock <= umbral (default 5) y no eliminados
+  const lowStockProducts = useMemo(() => {
+    const LOW_STOCK_DEFAULT = 5;
+    return products
+      .filter(p => !p.deleted_at && p.stock <= (p.low_stock_threshold ?? LOW_STOCK_DEFAULT))
+      .sort((a, b) => a.stock - b.stock);
+  }, [products]);
 
   const allSales = useLiveQuery<Sale[]>(async () => {
     let bId = localStorage.getItem('nexus_business_id');
@@ -1102,6 +1115,56 @@ export function FinancePage() {
             </div>
           )}
 
+          {/* PRODUCTOS POR REPONER */}
+          {isAdmin && lowStockProducts.length > 0 && (
+            <div className="bg-white rounded-2xl shadow-sm border border-red-100 overflow-hidden">
+              <div className="p-4 border-b border-red-100 bg-red-50/60 flex justify-between items-center">
+                <h3 className="font-bold text-[#1F2937] text-sm flex items-center gap-2">
+                  <AlertTriangle size={16} className="text-red-500"/> Por reponer
+                  <span className="text-[10px] bg-red-500 text-white px-2 py-0.5 rounded-full font-black ml-1">{lowStockProducts.length}</span>
+                </h3>
+                <button
+                  onClick={() => navigate('/inventario')}
+                  className="text-[11px] font-bold text-[#0B3B68] hover:text-[#0B3B68]/80 flex items-center gap-1 transition-colors"
+                >
+                  Ver inventario <ChevronRight size={12}/>
+                </button>
+              </div>
+              <div className="max-h-72 overflow-y-auto divide-y divide-gray-100">
+                {lowStockProducts.slice(0, 8).map(p => {
+                  const threshold = p.low_stock_threshold ?? 5;
+                  const isOut = p.stock <= 0;
+                  return (
+                    <div key={p.id} className="p-3 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${isOut ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>
+                          <Package size={16}/>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-bold text-[#1F2937] truncate">{p.name}</p>
+                          <p className="text-[10px] text-[#6B7280]">
+                            {p.sku || 'Sin código'} · Umbral: {threshold} {p.unit || 'un'}
+                          </p>
+                        </div>
+                      </div>
+                      <span className={`flex-shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-black border ${isOut ? 'bg-red-100 text-red-700 border-red-200' : 'bg-amber-100 text-amber-700 border-amber-200'}`}>
+                        {isOut ? 'Agotado' : `${p.stock} ${p.unit || 'un'}`}
+                      </span>
+                    </div>
+                  );
+                })}
+                {lowStockProducts.length > 8 && (
+                  <button
+                    onClick={() => navigate('/inventario')}
+                    className="w-full p-3 text-center text-[11px] font-bold text-[#0B3B68] hover:bg-gray-50 transition-colors"
+                  >
+                    Ver {lowStockProducts.length - 8} producto{lowStockProducts.length - 8 !== 1 ? 's' : ''} más →
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           {shiftStats.staffList.length > 1 && (
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
               <h3 className="font-bold text-[#1F2937] text-sm flex items-center gap-2 mb-4">
@@ -1187,8 +1250,10 @@ export function FinancePage() {
                                               <button
                                                 onClick={async () => {
                                                   try {
-                                                    await db.sales.update(sale.id, { status: 'completed' as any, sync_status: 'pending_update' });
-                                                    await addToQueue('SALE', { sale: { ...sale, status: 'completed', sync_status: 'pending_update' }, items: sale.items || [] });
+                                                    await db.transaction('rw', [db.sales, db.action_queue], async () => {
+                                                      await db.sales.update(sale.id, { status: 'completed' as any, sync_status: 'pending_update' });
+                                                      await addToQueue('SALE', { sale: { ...sale, status: 'completed', sync_status: 'pending_update' }, items: sale.items || [] });
+                                                    });
                                                     toast.success('Venta aceptada. El stock puede quedar negativo — ajústalo manualmente.', { duration: 5000 });
                                                     syncPush().catch(() => {});
                                                   } catch {
@@ -1952,7 +2017,16 @@ export function FinancePage() {
                           </div>
                           <p className="text-[10px] text-blue-400 mt-1">Apertura {formatMoney(ss.startAmount)} + Ventas {formatMoney(ss.cashSales)} + Ingresos {formatMoney(ss.cashIn)} − Retiros {formatMoney(ss.cashOut)}</p>
                       </div>
-                      <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Conteo real de efectivo</label>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-xs font-bold text-[#6B7280] uppercase">Conteo real de efectivo</label>
+                        <button
+                          type="button"
+                          onClick={() => setIsCashCounterOpen(true)}
+                          className="flex items-center gap-1.5 px-2.5 py-1 bg-[#7AC142]/10 hover:bg-[#7AC142]/20 text-[#0B3B68] rounded-lg text-[11px] font-black transition-colors border border-[#7AC142]/30"
+                        >
+                          <Calculator size={12} /> Contar
+                        </button>
+                      </div>
                       <div className="relative">
                         <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6B7280] text-xl font-bold">$</span>
                         <input type="number" step="0.01" autoFocus value={amount} onChange={e => setAmount(e.target.value)} className="w-full pl-10 pr-4 py-3.5 text-2xl font-black border-2 rounded-xl focus:border-[#0B3B68] outline-none transition-colors" placeholder="0.00" />
@@ -2012,6 +2086,14 @@ export function FinancePage() {
       })()}
 
       {selectedTicket && <TicketModal sale={selectedTicket} onClose={() => setSelectedTicket(null)} />}
+
+      {/* CONTADOR DE EFECTIVO (con apply al cierre de turno) */}
+      <BillCounter
+        isOpen={isCashCounterOpen}
+        onClose={() => setIsCashCounterOpen(false)}
+        onApply={(total) => setAmount(total.toFixed(2))}
+        applyLabel="Usar este total"
+      />
     </div>
   );
 }

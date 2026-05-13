@@ -122,9 +122,11 @@ export function InventoryPage() {
 
         if (editingProduct) {
             const updated = { ...editingProduct, ...productData, updated_at: new Date().toISOString(), sync_status: 'pending_update' as const };
-            await db.products.put(updated);
-            await addToQueue('PRODUCT_SYNC', updated);
-            await logAuditAction('UPDATE_PRODUCT', { name: updated.name }, currentStaff);
+            await db.transaction('rw', [db.products, db.action_queue, db.audit_logs], async () => {
+                await db.products.put(updated);
+                await addToQueue('PRODUCT_SYNC', updated);
+                await logAuditAction('UPDATE_PRODUCT', { name: updated.name }, currentStaff);
+            });
             toast.success('Información actualizada');
         } else {
             const newProduct: Product = {
@@ -137,9 +139,11 @@ export function InventoryPage() {
                 updated_at: new Date().toISOString()
             };
 
-            await db.products.add(newProduct);
-            await addToQueue('PRODUCT_SYNC', newProduct);
-            await logAuditAction('CREATE_PRODUCT', { name: newProduct.name }, currentStaff);
+            await db.transaction('rw', [db.products, db.action_queue, db.audit_logs], async () => {
+                await db.products.add(newProduct);
+                await addToQueue('PRODUCT_SYNC', newProduct);
+                await logAuditAction('CREATE_PRODUCT', { name: newProduct.name }, currentStaff);
+            });
             toast.success(`"${newProduct.name}" creado correctamente`);
         }
 
@@ -469,21 +473,25 @@ export function InventoryPage() {
         }
       }
 
-      // Insertar en lotes con bulkAdd
+      // Insertar en lotes con bulkAdd dentro de transacción (atómico bulk + queue)
       let imported = 0;
       for (let i = 0; i < allProducts.length; i += BATCH_SIZE) {
         const batch = allProducts.slice(i, i + BATCH_SIZE);
-        await db.products.bulkAdd(batch);
-        for (const p of batch) await addToQueue('PRODUCT_SYNC', p);
+        await db.transaction('rw', [db.products, db.action_queue], async () => {
+          await db.products.bulkAdd(batch);
+          for (const p of batch) await addToQueue('PRODUCT_SYNC', p);
+        });
         imported += batch.length;
         setImportedCount(imported);
         setImportProgress(Math.round((imported / total) * 100));
       }
 
-      // Movimientos en bulk
+      // Movimientos en bulk dentro de transacción
       if (allMovements.length > 0) {
-        await db.movements.bulkAdd(allMovements);
-        for (const m of allMovements) await addToQueue('MOVEMENT', m);
+        await db.transaction('rw', [db.movements, db.action_queue], async () => {
+          await db.movements.bulkAdd(allMovements);
+          for (const m of allMovements) await addToQueue('MOVEMENT', m);
+        });
       }
 
       await logAuditAction('CREATE_PRODUCT', { action: 'csv_import', count: imported }, currentStaff);
@@ -535,19 +543,21 @@ export function InventoryPage() {
             .count();
 
           const deleted = { ...product, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString(), sync_status: 'pending_update' as const };
-          await db.products.put(deleted);
-          await addToQueue('PRODUCT_SYNC', deleted);
-          await logAuditAction('DELETE_PRODUCT', {
-            product_id: product.id,
-            name: product.name,
-            sku: product.sku,
-            price: product.price,
-            cost: product.cost,
-            stock: product.stock,
-            stock_warehouse: product.stock_warehouse,
-            category: product.category,
-            sales_count: recentSales
-          }, currentStaff);
+          await db.transaction('rw', [db.products, db.action_queue, db.audit_logs], async () => {
+            await db.products.put(deleted);
+            await addToQueue('PRODUCT_SYNC', deleted);
+            await logAuditAction('DELETE_PRODUCT', {
+              product_id: product.id,
+              name: product.name,
+              sku: product.sku,
+              price: product.price,
+              cost: product.cost,
+              stock: product.stock,
+              stock_warehouse: product.stock_warehouse,
+              category: product.category,
+              sales_count: recentSales
+            }, currentStaff);
+          });
 
           toast.success(recentSales > 0
             ? `Producto eliminado (tenía ${recentSales} venta${recentSales > 1 ? 's' : ''} registrada${recentSales > 1 ? 's' : ''})`
