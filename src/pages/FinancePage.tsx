@@ -17,7 +17,7 @@ import {
   Calendar, CalendarRange, TrendingUp, ArrowLeft, ArrowRight, RefreshCw,
   BarChart3, DollarSign, Wallet, PieChart as PieChartIcon, ClipboardCheck,
   Printer, Trophy, Lock, Unlock, PlusCircle, MinusCircle, ShoppingBag, Loader2, X,
-  ArrowRightLeft, History, Ban, TrendingDown, Users, Hash, Download, RotateCcw, Package, AlertTriangle, ChevronRight, Calculator
+  ArrowRightLeft, History, Ban, TrendingDown, Users, Hash, Download, RotateCcw, Package, AlertTriangle, ChevronRight, Calculator, Clock
 } from 'lucide-react';
 import { BillCounter } from '../components/BillCounter';
 import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
@@ -151,6 +151,19 @@ export function FinancePage() {
     return products
       .filter(p => !p.deleted_at && p.stock <= (p.low_stock_threshold ?? LOW_STOCK_DEFAULT))
       .sort((a, b) => a.stock - b.stock);
+  }, [products]);
+
+  // Productos próximos a vencer (vencidos o ≤30 días) con stock > 0
+  const expiringProducts = useMemo(() => {
+    const now = Date.now();
+    return products
+      .filter(p => !p.deleted_at && p.expiration_date && p.stock > 0)
+      .map(p => {
+        const days = Math.ceil((new Date(p.expiration_date!).getTime() - now) / 86400000);
+        return { ...p, daysToExpiry: days };
+      })
+      .filter(p => p.daysToExpiry <= 30)
+      .sort((a, b) => a.daysToExpiry - b.daysToExpiry);
   }, [products]);
 
   const allSales = useLiveQuery<Sale[]>(async () => {
@@ -820,23 +833,54 @@ export function FinancePage() {
           }
         }
 
-        // 4. Actualizar venta con items devueltos (usa existingRefunds del freshSale)
+        // 4. Detectar si esta devolución cubre TODAS las unidades vendidas (devolución total)
         const allRefunds = [...existingRefunds, ...refundedItems];
+        const originalItems = freshSale.items || [];
+        const isFullRefund = originalItems.every(orig => {
+          const refundedQty = allRefunds
+            .filter(r => r.product_id === orig.product_id)
+            .reduce((s, r) => s + r.quantity, 0);
+          return refundedQty >= orig.quantity;
+        });
+
+        // 5. Actualizar venta con items devueltos
+        // - Si fue devolución total → status='voided' (no cuenta para totales/reportes)
+        // - Si parcial → status='partial_refund' (sigue contando lo no devuelto)
         await db.sales.update(refundSale.id, {
-          status: 'partial_refund',
+          status: isFullRefund ? 'voided' : 'partial_refund',
           refunded_items: allRefunds,
           sync_status: 'pending_update'
         });
         await addToQueue('PARTIAL_REFUND', { saleId: refundSale.id, refunded_items: allRefunds });
+        if (isFullRefund) {
+          // También enviar VOID_SALE para que el servidor refleje la anulación completa
+          await addToQueue('VOID_SALE', { saleId: refundSale.id });
+        }
 
-        // 5. Audit
-        await logAuditAction('PARTIAL_REFUND', {
+        // 6. Audit
+        await logAuditAction(isFullRefund ? 'VOID_SALE' : 'PARTIAL_REFUND', {
           sale_id: refundSale.id, refund_amount: refundTotal,
-          items: refundedItems.map(i => `${i.name} x${i.quantity}`)
+          items: refundedItems.map(i => `${i.name} x${i.quantity}`),
+          full_refund: isFullRefund || undefined,
         }, staffPayload as any);
       });
 
-      toast.success(`Devolución de ${currency.format(refundTotal)} procesada`);
+      // Mensaje contextual
+      const wasFull = (() => {
+        const remainingByProduct: Record<string, number> = {};
+        (refundSale.items || []).forEach(item => {
+          const alreadyRefunded = (refundSale.refunded_items || [])
+            .filter(r => r.product_id === item.product_id)
+            .reduce((s, r) => s + r.quantity, 0);
+          remainingByProduct[item.product_id] = item.quantity - alreadyRefunded;
+        });
+        const totalRemaining = Object.values(remainingByProduct).reduce((s, n) => s + n, 0);
+        const totalSelected = Object.entries(refundSelections).reduce((s, [pid, qty]) => s + Math.min(qty, remainingByProduct[pid] || 0), 0);
+        return totalSelected > 0 && totalSelected === totalRemaining;
+      })();
+      toast.success(wasFull
+        ? `Venta anulada — devolución total de ${currency.format(refundTotal)}`
+        : `Devolución de ${currency.format(refundTotal)} procesada`);
       setRefundSale(null);
       syncPush().catch(() => {});
     } catch (error) {
@@ -1155,6 +1199,66 @@ export function FinancePage() {
               </div>
             </div>
           )}
+
+          {/* PRODUCTOS PRÓXIMOS A VENCER */}
+          {isAdmin && expiringProducts.length > 0 && (() => {
+            const expiredCount = expiringProducts.filter(p => p.daysToExpiry < 0).length;
+            return (
+              <div className="bg-white rounded-2xl shadow-sm border border-orange-100 overflow-hidden">
+                <div className="p-4 border-b border-orange-100 bg-orange-50/60 flex justify-between items-center">
+                  <h3 className="font-bold text-[#1F2937] text-sm flex items-center gap-2">
+                    <Clock size={16} className="text-orange-500"/> Próximos a vencer
+                    <span className={`text-[10px] text-white px-2 py-0.5 rounded-full font-black ml-1 ${expiredCount > 0 ? 'bg-red-500' : 'bg-orange-500'}`}>
+                      {expiringProducts.length}
+                    </span>
+                  </h3>
+                  <button
+                    onClick={() => navigate('/inventario')}
+                    className="text-[11px] font-bold text-[#0B3B68] hover:text-[#0B3B68]/80 flex items-center gap-1 transition-colors"
+                  >
+                    Ver inventario <ChevronRight size={12}/>
+                  </button>
+                </div>
+                <div className="max-h-72 overflow-y-auto divide-y divide-gray-100">
+                  {expiringProducts.slice(0, 8).map(p => {
+                    const d = p.daysToExpiry;
+                    const isExpired = d < 0;
+                    const isUrgent = !isExpired && d <= 7;
+                    const cls = isExpired ? 'bg-red-100 text-red-600' : isUrgent ? 'bg-orange-100 text-orange-600' : 'bg-amber-100 text-amber-600';
+                    const badge = isExpired ? 'bg-red-100 text-red-700 border-red-200' : isUrgent ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-amber-100 text-amber-700 border-amber-200';
+                    const label = isExpired ? `Vencido hace ${Math.abs(d)}d` : d === 0 ? 'Vence hoy' : `${d} día${d !== 1 ? 's' : ''}`;
+                    const dateLabel = p.expiration_date ? new Date(p.expiration_date).toLocaleDateString('es-CU', { day: '2-digit', month: 'short' }) : '';
+                    return (
+                      <div key={p.id} className="p-3 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors">
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${cls}`}>
+                            <Clock size={16}/>
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-bold text-[#1F2937] truncate">{p.name}</p>
+                            <p className="text-[10px] text-[#6B7280]">
+                              Stock: {p.stock} {p.unit || 'un'} · {dateLabel}
+                            </p>
+                          </div>
+                        </div>
+                        <span className={`flex-shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-black border ${badge}`}>
+                          {label}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {expiringProducts.length > 8 && (
+                    <button
+                      onClick={() => navigate('/inventario')}
+                      className="w-full p-3 text-center text-[11px] font-bold text-[#0B3B68] hover:bg-gray-50 transition-colors"
+                    >
+                      Ver {expiringProducts.length - 8} producto{expiringProducts.length - 8 !== 1 ? 's' : ''} más →
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {shiftStats.staffList.length > 1 && (
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
@@ -1858,17 +1962,49 @@ export function FinancePage() {
         </div>
       )}
 
-      {/* MODAL DEVOLUCIÓN PARCIAL */}
-      {refundSale && (
+      {/* MODAL DEVOLUCIÓN (parcial o total) */}
+      {refundSale && (() => {
+        // Detectar si la selección actual cubre TODA la venta (devolución total)
+        const remainingByProduct: Record<string, number> = {};
+        (refundSale.items || []).forEach(item => {
+          const alreadyRefunded = (refundSale.refunded_items || [])
+            .filter(r => r.product_id === item.product_id)
+            .reduce((s, r) => s + r.quantity, 0);
+          remainingByProduct[item.product_id] = item.quantity - alreadyRefunded;
+        });
+        const totalRemaining = Object.values(remainingByProduct).reduce((s, n) => s + n, 0);
+        const totalSelected = Object.entries(refundSelections).reduce((s, [pid, qty]) => s + Math.min(qty, remainingByProduct[pid] || 0), 0);
+        const isTotalRefund = totalSelected > 0 && totalSelected === totalRemaining;
+
+        const selectAllForRefund = () => {
+          const newSelections: Record<string, number> = {};
+          Object.entries(remainingByProduct).forEach(([pid, max]) => {
+            newSelections[pid] = max;
+          });
+          setRefundSelections(newSelections);
+        };
+
+        return (
         <div className="fixed inset-0 bg-[#0B3B68]/70 z-[90] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white rounded-3xl w-full max-w-md max-h-[92vh] flex flex-col overflow-hidden shadow-2xl">
             {/* Header */}
-            <div className="p-4 bg-amber-50 border-b border-amber-100 flex justify-between items-center flex-shrink-0">
+            <div className={`p-4 border-b flex justify-between items-center flex-shrink-0 ${isTotalRefund ? 'bg-red-50 border-red-100' : 'bg-amber-50 border-amber-100'}`}>
               <div>
-                <h2 className="text-lg font-black text-amber-800 flex items-center gap-2"><RotateCcw size={18}/> Devolución Parcial</h2>
-                <p className="text-xs text-amber-600 font-mono">Venta #{refundSale.id.slice(0, 8).toUpperCase()}</p>
+                <h2 className={`text-lg font-black flex items-center gap-2 ${isTotalRefund ? 'text-red-800' : 'text-amber-800'}`}>
+                  <RotateCcw size={18}/> {isTotalRefund ? 'Devolución Total' : 'Devolución Parcial'}
+                </h2>
+                <p className={`text-xs font-mono ${isTotalRefund ? 'text-red-600' : 'text-amber-600'}`}>Venta #{refundSale.id.slice(0, 8).toUpperCase()}</p>
               </div>
-              <button onClick={() => setRefundSale(null)} className="p-1.5 text-amber-400 hover:text-amber-700 hover:bg-amber-100 rounded-full transition-colors"><X size={18}/></button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={selectAllForRefund}
+                  className="px-3 py-1.5 text-[11px] font-black bg-red-500 text-white hover:bg-red-600 rounded-lg transition-colors shadow-sm"
+                  title="Marcar todas las unidades para devolver"
+                >
+                  Todo
+                </button>
+                <button onClick={() => setRefundSale(null)} className={`p-1.5 rounded-full transition-colors ${isTotalRefund ? 'text-red-400 hover:text-red-700 hover:bg-red-100' : 'text-amber-400 hover:text-amber-700 hover:bg-amber-100'}`}><X size={18}/></button>
+              </div>
             </div>
 
             {/* Items */}
@@ -1935,9 +2071,11 @@ export function FinancePage() {
             {/* Footer */}
             <div className="p-4 border-t border-gray-200 flex-shrink-0 space-y-3 bg-white">
               {refundTotal > 0 && (
-                <div className="flex justify-between items-center bg-amber-50 border border-amber-200 rounded-xl p-3">
-                  <span className="text-sm font-bold text-amber-800">Total a reembolsar</span>
-                  <span className="text-xl font-black text-amber-700">{currency.format(refundTotal)}</span>
+                <div className={`flex justify-between items-center rounded-xl p-3 border ${isTotalRefund ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
+                  <span className={`text-sm font-bold ${isTotalRefund ? 'text-red-800' : 'text-amber-800'}`}>
+                    {isTotalRefund ? 'Reembolso total' : 'Total a reembolsar'}
+                  </span>
+                  <span className={`text-xl font-black ${isTotalRefund ? 'text-red-700' : 'text-amber-700'}`}>{currency.format(refundTotal)}</span>
                 </div>
               )}
               <div className="flex gap-3">
@@ -1949,15 +2087,16 @@ export function FinancePage() {
                     setPinModal({ isOpen: true, action: 'partial_refund' as any, data: refundSale });
                   }}
                   disabled={refundTotal <= 0}
-                  className="flex-1 py-3 bg-amber-500 text-white font-bold rounded-xl hover:bg-amber-600 transition-colors shadow-lg shadow-amber-200 disabled:opacity-50 flex items-center justify-center gap-2"
+                  className={`flex-1 py-3 text-white font-bold rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-2 ${isTotalRefund ? 'bg-red-500 hover:bg-red-600 shadow-lg shadow-red-200' : 'bg-amber-500 hover:bg-amber-600 shadow-lg shadow-amber-200'}`}
                 >
-                  <RotateCcw size={16}/> Proceder
+                  <RotateCcw size={16}/> {isTotalRefund ? 'Devolver TODO' : 'Proceder'}
                 </button>
               </div>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* MODAL MOVIMIENTOS */}
       {movementType && (

@@ -1,0 +1,145 @@
+/**
+ * Funciones puras de resolución de sincronización.
+ *
+ * Estas funciones contienen la lógica crítica del motor de sync extraída
+ * en forma pura (sin side effects ni dependencias de Dexie/Supabase) para
+ * poder testearse aisladamente.
+ *
+ * El motor en `sync.ts` las consume.
+ */
+
+interface SyncableItem {
+  id: string;
+  sync_status?: string;
+  updated_at?: string;
+}
+
+/**
+ * Decide si un item remoto debe sobrescribir al local durante un pull.
+ *
+ * Regla:
+ * - Si el local NO está dirty (synced) → siempre sobrescribir
+ * - Si el local está dirty y el remoto es estrictamente más nuevo (updated_at) → sobrescribir
+ * - Si el local está dirty y es más nuevo o igual → preservar local
+ *
+ * Esto resuelve el bug donde edits pending locales bloqueaban actualizaciones
+ * legítimas de otros dispositivos: el `updated_at` del remoto refleja el
+ * último estado conocido por el servidor, así que si es más nuevo, ganaste tú
+ * en otro dispositivo y este local pending está atrás.
+ */
+export function shouldOverwriteLocal<T extends SyncableItem>(
+  remote: T,
+  local: T | undefined,
+): boolean {
+  if (!local) return true;
+  if (!local.sync_status || local.sync_status === 'synced') return true;
+
+  const remoteAt = local.updated_at && remote.updated_at
+    ? new Date(remote.updated_at).getTime()
+    : 0;
+  const localAt = local.updated_at
+    ? new Date(local.updated_at).getTime()
+    : 0;
+
+  return remoteAt > localAt;
+}
+
+/**
+ * Filtra un lote de items remotos para conservar solo aquellos que pueden
+ * sobrescribir al local con seguridad.
+ */
+export function filterRemoteItemsForBulkPut<T extends SyncableItem>(
+  remoteItems: T[],
+  localDirty: T[],
+): T[] {
+  if (localDirty.length === 0) return remoteItems;
+  const localDirtyMap = new Map<string, T>(localDirty.map(i => [i.id, i]));
+  return remoteItems.filter(remote => shouldOverwriteLocal(remote, localDirtyMap.get(remote.id)));
+}
+
+/**
+ * Calcula el delay del backoff exponencial para un item de cola fallido.
+ *
+ * Secuencia: 30s → 60s → 2min → 4min → 5min (max)
+ *
+ * @param retries Número de intentos previos (1, 2, 3, ...)
+ * @returns ms a esperar desde el último intento
+ */
+export function computeBackoffMs(retries: number): number {
+  if (retries <= 0) return 0;
+  const ms = Math.pow(2, retries - 1) * 30_000;
+  return Math.min(ms, 300_000); // 5 min máx
+}
+
+/**
+ * Determina si un item de cola está listo para reintentarse según su backoff.
+ *
+ * @param retries Número de intentos previos del item
+ * @param lastAttemptTs Timestamp (ms) del último intento (típicamente item.timestamp)
+ * @param now Timestamp actual (default: Date.now())
+ */
+export function isReadyToRetry(
+  retries: number,
+  lastAttemptTs: number,
+  now: number = Date.now(),
+): boolean {
+  if (retries === 0) return true; // primer intento, no hay backoff
+  const required = computeBackoffMs(retries);
+  return (now - lastAttemptTs) >= required;
+}
+
+interface SaleItem {
+  product_id: string;
+  quantity: number;
+}
+
+interface ProductSnapshot {
+  stock: number;
+  deleted_at?: string | null;
+}
+
+/**
+ * Determina si una venta marcada como `stock_conflict` puede auto-resolverse
+ * porque ahora hay stock suficiente para todos sus items.
+ *
+ * @param items Items de la venta
+ * @param getProduct Función que retorna el snapshot del producto, o null si no existe
+ */
+export function canResolveStockConflict(
+  items: SaleItem[],
+  getProduct: (productId: string) => ProductSnapshot | null | undefined,
+): boolean {
+  if (!items || items.length === 0) return false;
+  for (const item of items) {
+    const product = getProduct(item.product_id);
+    if (!product) return false;
+    if (product.deleted_at) return false;
+    if ((product.stock ?? 0) < item.quantity) return false;
+  }
+  return true;
+}
+
+/**
+ * Etiquetas legibles para los tipos de operación en la cola.
+ * Exportadas para reutilización en UI (badges, toasts) y en sync.ts.
+ */
+export const QUEUE_TYPE_LABELS: Record<string, string> = {
+  SALE: 'Venta',
+  PRODUCT_SYNC: 'Producto',
+  CUSTOMER_SYNC: 'Cliente',
+  MOVEMENT: 'Movimiento',
+  AUDIT: 'Auditoría',
+  SETTINGS_SYNC: 'Configuración',
+  SHIFT: 'Turno',
+  CASH_MOVEMENT: 'Mov. Caja',
+  STAFF_SYNC: 'Empleado',
+  VOID_SALE: 'Anulación',
+  PARTIAL_REFUND: 'Devolución',
+  LOYALTY_CHANGE: 'Puntos de Lealtad',
+};
+
+export const RETRY_CONFIG = {
+  MAX_RETRIES: 5,
+  BACKOFF_BASE_MS: 30_000,
+  BACKOFF_MAX_MS: 300_000,
+};

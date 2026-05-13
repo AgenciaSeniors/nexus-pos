@@ -17,6 +17,13 @@ import {
 } from './db';
 import { supabase } from './supabase';
 import type { Table } from 'dexie';
+import {
+  filterRemoteItemsForBulkPut,
+  isReadyToRetry,
+  canResolveStockConflict,
+  QUEUE_TYPE_LABELS,
+  RETRY_CONFIG,
+} from './syncResolution';
 
 // ─── LAST SYNC TIMESTAMP ──────────────────────────────────────────────────────
 // Permite a la UI saber cuándo fue la última sincronización exitosa.
@@ -255,11 +262,8 @@ async function _runQueue() {
 
   for (const item of pendingItems) {
     // Backoff exponencial: el timestamp se actualiza en cada reintento,
-    // así persiste incluso si la app se cierra y reabre.
-    if (item.retries > 0) {
-      const backoffMs = Math.min(Math.pow(2, item.retries - 1) * 30000, 300000); // 30s, 60s, 2m, 4m, máx 5m
-      if (Date.now() - item.timestamp < backoffMs) continue;
-    }
+    // así persiste incluso si la app se cierra y reabre. (Lógica en syncResolution.ts)
+    if (!isReadyToRetry(item.retries, item.timestamp)) continue;
 
     processedCount++;
 
@@ -273,16 +277,10 @@ async function _runQueue() {
 
       console.error(`❌ Fallo ítem ${item.type} (${item.id}):`, errorMessage);
 
-      if (newRetries >= 5) {
+      if (newRetries >= RETRY_CONFIG.MAX_RETRIES) {
           await db.action_queue.update(item.id, { status: 'failed', error: `ABANDONADO: ${errorMessage}` });
-          const typeLabels: Record<string, string> = {
-            SALE: 'Venta', PRODUCT_SYNC: 'Producto', CUSTOMER_SYNC: 'Cliente',
-            MOVEMENT: 'Movimiento', AUDIT: 'Auditoría', SETTINGS_SYNC: 'Configuración',
-            SHIFT: 'Turno', CASH_MOVEMENT: 'Mov. Caja', STAFF_SYNC: 'Empleado', VOID_SALE: 'Anulación',
-            LOYALTY_CHANGE: 'Puntos de Lealtad'
-          };
           window.dispatchEvent(new CustomEvent('nexus-sync-failed', {
-            detail: { type: typeLabels[item.type] || item.type, error: errorMessage }
+            detail: { type: QUEUE_TYPE_LABELS[item.type] || item.type, error: errorMessage }
           }));
       } else {
           // timestamp actualizado = persistencia del backoff (sobrevive cierre de app)
@@ -310,17 +308,7 @@ async function _runQueue() {
 async function safeBulkPut<T extends { id: string; sync_status?: string; updated_at?: string }>(table: Table<T, string>, items: T[]) {
   // Cargar items locales dirty con su updated_at
   const localDirty = await table.filter(i => i.sync_status !== undefined && i.sync_status !== 'synced').toArray();
-  const localDirtyMap = new Map<string, T>(localDirty.map(i => [i.id, i]));
-
-  const safeItems = items.filter(remote => {
-    const local = localDirtyMap.get(remote.id);
-    if (!local) return true; // no hay conflicto, sobrescribir
-    // Hay conflicto: comparar updated_at. Si el remoto es más nuevo (estrictamente), sobrescribir.
-    const remoteAt = remote.updated_at ? new Date(remote.updated_at).getTime() : 0;
-    const localAt = local.updated_at ? new Date(local.updated_at).getTime() : 0;
-    return remoteAt > localAt;
-  });
-
+  const safeItems = filterRemoteItemsForBulkPut(items, localDirty);
   if (safeItems.length > 0) {
     await table.bulkPut(safeItems);
   }
@@ -341,13 +329,16 @@ async function autoResolveStockConflicts(businessId: string) {
     if (conflictedSales.length === 0) return;
 
     for (const sale of conflictedSales) {
-      // Verificar que todos los items tengan stock suficiente ahora
-      let canResolve = true;
-      for (const item of (sale.items || [])) {
-        const product = await db.products.get(item.product_id);
-        if (!product || product.deleted_at) { canResolve = false; break; }
-        if ((product.stock ?? 0) < item.quantity) { canResolve = false; break; }
+      // Precargar productos referenciados (un solo round trip por venta)
+      const productIds = (sale.items || []).map(i => i.product_id);
+      const productSnapshots = new Map<string, { stock: number; deleted_at?: string | null }>();
+      for (const pid of productIds) {
+        const p = await db.products.get(pid);
+        if (p) productSnapshots.set(pid, { stock: p.stock ?? 0, deleted_at: p.deleted_at });
       }
+
+      // Lógica de resolución delegada a función pura (testeable, ver syncResolution.ts)
+      const canResolve = canResolveStockConflict(sale.items || [], pid => productSnapshots.get(pid));
 
       if (canResolve) {
         await db.transaction('rw', [db.sales, db.action_queue], async () => {

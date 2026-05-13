@@ -12,7 +12,7 @@ import { CustomerSelect } from '../components/CustomerSelect';
 import {
   PauseCircle, ClipboardList, Search, Barcode, Keyboard, AlertTriangle,
   Plus, Minus, X, Lock, ShoppingCart, ChevronRight, Package, Trash2, Edit3,
-  Tag, ArrowLeftRight, RefreshCw
+  Tag, ArrowLeftRight, RefreshCw, Clock
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -135,6 +135,35 @@ export function PosPage() {
     const matchCat = selectedCategory === 'Todo' || p.category === selectedCategory;
     return matchQuery && matchCat;
   }), [products, query, selectedCategory]);
+
+  // --- VENCIMIENTOS PRÓXIMOS ---
+  // Productos vencidos o que vencen ≤7 días — para banner de alerta
+  const expiringProducts = useMemo(() => {
+    const now = Date.now();
+    return products
+      .filter(p => p.expiration_date && p.stock > 0)
+      .map(p => {
+        const days = Math.ceil((new Date(p.expiration_date!).getTime() - now) / 86400000);
+        return { ...p, daysToExpiry: days };
+      })
+      .filter(p => p.daysToExpiry <= 7)
+      .sort((a, b) => a.daysToExpiry - b.daysToExpiry);
+  }, [products]);
+
+  const [expBannerDismissed, setExpBannerDismissed] = useState(() =>
+    sessionStorage.getItem('nexus_exp_banner_dismissed') === '1'
+  );
+  const dismissExpBanner = () => {
+    sessionStorage.setItem('nexus_exp_banner_dismissed', '1');
+    setExpBannerDismissed(true);
+  };
+
+  // Mapa rápido id → días para mostrar badge en cada card
+  const expiringMap = useMemo(() => {
+    const m = new Map<string, number>();
+    expiringProducts.forEach(p => m.set(p.id, p.daysToExpiry));
+    return m;
+  }, [expiringProducts]);
 
   // Reset página al cambiar filtros
   useEffect(() => { setProductsPage(1); }, [query, selectedCategory]);
@@ -493,6 +522,40 @@ export function PosPage() {
           </div>
         )}
 
+        {/* Banner de productos próximos a vencer (≤7 días) */}
+        {!expBannerDismissed && expiringProducts.length > 0 && (() => {
+          const expired = expiringProducts.filter(p => p.daysToExpiry < 0).length;
+          const urgent = expiringProducts.filter(p => p.daysToExpiry >= 0 && p.daysToExpiry <= 3).length;
+          const isCritical = expired > 0;
+          const isUrgent = !isCritical && urgent > 0;
+          const bg = isCritical ? 'bg-red-50 border-red-200 text-red-700'
+            : isUrgent ? 'bg-orange-50 border-orange-200 text-orange-700'
+            : 'bg-amber-50 border-amber-200 text-amber-700';
+          const samples = expiringProducts.slice(0, 3).map(p =>
+            p.daysToExpiry < 0 ? `${p.name} (vencido)`
+            : p.daysToExpiry === 0 ? `${p.name} (hoy)`
+            : `${p.name} (${p.daysToExpiry}d)`
+          ).join(', ');
+          return (
+            <div className={`border-b px-4 py-2 flex items-center gap-2 text-xs font-medium ${bg}`}>
+              <AlertTriangle size={14} className="flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <span className="font-bold">
+                  {expired > 0 ? `${expired} vencido${expired !== 1 ? 's' : ''}` : `${expiringProducts.length} por vencer`}:
+                </span>
+                <span className="ml-1 truncate">{samples}{expiringProducts.length > 3 ? '...' : ''}</span>
+              </div>
+              <button
+                onClick={dismissExpBanner}
+                className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors flex-shrink-0"
+                aria-label="Cerrar"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          );
+        })()}
+
         {/* Barra Superior */}
         <div className="p-4 bg-surface border-b border-gray-200 sticky top-0 z-10 shadow-sm flex flex-col gap-3">
             <div className="flex gap-2 items-center">
@@ -628,15 +691,27 @@ export function PosPage() {
                         >
                             <div className="absolute top-0 left-0 w-1 h-full bg-talla-growth opacity-0 group-hover:opacity-100 transition-opacity"></div>
                             <div className="w-full mb-3">
-                                <div className="flex justify-between items-start mb-1">
-                                    <span className="text-[10px] font-bold uppercase text-text-secondary bg-gray-100 px-2 py-0.5 rounded-md truncate max-w-[70%] font-heading">
+                                <div className="flex justify-between items-start mb-1 gap-1">
+                                    <span className="text-[10px] font-bold uppercase text-text-secondary bg-gray-100 px-2 py-0.5 rounded-md truncate flex-1 font-heading">
                                         {product.category || 'General'}
                                     </span>
-                                    {product.stock <= (product.low_stock_threshold ?? 5) && (
-                                        <div className="text-state-warning flex items-center gap-1 bg-state-warning/10 px-1.5 py-0.5 rounded text-[10px] font-bold">
-                                            <AlertTriangle size={10} /> Bajo
-                                        </div>
-                                    )}
+                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                      {expiringMap.has(product.id) && (() => {
+                                        const d = expiringMap.get(product.id)!;
+                                        const cls = d < 0 ? 'bg-red-100 text-red-700' : d <= 3 ? 'bg-orange-100 text-orange-700' : 'bg-amber-100 text-amber-700';
+                                        const label = d < 0 ? 'Vencido' : d === 0 ? 'Hoy' : `${d}d`;
+                                        return (
+                                          <div className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold ${cls}`} title={`Vence ${d < 0 ? 'hace ' + Math.abs(d) + ' día(s)' : 'en ' + d + ' día(s)'}`}>
+                                            <Clock size={9} /> {label}
+                                          </div>
+                                        );
+                                      })()}
+                                      {product.stock <= (product.low_stock_threshold ?? 5) && (
+                                          <div className="text-state-warning flex items-center gap-1 bg-state-warning/10 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                                              <AlertTriangle size={10} /> Bajo
+                                          </div>
+                                      )}
+                                    </div>
                                 </div>
                                 <h3 className="font-bold text-bisne-navy text-sm md:text-base leading-tight line-clamp-2 h-10 font-heading">
                                     {product.name}
