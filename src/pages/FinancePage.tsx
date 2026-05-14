@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { BillCounter } from '../components/BillCounter';
 import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
+import { computeVoidDelta } from '../lib/saleRefund';
 
 const EMPTY_ARRAY: never[] = [];
 
@@ -693,6 +694,21 @@ export function FinancePage() {
               const freshSale = await db.sales.get(sale.id);
               if (!freshSale || freshSale.status === 'voided') throw new Error('Esta venta ya fue anulada.');
 
+              // === FIX DOBLE REEMBOLSO ===
+              // Si la venta tuvo devoluciones parciales previas, NO debemos volver a devolver
+              // lo que ya se devolvió. La lógica vive en lib/saleRefund.ts (testeable).
+              const voidDelta = computeVoidDelta(
+                  safeFloat(freshSale.total),
+                  freshSale.items || [],
+                  freshSale.refunded_items || [],
+              );
+              const {
+                  pendingAmount,
+                  alreadyRefundedAmount: refundedAmount,
+                  pendingQtyByProduct,
+                  pointsToRevertNow,
+              } = voidDelta;
+
               // 1. Marcar venta como anulada
               await db.sales.update(sale.id, { status: 'voided', sync_status: 'pending_update' });
               await addToQueue('VOID_SALE', { saleId: sale.id });
@@ -701,10 +717,9 @@ export function FinancePage() {
               if (sale.customer_id) {
                   const customer = await db.customers.get(sale.customer_id);
                   if (customer) {
-                      // Quitar puntos ganados en esta venta y devolver los canjeados
-                      const pointsEarned = Math.floor(safeFloat(sale.total) / 10);
+                      // pointsToRevertNow ya descuenta lo revertido por partials previos
                       const pointsRedeemed = sale.redeemed_points || 0;
-                      const delta = -pointsEarned + pointsRedeemed; // negativo = quita puntos ganados
+                      const delta = -pointsToRevertNow + pointsRedeemed; // canjeados vuelven al cliente
                       await db.customers.update(sale.customer_id, {
                           loyalty_points: Math.max(0, (customer.loyalty_points || 0) + delta),
                           sync_status: 'pending_update'
@@ -720,18 +735,21 @@ export function FinancePage() {
                   }
               }
 
-              // 3. Devolver stock de cada producto
-              for (const item of (sale.items || [])) {
-                  const product = await db.products.get(item.product_id);
+              // 3. Devolver stock SOLO de la cantidad pendiente (no la ya devuelta en partials)
+              for (const [productId, pendingQty] of Object.entries(pendingQtyByProduct)) {
+                  const product = await db.products.get(productId);
                   if (product) {
-                      const newStock = product.stock + item.quantity;
+                      const newStock = product.stock + pendingQty;
                       const nowVoid = new Date().toISOString();
                       await db.products.update(product.id, { stock: newStock, updated_at: nowVoid, sync_status: 'pending_update' });
                       await addToQueue('PRODUCT_SYNC', { ...product, stock: newStock, updated_at: nowVoid, sync_status: 'pending_update' });
 
                       const mov: InventoryMovement = {
                           id: crypto.randomUUID(), business_id: safeBid, product_id: product.id,
-                          qty_change: item.quantity, reason: `Devolución - Venta #${sale.id.slice(0,6)}`,
+                          qty_change: pendingQty,
+                          reason: refundedAmount > 0
+                              ? `Anulación (resto) - Venta #${sale.id.slice(0,6)}`
+                              : `Anulación - Venta #${sale.id.slice(0,6)}`,
                           created_at: new Date().toISOString(), staff_id: sId, sync_status: 'pending_create'
                       };
                       await db.movements.add(mov);
@@ -739,19 +757,34 @@ export function FinancePage() {
                   }
               }
 
-              // 3. Si la venta es de un turno ANTERIOR, registrar retiro de caja en el turno actual
-              if (activeShift && sale.shift_id !== activeShift.id && ['efectivo', 'mixto'].includes(sale.payment_method)) {
+              // 4. Movimiento de caja por el monto PENDIENTE (no por el total).
+              // - Si la venta es del turno actual, no hace falta movimiento porque al cambiar
+              //   a 'voided' deja de contar en cashSales. Pero los cash_movements de refunds
+              //   parciales previos SÍ quedan registrados → caja resultaría con saldo negativo.
+              //   Compensamos con un IN equivalente al ya pagado en partials de este turno.
+              // - Si la venta es de un turno anterior, hacemos OUT por el monto pendiente.
+              if (pendingAmount > 0 && activeShift && sale.shift_id !== activeShift.id
+                  && ['efectivo', 'mixto'].includes(sale.payment_method)) {
+                  // Venta de turno previo: reembolsar el pendiente en este turno
                   const cashMov: CashMovement = {
                       id: crypto.randomUUID(), shift_id: activeShift.id, business_id: safeBid, type: 'out',
-                      amount: sale.total, reason: `Reembolso Venta Anterior #${sale.id.slice(0,6)}`,
+                      amount: pendingAmount,
+                      reason: refundedAmount > 0
+                          ? `Anulación (resto) Venta Anterior #${sale.id.slice(0,6)}`
+                          : `Reembolso Venta Anterior #${sale.id.slice(0,6)}`,
                       staff_id: sId, created_at: new Date().toISOString(), sync_status: 'pending_create'
                   };
                   await db.cash_movements.add(cashMov);
                   await addToQueue('CASH_MOVEMENT', cashMov);
               }
 
-              // 4. Log
-              await logAuditAction('VOID_SALE', { sale_id: sale.id, amount: sale.total }, { id: sId, name: currentStaff?.name || 'Admin', business_id: safeBid } as any);
+              // 5. Log
+              await logAuditAction('VOID_SALE', {
+                  sale_id: sale.id,
+                  amount: sale.total,
+                  pending_refund: pendingAmount,
+                  already_refunded: refundedAmount,
+              }, { id: sId, name: currentStaff?.name || 'Admin', business_id: safeBid } as any);
           });
           toast.success("Venta anulada y stock restaurado");
           syncPush().catch(()=>{});
