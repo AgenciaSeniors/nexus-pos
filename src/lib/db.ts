@@ -181,7 +181,17 @@ export interface AuditLog {
 export type SalePayload = { sale: Sale; items: SaleItem[] };
 export type VoidSalePayload = { saleId: string };
 export type PartialRefundPayload = { saleId: string; refunded_items: RefundedItem[] };
-export type LoyaltyChangePayload = { customer_id: string; delta: number; business_id: string };
+/**
+ * Cambio de puntos de lealtad. `idempotency_key` previene aplicar el mismo
+ * cambio dos veces si el item se reintenta tras un fallo de red intermitente
+ * (el RPC en Supabase debe verificar que el key no se haya procesado antes).
+ */
+export type LoyaltyChangePayload = {
+  customer_id: string;
+  delta: number;
+  business_id: string;
+  idempotency_key: string;
+};
 
 export type QueuePayload =
     | SalePayload
@@ -269,10 +279,17 @@ export class NexusDB extends Dexie {
       inventory_movements: null // DROP tabla local no utilizada
     });
 
+    // v11: agrega índice [business_id+status] en sales para conteos rápidos
+    // de stock_conflict, voided, etc. — usado por Layout (sidebar badges)
+    // y FinancePage (filtros de historial por estado).
+    this.version(11).stores({
+      sales: 'id, business_id, shift_id, date, sync_status, status, [shift_id+business_id], [business_id+date], [business_id+status]',
+    });
+
     // Backup pre-migración: si la versión del schema cambió, crear backup de seguridad
     this.on('ready', () => {
       const SCHEMA_KEY = 'nexus_db_schema_version';
-      const currentVersion = 10; // Debe coincidir con la última versión declarada arriba
+      const currentVersion = 11; // Debe coincidir con la última versión declarada arriba
       const savedVersion = parseInt(localStorage.getItem(SCHEMA_KEY) || '0');
 
       if (savedVersion > 0 && savedVersion < currentVersion) {
@@ -291,10 +308,7 @@ export class NexusDB extends Dexie {
 
 export const db = new NexusDB();
 
-export async function verifyDatabaseIntegrity() { /* depuracion omitida */ }
-export async function cleanCorruptedData() { /* depuracion omitida */ }
-
 if (typeof window !== 'undefined' && import.meta.env.DEV) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (window as any).dbDebug = { verify: verifyDatabaseIntegrity, clean: cleanCorruptedData, db: db };
+  (window as any).dbDebug = { db };
 }

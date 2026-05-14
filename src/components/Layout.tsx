@@ -194,9 +194,9 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   const conflictCount = useLiveQuery(async () => {
     const bId = localStorage.getItem('nexus_business_id');
     if (!bId) return 0;
+    // Usa índice compuesto [business_id+status] (v11) — count directo sin scan
     return await db.sales
-      .where('business_id').equals(bId)
-      .filter(s => s.status === 'stock_conflict')
+      .where('[business_id+status]').equals([bId, 'stock_conflict'])
       .count();
   }, []) || 0;
 

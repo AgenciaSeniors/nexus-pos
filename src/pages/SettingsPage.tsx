@@ -141,7 +141,10 @@ export function SettingsPage() {
   const handleSaveStaff = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!businessId) return;
-    if (!staffForm.name.trim()) return toast.error('El nombre es obligatorio');
+    const cleanName = staffForm.name.trim();
+    if (!cleanName) return toast.error('El nombre es obligatorio');
+    if (cleanName.length < 2) return toast.error('El nombre debe tener al menos 2 caracteres');
+    if (cleanName.length > 50) return toast.error('El nombre no puede tener más de 50 caracteres');
 
     const isNewPin = staffForm.pin.length > 0;
     if (isNewPin && !/^\d{4}$/.test(staffForm.pin)) return toast.error('El PIN debe ser exactamente 4 dígitos');

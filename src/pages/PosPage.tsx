@@ -426,8 +426,12 @@ export function PosPage() {
                     });
                     // Mejora 1: Incremento atómico de puntos — evita que 2 dispositivos
                     // se sobrescriban mutuamente al hacer ventas del mismo cliente offline
+                    // idempotency_key previene aplicar el mismo delta dos veces en reintentos
                     if (delta !== 0) {
-                        await addToQueue('LOYALTY_CHANGE', { customer_id: selectedCustomer.id, delta, business_id: bId });
+                        await addToQueue('LOYALTY_CHANGE', {
+                            customer_id: selectedCustomer.id, delta, business_id: bId,
+                            idempotency_key: crypto.randomUUID(),
+                        });
                     }
                 }
             }

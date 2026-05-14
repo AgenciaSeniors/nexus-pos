@@ -1,8 +1,11 @@
 # Variables de entorno — NUNCA subir al repositorio
 .env
 .env.local
+.env.test
+.env.test.local
 .env.*.local
 .env.production
+# Solo se versiona .env.example (sin valores reales)
 
 # Dependencias
 node_modules

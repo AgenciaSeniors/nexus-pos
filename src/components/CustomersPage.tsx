@@ -74,10 +74,30 @@ export function CustomersPage() {
     try {
         const cleanName = formData.name.trim();
         const cleanPhone = formData.phone.trim();
-        
+        const cleanEmail = formData.email.trim();
+
         if (!cleanName) {
             setIsLoading(false);
             return toast.warning("El nombre es obligatorio");
+        }
+        if (cleanName.length > 100) {
+            setIsLoading(false);
+            return toast.warning("El nombre no puede tener más de 100 caracteres");
+        }
+
+        // Validación de email: si se ingresa, debe tener formato válido
+        if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+            setIsLoading(false);
+            return toast.warning("El correo electrónico no tiene un formato válido");
+        }
+
+        // Validación de teléfono: solo dígitos, +, -, espacios (mínimo 6 dígitos)
+        if (cleanPhone) {
+            const digitsOnly = cleanPhone.replace(/[^\d]/g, '');
+            if (digitsOnly.length < 6 || digitsOnly.length > 20) {
+                setIsLoading(false);
+                return toast.warning("El teléfono debe tener entre 6 y 20 dígitos");
+            }
         }
 
         // Validación de duplicados (Teléfono único)
@@ -86,7 +106,7 @@ export function CustomersPage() {
                 .where({ business_id: businessId })
                 .filter(c => c.phone === cleanPhone && !c.deleted_at)
                 .first();
-            
+
             if (duplicate && duplicate.id !== editingId) {
                 toast.warning(`El teléfono ya existe.`);
                 setIsLoading(false);
@@ -227,10 +247,12 @@ export function CustomersPage() {
               await db.customers.put(updatedCustomer);
               // Mejora 1: Usar LOYALTY_CHANGE (incremento atómico) en vez de CUSTOMER_SYNC
               // para evitar que un ajuste desde otro dispositivo se sobrescriba
+              // idempotency_key previene aplicar el mismo ajuste manual dos veces en reintentos
               await addToQueue('LOYALTY_CHANGE', {
                   customer_id: selectedCustomer.id,
                   delta: pointsAdjustment.amount,
-                  business_id: selectedCustomer.business_id
+                  business_id: selectedCustomer.business_id,
+                  idempotency_key: crypto.randomUUID(),
               });
               await logAuditAction('UPDATE_LOYALTY', {
                   customer: selectedCustomer.name,

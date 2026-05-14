@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type ParkedOrder } from '../lib/db';
-import { PlayCircle, Trash2, Clock, X, UserSquare2, Printer } from 'lucide-react';
+import { PlayCircle, Trash2, Clock, X, UserSquare2, Printer, AlertTriangle } from 'lucide-react';
 import { TicketModal } from './TicketModal';
+import { toast } from 'sonner';
 
 interface Props {
   onRestore: (order: ParkedOrder) => void;
@@ -20,13 +21,21 @@ export function ParkedOrdersModal({ onRestore, onClose }: Props) {
     if (isToday) return time;
     return `${d.toLocaleDateString([], { day: '2-digit', month: '2-digit' })} ${time}`;
   };
-  
+
   // ✅ ESTADO PARA SABER QUÉ ORDEN ESTAMOS IMPRIMIENDO
   const [orderToPrint, setOrderToPrint] = useState<ParkedOrder | null>(null);
+  // Confirmación de borrado: orden a eliminar (null = sin modal abierto)
+  const [orderToDelete, setOrderToDelete] = useState<ParkedOrder | null>(null);
 
-  const handleDelete = (id: string) => {
-    if (confirm('¿Borrar esta orden guardada?')) {
-      db.parked_orders.delete(id);
+  const confirmDelete = async () => {
+    if (!orderToDelete) return;
+    try {
+      await db.parked_orders.delete(orderToDelete.id);
+      toast.success('Orden eliminada');
+    } catch {
+      toast.error('No se pudo eliminar la orden');
+    } finally {
+      setOrderToDelete(null);
     }
   };
 
@@ -80,8 +89,8 @@ export function ParkedOrdersModal({ onRestore, onClose }: Props) {
                   >
                     <Printer size={20} />
                   </button>
-                  <button 
-                    onClick={() => handleDelete(order.id)}
+                  <button
+                    onClick={() => setOrderToDelete(order)}
                     className="p-3 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                     title="Eliminar"
                   >
@@ -103,10 +112,41 @@ export function ParkedOrdersModal({ onRestore, onClose }: Props) {
 
       {/* ✅ RENDERIZA EL TICKET POR ENCIMA DEL MODAL DE ÓRDENES */}
       {orderToPrint && (
-          <TicketModal 
-              order={orderToPrint} 
-              onClose={() => setOrderToPrint(null)} 
+          <TicketModal
+              order={orderToPrint}
+              onClose={() => setOrderToPrint(null)}
           />
+      )}
+
+      {/* MODAL DE CONFIRMACIÓN DE BORRADO (reemplaza al confirm() nativo) */}
+      {orderToDelete && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-[70] animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 animate-in zoom-in-95 duration-200">
+            <div className="w-14 h-14 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <AlertTriangle className="w-7 h-7 text-red-600" />
+            </div>
+            <h3 className="text-lg font-black text-center text-slate-800 mb-1">¿Eliminar orden?</h3>
+            <p className="text-sm text-slate-500 text-center mb-2">
+              Se perderá la orden por <strong className="text-slate-700">${orderToDelete.total.toFixed(2)}</strong>
+              {orderToDelete.note && <> ({orderToDelete.note})</>}.
+            </p>
+            <p className="text-xs text-slate-400 text-center mb-5">Esta acción no se puede deshacer.</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setOrderToDelete(null)}
+                className="flex-1 py-3 border border-gray-200 text-slate-600 font-bold rounded-xl hover:bg-gray-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="flex-1 py-3 bg-red-500 text-white font-bold rounded-xl hover:bg-red-600 transition-colors shadow-md shadow-red-200 flex items-center justify-center gap-2"
+              >
+                <Trash2 size={16}/> Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

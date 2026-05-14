@@ -8,7 +8,7 @@ import { syncCriticalData, syncHeavyData, stopSyncListeners } from './lib/sync';
 import { startAutoBackup, stopAutoBackup } from './lib/backup';
 
 import { ADMIN_WHATSAPP_PHONE } from './lib/config';
-import { checkLockout, recordFailure, recordSuccess, formatLockoutTime, RATE_LIMIT_CONFIG } from './lib/loginRateLimit';
+import { checkLockout, recordFailure, recordSuccess, formatLockoutTime, RATE_LIMIT_CONFIG, registerRateLimit } from './lib/loginRateLimit';
 import { Layout } from './components/Layout';
 import { StaffSelectorModal } from './components/StaffSelectorModal';
 
@@ -159,6 +159,14 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!phone.trim()) return toast.error('El teléfono es obligatorio');
+
+    // Rate limit: 3 intentos de registro / 30 min por email
+    const regCheck = registerRateLimit.check(email);
+    if (regCheck.isLocked) {
+      toast.error(`Demasiados intentos de registro. Espera ${formatLockoutTime(regCheck.secondsLeft)}.`);
+      return;
+    }
+
     setLoading(true);
     onRegistrationStart();
     try {
@@ -188,6 +196,9 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
       // Marcar que es un registro nuevo para que Layout muestre la guía rápida
       sessionStorage.setItem('nexus_new_registration', '1');
 
+      // Éxito: limpiar contador de intentos de registro para este email
+      registerRateLimit.recordSuccess(email);
+
       // Entrar a la app directamente sin aprobación manual
       onRegistrationEnd();
       onEnterApp(authData.user.id);
@@ -195,7 +206,21 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
     } catch (error: any) {
       console.error(error);
       await supabase.auth.signOut();
-      toast.error(error.message || "Error al crear la cuenta.");
+      // Penalizar errores reales (no de red): credenciales inválidas, email duplicado, etc.
+      const msg = String(error.message || '');
+      const isNetworkError = msg.includes('Failed to fetch') || msg.includes('NetworkError');
+      if (!isNetworkError) {
+        const status = registerRateLimit.recordFailure(email);
+        if (status.isLocked) {
+          toast.error(`Demasiados intentos. Registro bloqueado ${formatLockoutTime(status.secondsLeft)}.`);
+        } else if (status.attemptsLeft <= 1) {
+          toast.error(`${error.message} — te queda ${status.attemptsLeft} intento.`);
+        } else {
+          toast.error(error.message || "Error al crear la cuenta.");
+        }
+      } else {
+        toast.error(error.message || "Error al crear la cuenta.");
+      }
       onRegistrationEnd();
       setLoading(false);
     }
@@ -656,6 +681,12 @@ function BusinessApp() {
       else if (event === 'TOKEN_REFRESHED' && newSession) {
         // Token renovado exitosamente — actualizar sesión en estado
         setSession(newSession);
+        // Reintentar items que fallaron por 401 mientras el token estaba expirado.
+        // Sin esto, los items quedan en `failed` hasta sync manual aunque la
+        // conexión vuelva (degrada la confianza del usuario en el offline-first).
+        import('./lib/sync').then(({ retryFailedItems }) =>
+          retryFailedItems().catch(err => console.warn('Retry post-refresh falló:', err))
+        );
       }
       else if (event === 'SIGNED_OUT') {
         const wasIntentional = intentionalLogoutRef.current;

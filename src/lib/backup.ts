@@ -157,19 +157,27 @@ export async function restoreBackup(backupId: string): Promise<void> {
   console.log('✅ Backup restaurado exitosamente');
 }
 
-// Inicia el backup automático periódico
+// Inicia el backup automático periódico.
+// Verifica db.isOpen() antes de cada intento — si el usuario cerró sesión
+// entre el setTimeout y el fire del backup, db estará cerrada y serializeTables
+// fallaría con DatabaseClosedError. Saltar silenciosamente en ese caso.
 export function startAutoBackup() {
   if (intervalId !== null) return; // Ya está corriendo
 
+  const safeBackup = async () => {
+    if (!db.isOpen()) return;
+    try {
+      await createBackup();
+    } catch (err) {
+      console.warn('⚠ Error en backup automático:', err);
+    }
+  };
+
   // Hacer un backup inicial después de 2 minutos (da tiempo a que la app cargue)
-  setTimeout(() => {
-    createBackup().catch(err => console.warn('⚠ Error en backup inicial:', err));
-  }, 2 * 60 * 1000);
+  setTimeout(safeBackup, 2 * 60 * 1000);
 
   // Programar cada 15 minutos
-  intervalId = setInterval(() => {
-    createBackup().catch(err => console.warn('⚠ Error en backup automático:', err));
-  }, BACKUP_INTERVAL_MS);
+  intervalId = setInterval(safeBackup, BACKUP_INTERVAL_MS);
 
   console.log('🔄 Backup automático activado (cada 15 min)');
 }

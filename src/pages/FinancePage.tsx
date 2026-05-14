@@ -3,7 +3,7 @@ import { useOutletContext, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff, type InventoryMovement, type RefundedItem } from '../lib/db';
 import { addToQueue, syncPull, syncPush, isOnline } from '../lib/sync';
-import { hashPin, verifyPin, isPinHashed } from '../lib/pin';
+import { hashPin, verifyPin, needsRehash } from '../lib/pin';
 import { supabase } from '../lib/supabase';
 import { logAuditAction } from '../lib/audit';
 import { currency } from '../lib/currency';
@@ -132,24 +132,32 @@ export function FinancePage() {
     if (activeShift === null) return null;
 
     const bId = activeShift.business_id;
+    // Usa índices compuestos [shift_id+business_id] declarados en el schema:
+    // evita scan + filter en JS sobre tablas grandes.
     const [sales, movements] = await Promise.all([
-      db.sales.where('shift_id').equals(activeShift.id).filter(s => s.business_id === bId).toArray(),
-      db.cash_movements.where('shift_id').equals(activeShift.id).filter(m => m.business_id === bId).toArray()
+      db.sales.where('[shift_id+business_id]').equals([activeShift.id, bId]).toArray(),
+      db.cash_movements.where('[shift_id+business_id]').equals([activeShift.id, bId]).toArray()
     ]);
     return { sales, movements };
   }, [activeShift]);
 
+  // Solo productos NO eliminados — evita cargar tombstones a memoria.
+  // En catálogos grandes los borrados pueden ser miles; filtrarlos aquí reduce
+  // significativamente el footprint de RAM en dispositivos low-end.
   const products = useLiveQuery<Product[]>(async () => {
-    let bId = localStorage.getItem('nexus_business_id');
+    const bId = localStorage.getItem('nexus_business_id');
     if (!bId) return [];
-    return await db.products.where('business_id').equals(bId).toArray();
+    return await db.products
+      .where('business_id').equals(bId)
+      .filter(p => !p.deleted_at)
+      .toArray();
   }, []) || EMPTY_ARRAY;
 
-  // Productos por reponer: stock <= umbral (default 5) y no eliminados
+  // Productos por reponer: stock <= umbral (default 5)
   const lowStockProducts = useMemo(() => {
     const LOW_STOCK_DEFAULT = 5;
     return products
-      .filter(p => !p.deleted_at && p.stock <= (p.low_stock_threshold ?? LOW_STOCK_DEFAULT))
+      .filter(p => p.stock <= (p.low_stock_threshold ?? LOW_STOCK_DEFAULT))
       .sort((a, b) => a.stock - b.stock);
   }, [products]);
 
@@ -157,7 +165,7 @@ export function FinancePage() {
   const expiringProducts = useMemo(() => {
     const now = Date.now();
     return products
-      .filter(p => !p.deleted_at && p.expiration_date && p.stock > 0)
+      .filter(p => p.expiration_date && p.stock > 0)
       .map(p => {
         const days = Math.ceil((new Date(p.expiration_date!).getTime() - now) / 86400000);
         return { ...p, daysToExpiry: days };
@@ -166,8 +174,13 @@ export function FinancePage() {
       .sort((a, b) => a.daysToExpiry - b.daysToExpiry);
   }, [products]);
 
+  // Safety net: 5000 ventas máximo cargadas a memoria a la vez.
+  // En negocios con muchas ventas/día (>100), un rango de 30d puede ser >3000 sales
+  // con items[] anidados → varios MB en RAM en Android low-end. Si llega al límite,
+  // se muestra solo lo más reciente (el resto se accede por filtros de fecha).
+  const MAX_SALES_LOAD = 5000;
   const allSales = useLiveQuery<Sale[]>(async () => {
-    let bId = localStorage.getItem('nexus_business_id');
+    const bId = localStorage.getItem('nexus_business_id');
     if (!bId) return [];
     if (viewMode !== 'history' && viewMode !== 'daily' && viewMode !== 'trends' && viewMode !== 'closing') return [];
 
@@ -182,7 +195,14 @@ export function FinancePage() {
       cutoff.setDate(cutoff.getDate() - 30);
     }
 
-    return await db.sales.where('business_id').equals(bId).filter(s => s.date >= cutoff.toISOString()).reverse().sortBy('date');
+    // Usa índice compuesto [business_id+date] para evitar full scan + filter en JS.
+    // El '￿' es el max char Unicode → "todo lo que esté después de cutoff".
+    return await db.sales
+      .where('[business_id+date]')
+      .between([bId, cutoff.toISOString()], [bId, '￿'])
+      .reverse()
+      .limit(MAX_SALES_LOAD)
+      .sortBy('date');
   }, [viewMode, reportMode, dateFrom]) || EMPTY_ARRAY;
 
   useEffect(() => {
@@ -690,8 +710,12 @@ export function FinancePage() {
                           sync_status: 'pending_update'
                       });
                       // Mejora 1: Incremento atómico en servidor (multi-dispositivo safe)
+                      // idempotency_key previene puntos duplicados en reintentos por fallo de red
                       if (delta !== 0) {
-                          await addToQueue('LOYALTY_CHANGE', { customer_id: sale.customer_id, delta, business_id: safeBid });
+                          await addToQueue('LOYALTY_CHANGE', {
+                              customer_id: sale.customer_id, delta, business_id: safeBid,
+                              idempotency_key: crypto.randomUUID(),
+                          });
                       }
                   }
               }
@@ -828,7 +852,11 @@ export function FinancePage() {
                 sync_status: 'pending_update'
               });
               // Mejora 1: Incremento atómico en servidor (multi-dispositivo safe)
-              await addToQueue('LOYALTY_CHANGE', { customer_id: refundSale.customer_id, delta, business_id: safeBid });
+              // idempotency_key previene revertir puntos dos veces en reintentos
+              await addToQueue('LOYALTY_CHANGE', {
+                  customer_id: refundSale.customer_id, delta, business_id: safeBid,
+                  idempotency_key: crypto.randomUUID(),
+              });
             }
           }
         }
@@ -1873,39 +1901,26 @@ export function FinancePage() {
                       const bId = localStorage.getItem('nexus_business_id');
                       if (!bId) { handleFailure(); return; }
 
-                      if (isOnline()) {
-                          // Enviar hash si el PIN local ya está hasheado (Supabase también lo tiene);
-                          // de lo contrario enviar texto plano (migración gradual).
-                          const pinToSend = masterPin && isPinHashed(masterPin)
-                              ? await hashPin(pinInput, bId)
-                              : pinInput;
-                          const { data, error } = await supabase.rpc('verify_master_pin', {
-                              p_pin: pinToSend,
-                              p_business_id: bId,
-                          });
-                          if (error) {
-                              handleFailure(error.message?.includes('bloqueado') ? error.message : undefined);
-                          } else if (data === true) {
-                              handleSuccess();
-                          } else {
-                              // Fallback: si la verificación local pasa pero Supabase falló,
-                              // puede ser que el hash aún no se haya sincronizado — forzar push.
-                              if (masterPin && await verifyPin(pinInput, bId, masterPin)) {
-                                  handleSuccess();
+                      // Verificación local: el master_pin viene sincronizado en db.settings.
+                      // Con PBKDF2 + salt único el hash no es comparable cross-device en plain
+                      // request, así que hacemos toda la validación con el helper local.
+                      if (!masterPin) {
+                          handleFailure('PIN maestro no configurado. Ve a Ajustes para establecerlo.');
+                      } else if (await verifyPin(pinInput, bId, masterPin)) {
+                          handleSuccess();
+                          // Auto-migración silenciosa: si el hash guardado es legacy SHA-256,
+                          // lo re-hasheamos con PBKDF2 y empujamos al servidor.
+                          if (needsRehash(masterPin)) {
+                              const newHash = await hashPin(pinInput, bId);
+                              try {
+                                  await db.settings.update(bId, { master_pin: newHash, sync_status: 'pending_update' });
                                   syncPush().catch(() => {});
-                              } else {
-                                  handleFailure();
+                              } catch {
+                                  /* no crítico, lo intentará la próxima vez */
                               }
                           }
                       } else {
-                          // Sin internet: verificación local (soporta hash y texto plano)
-                          if (!masterPin) {
-                              handleFailure('PIN maestro no configurado. Ve a Ajustes para establecerlo.');
-                          } else if (await verifyPin(pinInput, bId, masterPin)) {
-                              handleSuccess();
-                          } else {
-                              handleFailure();
-                          }
+                          handleFailure();
                       }
                   }}
                   disabled={pinInput.length < 4 || pinLockSecondsLeft > 0}

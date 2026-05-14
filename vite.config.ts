@@ -41,6 +41,25 @@ export default defineConfig({
     })
   ],
   base: './', // Importante para Electron o hosting relativo
+  build: {
+    rollupOptions: {
+      output: {
+        // Separar deps grandes en chunks dedicados para que la carga inicial
+        // del POS no traiga recharts/xlsx (solo se necesitan en Finanzas/Inventario).
+        // En conexiones lentas (típico CU), esto reduce ~600KB del first paint.
+        manualChunks: {
+          recharts: ['recharts'],
+          supabase: ['@supabase/supabase-js'],
+          dexie: ['dexie', 'dexie-react-hooks'],
+          icons: ['lucide-react'],
+        },
+      },
+    },
+    // El bundle de FinancePage es naturalmente grande (gráficos + estadísticas).
+    // Subir el límite del warning a 700KB evita falsos positivos sin tapar
+    // crecimiento real del bundle.
+    chunkSizeWarningLimit: 700,
+  },
   test: {
     environment: 'node',
     include: ['src/**/*.{test,spec}.{ts,tsx}'],

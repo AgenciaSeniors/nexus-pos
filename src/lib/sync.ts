@@ -28,6 +28,11 @@ import {
 // ─── LAST SYNC TIMESTAMP ──────────────────────────────────────────────────────
 // Permite a la UI saber cuándo fue la última sincronización exitosa.
 const LAST_SYNC_KEY = 'nexus_last_sync_at';
+// Timestamp del último syncHeavyData (orphan cleanup completo).
+// El pull incremental no detecta items borrados físicamente del servidor, así que
+// cada 24h forzamos un fetchAll para garantizar tombstones consistentes.
+const LAST_HEAVY_SYNC_KEY = 'nexus_last_heavy_sync_at';
+const HEAVY_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 export function getLastSyncTimestamp(): number {
   return parseInt(localStorage.getItem(LAST_SYNC_KEY) || '0');
@@ -35,6 +40,14 @@ export function getLastSyncTimestamp(): number {
 
 function setLastSyncTimestamp() {
   localStorage.setItem(LAST_SYNC_KEY, Date.now().toString());
+}
+
+function getLastHeavySyncTimestamp(): number {
+  return parseInt(localStorage.getItem(LAST_HEAVY_SYNC_KEY) || '0');
+}
+
+function setLastHeavySyncTimestamp() {
+  localStorage.setItem(LAST_HEAVY_SYNC_KEY, Date.now().toString());
 }
 
 export function isOnline() {
@@ -179,14 +192,29 @@ async function processItem(item: QueueItem) {
     }
     case 'VOID_SALE': {
         const { saleId } = payload as VoidSalePayload;
-        const { error } = await supabase.from('sales').update({ status: 'voided' }).eq('id', saleId);
+        // Defensa en profundidad: además de RLS, restringimos por business_id
+        // para que un saleId mal formado no pueda anular una venta de otro tenant
+        // si la política RLS llegara a estar mal configurada.
+        const localSale = await db.sales.get(saleId);
+        if (!localSale) throw new Error(`Venta ${saleId} no existe localmente`);
+        const { error } = await supabase
+            .from('sales')
+            .update({ status: 'voided' })
+            .eq('id', saleId)
+            .eq('business_id', localSale.business_id);
         if (error) throw new Error(`Error anulando venta: ${error.message}`);
         await db.sales.update(saleId, { sync_status: 'synced' });
         break;
     }
     case 'PARTIAL_REFUND': {
         const { saleId, refunded_items } = payload as PartialRefundPayload;
-        const { error } = await supabase.from('sales').update({ status: 'partial_refund', refunded_items }).eq('id', saleId);
+        const localSale = await db.sales.get(saleId);
+        if (!localSale) throw new Error(`Venta ${saleId} no existe localmente`);
+        const { error } = await supabase
+            .from('sales')
+            .update({ status: 'partial_refund', refunded_items })
+            .eq('id', saleId)
+            .eq('business_id', localSale.business_id);
         if (error) throw new Error(`Error registrando devolución: ${error.message}`);
         await db.sales.update(saleId, { sync_status: 'synced' });
         break;
@@ -195,11 +223,16 @@ async function processItem(item: QueueItem) {
         // Incremento atómico de puntos de lealtad via RPC. El RPC ejecuta
         // UPDATE ... SET loyalty_points = loyalty_points + delta en una sola transacción,
         // evitando el race condition del patrón read-modify-write anterior.
-        const { customer_id, delta, business_id } = payload as LoyaltyChangePayload;
+        //
+        // `idempotency_key` previene puntos duplicados si la red corta entre
+        // que el RPC ejecutó y nosotros recibimos respuesta: al reintentar,
+        // el RPC detecta que ese key ya se procesó y devuelve el total actual.
+        const { customer_id, delta, business_id, idempotency_key } = payload as LoyaltyChangePayload;
         const { data: newPoints, error } = await supabase.rpc('add_loyalty_points', {
             p_customer_id: customer_id,
             p_business_id: business_id,
             p_delta: delta,
+            p_idempotency_key: idempotency_key,
         });
         if (error) throw new Error(`Error actualizando puntos: ${error.message}`);
         // El RPC retorna el nuevo total; lo reflejamos en local y desbloqueamos sync.
@@ -321,20 +354,21 @@ async function safeBulkPut<T extends { id: string; sync_status?: string; updated
  */
 async function autoResolveStockConflicts(businessId: string) {
   try {
+    // Usa el índice compuesto [business_id+status] (v11) para evitar full scan
     const conflictedSales = await db.sales
-      .where('business_id').equals(businessId)
-      .filter(s => s.status === 'stock_conflict')
+      .where('[business_id+status]').equals([businessId, 'stock_conflict'])
       .toArray();
 
     if (conflictedSales.length === 0) return;
 
     for (const sale of conflictedSales) {
-      // Precargar productos referenciados (un solo round trip por venta)
+      // Precargar productos referenciados en paralelo (1 round trip por venta vs N)
       const productIds = (sale.items || []).map(i => i.product_id);
       const productSnapshots = new Map<string, { stock: number; deleted_at?: string | null }>();
-      for (const pid of productIds) {
-        const p = await db.products.get(pid);
-        if (p) productSnapshots.set(pid, { stock: p.stock ?? 0, deleted_at: p.deleted_at });
+      const fetched = await Promise.all(productIds.map(pid => db.products.get(pid)));
+      for (let idx = 0; idx < productIds.length; idx++) {
+        const p = fetched[idx];
+        if (p) productSnapshots.set(productIds[idx], { stock: p.stock ?? 0, deleted_at: p.deleted_at });
       }
 
       // Lógica de resolución delegada a función pura (testeable, ver syncResolution.ts)
@@ -497,6 +531,8 @@ export async function syncHeavyData(businessId: string): Promise<{ products: num
     }
   }
 
+  // Marcar éxito de la verificación de tombstones / orphan cleanup
+  setLastHeavySyncTimestamp();
   return results;
 }
 
@@ -684,6 +720,16 @@ export async function syncLiveData() {
         if (customersData.length > 0) {
             const cleanCustomers = customersData.map((c: any) => ({ ...c, sync_status: 'synced' as const }));
             await safeBulkPut(db.customers as never, cleanCustomers);
+        }
+
+        // 5b. Cada 24h: forzar fetchAll (orphan cleanup) para detectar items
+        // que fueron borrados FÍSICAMENTE en el servidor. El pull incremental
+        // por updated_at no puede verlos. syncHeavyData hace el set-diff completo.
+        const lastHeavy = getLastHeavySyncTimestamp();
+        if (Date.now() - lastHeavy > HEAVY_SYNC_INTERVAL_MS) {
+            syncHeavyData(businessId).catch(err =>
+                console.warn('Background heavy sync (orphan cleanup) falló:', err)
+            );
         }
 
         // 6. Staff: sincronizar cambios de PIN y datos de empleados (Fix 2)
