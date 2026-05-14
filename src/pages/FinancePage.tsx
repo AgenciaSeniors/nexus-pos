@@ -873,13 +873,29 @@ export function FinancePage() {
           await addToQueue('CASH_MOVEMENT', cashMov);
         }
 
+        // 4. Detectar si esta devolución cubre TODAS las unidades vendidas (devolución total)
+        // Calculado ANTES de revertir puntos porque influye en si devolver redeemed_points
+        const allRefunds = [...existingRefunds, ...refundedItems];
+        const originalItems = freshSale.items || [];
+        const isFullRefund = originalItems.every(orig => {
+          const refundedQty = allRefunds
+            .filter(r => r.product_id === orig.product_id)
+            .reduce((s, r) => s + r.quantity, 0);
+          return refundedQty >= orig.quantity;
+        });
+
         // 3. Revertir puntos de lealtad proporcionalmente
+        // - Siempre: descontar pts GANADOS por el monto devuelto (floor(refund/10))
+        // - Solo en full refund: devolver pts CANJEADOS originalmente (redeemed_points)
+        //   Razón: los redeemed_points son ENTEROS atados a una venta completa; en partial
+        //   no se puede devolverlos proporcionalmente sin acumular fracciones. Mejor todo o nada.
         if (refundSale.customer_id) {
           const customer = await db.customers.get(refundSale.customer_id);
           if (customer) {
-            const pointsToRevert = Math.floor(refundTotal / 10);
-            if (pointsToRevert > 0) {
-              const delta = -pointsToRevert;
+            const pointsEarnedToRevert = Math.floor(refundTotal / 10);
+            const pointsRedeemedToReturn = isFullRefund ? (refundSale.redeemed_points || 0) : 0;
+            const delta = -pointsEarnedToRevert + pointsRedeemedToReturn;
+            if (delta !== 0) {
               await db.customers.update(refundSale.customer_id, {
                 loyalty_points: Math.max(0, (customer.loyalty_points || 0) + delta),
                 sync_status: 'pending_update'
@@ -893,16 +909,6 @@ export function FinancePage() {
             }
           }
         }
-
-        // 4. Detectar si esta devolución cubre TODAS las unidades vendidas (devolución total)
-        const allRefunds = [...existingRefunds, ...refundedItems];
-        const originalItems = freshSale.items || [];
-        const isFullRefund = originalItems.every(orig => {
-          const refundedQty = allRefunds
-            .filter(r => r.product_id === orig.product_id)
-            .reduce((s, r) => s + r.quantity, 0);
-          return refundedQty >= orig.quantity;
-        });
 
         // 5. Actualizar venta con items devueltos
         // - Si fue devolución total → status='voided' (no cuenta para totales/reportes)

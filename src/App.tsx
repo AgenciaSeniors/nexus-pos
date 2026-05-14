@@ -426,6 +426,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
 // 2. COMPONENTE BUSINESS APP (ROBUSTO Y LINEAL)
 // =============================================================================
 function BusinessApp() {
+  const navigate = useNavigate();
   const [session, setSession] = useState<Session | null>(null);
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
   const [loading, setLoading] = useState(true);
@@ -660,6 +661,23 @@ function BusinessApp() {
     // Backup automático cada 15 minutos (protección contra apagones)
     startAutoBackup();
 
+    // Android: registrar handler del botón Back hardware + lifecycle pause/resume.
+    // Sin esto, el back nativo cierra la app inmediatamente desde cualquier pantalla
+    // (pierde ventas en curso, parked orders, modales). En web/desktop es no-op.
+    import('./lib/androidBackHandler').then(({ registerBackHandler }) => {
+      registerBackHandler(
+        (to) => navigate(to),
+        () => {
+          // Al volver del background, intentar sincronizar (puede haber estado
+          // varios minutos pausado y los datos remotos podrían haber cambiado)
+          import('./lib/sync').then(({ processQueue, syncLiveData }) => {
+            processQueue().catch(() => {});
+            syncLiveData().catch(() => {});
+          });
+        },
+      ).catch(() => {});
+    });
+
     // Escuchador de cambios (Ej: Cuando alguien inicia sesión exitosamente en LoginScreen)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (!mounted) return;
@@ -716,6 +734,10 @@ function BusinessApp() {
         subscription.unsubscribe();
         stopAutoBackup();
         stopSyncListeners();
+        // Desregistrar el handler de back/lifecycle de Android
+        import('./lib/androidBackHandler').then(({ unregisterBackHandler }) => {
+          unregisterBackHandler();
+        }).catch(() => {});
     };
   }, []); // Sin dependencias: el efecto corre solo al montar. Los refs evitan race conditions.
 
