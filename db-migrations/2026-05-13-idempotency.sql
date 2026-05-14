@@ -46,6 +46,13 @@ END; $$;
 -- Reemplaza el RPC actual con uno que verifica si el key ya se procesó.
 -- Si sí → retorna el total guardado en processed_mutations (no aplica el delta).
 -- Si no → aplica el delta, guarda el key, retorna el nuevo total.
+--
+-- IMPORTANTE: PostgreSQL trata el cambio de firma como una función nueva
+-- (no como REPLACE). Si ya existe la versión vieja de 3 parámetros, hay que
+-- droparla explícitamente — de lo contrario habrá DOS funciones con el mismo
+-- nombre y el cliente fallará con "function name is not unique".
+
+DROP FUNCTION IF EXISTS public.add_loyalty_points(uuid, uuid, integer);
 
 CREATE OR REPLACE FUNCTION public.add_loyalty_points(
     p_customer_id uuid,
