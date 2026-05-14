@@ -482,6 +482,29 @@ function BusinessApp() {
           return;
         }
 
+        // Defensa multi-tenant: si el business_id local NO coincide con el de la
+        // sesión actual, el usuario cambió de cuenta (o alguien manipuló localStorage).
+        // Limpiar IndexedDB para evitar leak cruzado de datos entre tenants.
+        const previousBusinessId = localStorage.getItem('nexus_business_id');
+        if (previousBusinessId && previousBusinessId !== data.business_id) {
+          console.warn(`Tenant cambió: ${previousBusinessId} → ${data.business_id}. Limpiando datos locales.`);
+          try {
+            // Borrar todas las tablas locales (Dexie) — la app las repoblará
+            // con syncCriticalData/syncHeavyData del negocio correcto.
+            await Promise.all([
+              db.products.clear(), db.sales.clear(), db.movements.clear(),
+              db.customers.clear(), db.settings.clear(), db.staff.clear(),
+              db.parked_orders.clear(), db.audit_logs.clear(),
+              db.cash_shifts.clear(), db.cash_movements.clear(),
+              db.cash_registers.clear(), db.action_queue.clear(),
+            ]);
+            // localStorage del staff anterior también queda inválido
+            localStorage.removeItem('nexus_staff_id');
+            toast.info('Cambio de negocio detectado — sincronizando datos del nuevo tenant...', { duration: 5000 });
+          } catch (clearErr) {
+            console.error('Error limpiando datos del tenant anterior:', clearErr);
+          }
+        }
         localStorage.setItem('nexus_business_id', data.business_id);
 
         // Preservar PIN del admin si ya existe en la DB local

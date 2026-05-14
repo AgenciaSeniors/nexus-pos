@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron';
+import { app, BrowserWindow, ipcMain, session, shell, Menu } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -46,6 +46,36 @@ function createWindow() {
     win.on('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => saveWindowState(win), 500); });
     win.on('move',   () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => saveWindowState(win), 500); });
 
+    // ─── NAVEGACIÓN SEGURA ───────────────────────────────────────────────
+    // 1. Cualquier link target="_blank" o window.open() abre en el navegador del SO,
+    //    no en una BrowserWindow nueva con permisos Electron (que sería un agujero
+    //    de seguridad). Esto incluye los links de WhatsApp del Layout.
+    win.webContents.setWindowOpenHandler(({ url }) => {
+        if (url.startsWith('https://') || url.startsWith('http://') || url.startsWith('mailto:') || url.startsWith('tel:')) {
+            shell.openExternal(url).catch(err => console.error('openExternal falló:', err));
+        }
+        return { action: 'deny' };
+    });
+
+    // 2. Bloquear navegación a URLs externas dentro de la ventana principal.
+    //    La app es una SPA con hash routing; cualquier cambio de origen es sospechoso.
+    win.webContents.on('will-navigate', (event, navigationUrl) => {
+        const isLocalhost = navigationUrl.startsWith('http://localhost:5173');
+        const isFileProtocol = navigationUrl.startsWith('file://');
+        if (!isLocalhost && !isFileProtocol) {
+            event.preventDefault();
+            // Si parece un link externo legítimo, abrirlo en el navegador
+            if (navigationUrl.startsWith('https://') || navigationUrl.startsWith('http://')) {
+                shell.openExternal(navigationUrl).catch(() => {});
+            }
+        }
+    });
+
+    // 3. Bloquear creación de webview embebidos (otra vía de XSS)
+    win.webContents.on('will-attach-webview', (event) => {
+        event.preventDefault();
+    });
+
     const isDev = !app.isPackaged;
 
     if (isDev) {
@@ -53,13 +83,20 @@ function createWindow() {
         win.webContents.openDevTools(); // Abre la consola para depurar
     } else {
         win.loadFile(path.join(__dirname, '../dist/index.html'));
-        // Bloquear DevTools en producción (F12, Ctrl+Shift+I, Ctrl+Shift+J)
+        // Bloquear DevTools en producción de forma robusta:
+        // 1. Atajos de teclado (F12, Ctrl+Shift+I/J/C)
+        // 2. Cerrar DevTools si por algún camino se abren (menú contextual, etc.)
+        // 3. Bloquear recargas no deseadas (Ctrl+R, Ctrl+Shift+R) que pueden
+        //    confundirse con re-mount de la app después de mutaciones
+        win.webContents.on('devtools-opened', () => win.webContents.closeDevTools());
+
         // Atajos de navegación: F1=POS, F2=Inventario, F4=Finanzas, F5=Clientes
         win.webContents.on('before-input-event', (event, input) => {
             if (input.key === 'F12') { event.preventDefault(); return; }
             if (input.control && input.shift && (input.key === 'I' || input.key === 'i')) { event.preventDefault(); return; }
             if (input.control && input.shift && (input.key === 'J' || input.key === 'j')) { event.preventDefault(); return; }
             if (input.control && input.shift && (input.key === 'C' || input.key === 'c')) { event.preventDefault(); return; }
+            if (input.control && input.shift && (input.key === 'R' || input.key === 'r')) { event.preventDefault(); return; }
             // Navegación por teclado (solo cuando no hay ningún input de texto activo)
             if (input.type === 'keyDown' && !input.control && !input.alt && !input.meta) {
                 const navMap = { F1: '/', F2: '/inventario', F4: '/finanzas', F5: '/clientes' };
@@ -69,9 +106,20 @@ function createWindow() {
                 }
             }
         });
+
+        // Eliminar el menú nativo en producción (no hay "View → Reload",
+        // "View → Toggle Developer Tools", etc.). Una capa más de defensa.
+        Menu.setApplicationMenu(null);
     }
 
     win.setMenuBarVisibility(false);
+
+    // ─── BLOQUEO DE PERMISOS NO SOLICITADOS ──────────────────────────────
+    // Cualquier API que pida permiso (notifications, geolocation, mic, camera...)
+    // se rechaza por defecto. La app POS no necesita ninguno de estos.
+    win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => {
+        callback(false);
+    });
 }
 
 app.whenReady().then(() => {

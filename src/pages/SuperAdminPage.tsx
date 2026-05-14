@@ -8,6 +8,7 @@ import {
   Bell, Clock, PhoneCall
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { requireSuperAdmin } from '../lib/requireSuperAdmin';
 
 // Interfaz completa
 interface Profile {
@@ -76,6 +77,9 @@ export function SuperAdminPage() {
 
   const handleGrantTrial = async (profile: Profile, days = 7) => {
     if (!profile.business_id) return toast.error("Este perfil no tiene un negocio asignado");
+    // Defensa en profundidad: re-validar permisos antes de cada operación destructiva
+    const auth = await requireSuperAdmin();
+    if (!auth.authorized) return toast.error(auth.reason || 'No autorizado');
     try {
       const trialEnd = new Date();
       trialEnd.setDate(trialEnd.getDate() + days);
@@ -182,6 +186,8 @@ export function SuperAdminPage() {
 
   // EXTENSIÓN RÁPIDA desde pestaña Suscripciones
   const quickExtend = async (row: SubscriptionRow, months: number) => {
+    const auth = await requireSuperAdmin();
+    if (!auth.authorized) return toast.error(auth.reason || 'No autorizado');
     try {
       const current = row.subscription_expires_at ? new Date(row.subscription_expires_at) : new Date();
       const base = current > new Date() ? current : new Date();
@@ -294,6 +300,10 @@ export function SuperAdminPage() {
         return;
     }
 
+    // Re-validar permisos antes de operación destructiva (defensa en profundidad)
+    const auth = await requireSuperAdmin();
+    if (!auth.authorized) return toast.error(auth.reason || 'No autorizado');
+
     setLoading(true);
     try {
       const { id: adminId, name: approverName } = await getAdminInfo();
@@ -356,6 +366,8 @@ export function SuperAdminPage() {
   // 3. EXTENSIÓN DE LICENCIA
   const executeExtension = async () => {
     if (!extendingItem) return;
+    const auth = await requireSuperAdmin();
+    if (!auth.authorized) return toast.error(auth.reason || 'No autorizado');
 
     try {
       const currentExpiry = extendingItem.license_expiry ? new Date(extendingItem.license_expiry) : new Date();
@@ -407,6 +419,10 @@ export function SuperAdminPage() {
         return;
     }
 
+    // Re-validar permisos antes de operación destructiva (reset de password ajeno)
+    const auth = await requireSuperAdmin();
+    if (!auth.authorized) return toast.error(auth.reason || 'No autorizado');
+
     setLoading(true);
     try {
         const { error } = await supabase.rpc('reset_user_password', {
@@ -444,6 +460,8 @@ export function SuperAdminPage() {
   // 5. EJECUTAR ACCIÓN DESTRUCTIVA (Suspender/Borrar)
   const executeConfirmAction = async () => {
       if (!confirmModal) return;
+      const auth = await requireSuperAdmin();
+      if (!auth.authorized) return toast.error(auth.reason || 'No autorizado');
       const { type, item } = confirmModal;
       setLoading(true);
 

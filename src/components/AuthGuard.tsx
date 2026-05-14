@@ -129,9 +129,20 @@ export function AuthGuard({ children }: AuthGuardProps) {
             return;
           }
 
+          // Defensa multi-tenant: si localStorage.nexus_business_id no coincide
+          // con localSettings.id (lo que está en IndexedDB), hay desincronización.
+          // Esto puede ocurrir si alguien manipula localStorage con DevTools.
+          const lsBusinessId = localStorage.getItem('nexus_business_id');
+          if (lsBusinessId && lsBusinessId !== localSettings.id) {
+            console.warn(`Mismatch: localStorage=${lsBusinessId} vs settings=${localSettings.id}. Corrigiendo.`);
+            localStorage.setItem('nexus_business_id', localSettings.id);
+          }
+
           if (isMounted) setLoading(false);
 
           // Sync en background — puede actualizar estado del trial
+          // Verificación cross-tenant: el profile remoto debe apuntar al mismo business.
+          // Si no, App.tsx ya tiene la lógica de limpieza; aquí solo lanzamos el fetch.
           if (isOnline()) {
             syncCriticalData(localSettings.id)
                 .then(() => syncHeavyData(localSettings.id))
