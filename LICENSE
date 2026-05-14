@@ -1,0 +1,97 @@
+Bisne con Talla — Licencia Comercial Propietaria
+Copyright (c) 2024-2026 Agencia Señores (Eduardo Daniel Pérez Ruiz)
+Sancti Spíritus, Cuba.
+Todos los derechos reservados.
+
+================================================================================
+1. PROPIEDAD
+================================================================================
+Este software ("Bisne con Talla", también referido como "Nexus POS"), incluyendo
+su código fuente, diseño visual, documentación, materiales asociados y todas las
+mejoras o derivados, es propiedad exclusiva de Agencia Señores. El software es
+proporcionado bajo licencia, NO se vende.
+
+================================================================================
+2. USO PERMITIDO
+================================================================================
+Se concede al cliente que adquiera una suscripción activa con Agencia Señores
+una licencia limitada, intransferible, no exclusiva y revocable para:
+
+  a) Instalar y utilizar el software en los dispositivos del negocio licenciado
+     mientras la suscripción esté vigente y al corriente de pago.
+  b) Hacer copias de seguridad locales de SUS PROPIOS DATOS de operación
+     (ventas, inventario, clientes) para fines de respaldo personal.
+
+================================================================================
+3. RESTRICCIONES
+================================================================================
+SIN AUTORIZACIÓN EXPRESA Y POR ESCRITO de Agencia Señores, está PROHIBIDO:
+
+  a) Copiar, redistribuir, sublicenciar, vender, alquilar o ceder el software,
+     en todo o en parte, a terceros.
+  b) Realizar ingeniería inversa, descompilar, desensamblar o intentar derivar
+     el código fuente original a partir de los binarios distribuidos.
+  c) Modificar, traducir o crear obras derivadas del software con fines de
+     redistribución.
+  d) Eliminar, ocultar o alterar avisos de copyright, marcas comerciales o
+     identificadores de propiedad incluidos en el software.
+  e) Usar el software para crear un producto competidor.
+  f) Compartir credenciales de acceso con personas ajenas al negocio licenciado.
+
+================================================================================
+4. DATOS DEL CLIENTE
+================================================================================
+Los datos de operación del negocio (ventas, inventario, clientes, empleados)
+generados mediante el uso del software son propiedad del cliente. Agencia
+Señores actúa únicamente como custodio técnico de los mismos a través de la
+infraestructura de Supabase, con cifrado en tránsito y políticas RLS de
+aislamiento por tenant.
+
+El cliente puede exportar o solicitar la eliminación permanente de sus datos
+en cualquier momento mediante solicitud al administrador del servicio.
+
+================================================================================
+5. ACCESO AL CÓDIGO FUENTE
+================================================================================
+El acceso al código fuente alojado en repositorios privados está limitado al
+equipo de desarrollo de Agencia Señores y a colaboradores autorizados
+explícitamente. Cualquier acceso accidental al código no otorga derechos de
+uso, copia o redistribución.
+
+================================================================================
+6. GARANTÍA Y RESPONSABILIDAD
+================================================================================
+EL SOFTWARE SE PROPORCIONA "TAL CUAL", SIN GARANTÍAS DE NINGÚN TIPO, EXPRESAS
+O IMPLÍCITAS, INCLUYENDO PERO NO LIMITADO A GARANTÍAS DE COMERCIABILIDAD,
+IDONEIDAD PARA UN PROPÓSITO PARTICULAR Y NO INFRACCIÓN.
+
+En ningún caso Agencia Señores será responsable por reclamos, daños o
+responsabilidades, ya sea en una acción contractual, agravio o de otro modo,
+que surjan de o en conexión con el software o su uso. La responsabilidad
+máxima de Agencia Señores en cualquier circunstancia no excederá el monto
+pagado por el cliente en concepto de suscripción durante los doce (12) meses
+anteriores al evento que dio origen al reclamo.
+
+================================================================================
+7. TERMINACIÓN
+================================================================================
+Esta licencia termina automáticamente si el cliente:
+
+  a) Incumple cualquier término de este acuerdo.
+  b) Cesa de pagar la suscripción más allá del período de gracia.
+  c) Cesa la operación del negocio licenciado.
+
+Al terminar la licencia, el cliente debe dejar de usar el software, pero
+conserva el derecho de exportar sus datos durante 90 días posteriores.
+
+================================================================================
+8. CONTACTO
+================================================================================
+Para consultas sobre licenciamiento, autorizaciones especiales, soporte técnico
+o cualquier otro asunto relacionado con este software:
+
+  Agencia Señores
+  Eduardo Daniel Pérez Ruiz
+  Sancti Spíritus, Cuba
+
+  WhatsApp: ver dentro de la app en Configuración → Términos y Política
