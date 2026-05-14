@@ -25,6 +25,7 @@ sigue [Semantic Versioning](https://semver.org/lang/es/).
 ### 🐛 Bugs corregidos
 - **Doble reembolso al anular venta con devolución parcial previa**: si una venta tenía partial refund y luego se anulaba completa, devolvía stock y dinero dos veces. Lógica extraída a `lib/saleRefund.ts` (testeable).
 - **Puntos canjeados nunca se reversaban en devolución parcial**: ahora cuando un partial cubre toda la venta, se devuelven al cliente.
+- **Cuadre histórico mutaba retroactivamente**: anular una venta de un turno cerrado cambiaba el reporte de ese turno. Ahora cada venta anulada lleva `voided_at` (timestamp). Los reportes históricos consideran la venta válida si fue anulada DESPUÉS del cierre del periodo. Nueva función pura `isSaleValidAtTime` en `lib/shiftStats.ts` con 19 tests. Schema Dexie v12 + SQL migration + trigger server-side.
 
 ### ⚡ Performance
 - **Índice compuesto `[business_id+status]`** en sales (schema v11) — conteo de stock_conflict y filtros por estado sin full scan.

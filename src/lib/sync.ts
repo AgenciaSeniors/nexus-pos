@@ -197,9 +197,12 @@ async function processItem(item: QueueItem) {
         // si la política RLS llegara a estar mal configurada.
         const localSale = await db.sales.get(saleId);
         if (!localSale) throw new Error(`Venta ${saleId} no existe localmente`);
+        // voided_at del local se envía al servidor: clave para reportes inmutables
+        // (saber si la anulación fue dentro o después del turno).
+        const voidedAt = localSale.voided_at || new Date().toISOString();
         const { error } = await supabase
             .from('sales')
-            .update({ status: 'voided' })
+            .update({ status: 'voided', voided_at: voidedAt })
             .eq('id', saleId)
             .eq('business_id', localSale.business_id);
         if (error) throw new Error(`Error anulando venta: ${error.message}`);

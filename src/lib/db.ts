@@ -46,6 +46,13 @@ export interface Sale {
   amount_tendered?: number;
   change?: number;
   status?: 'completed' | 'voided' | 'stock_conflict' | 'partial_refund';
+  /**
+   * Timestamp ISO de cuándo se anuló la venta. Crítico para reportes inmutables:
+   * permite distinguir si la anulación ocurrió DENTRO del turno (debe descontarse
+   * del cuadre) o DESPUÉS (no debe cambiar el reporte histórico de ese turno).
+   * Ver `lib/shiftStats.ts`.
+   */
+  voided_at?: string;
   // Descuento
   discount_amount?: number;
   discount_type?: 'percentage' | 'fixed';
@@ -286,10 +293,18 @@ export class NexusDB extends Dexie {
       sales: 'id, business_id, shift_id, date, sync_status, status, [shift_id+business_id], [business_id+date], [business_id+status]',
     });
 
+    // v12: NO cambia índices, solo agrega el campo `voided_at` que se popula
+    // a partir de ahora al anular ventas. Las ventas viejas voided sin este
+    // timestamp se consideran "anuladas antes del periodo histórico" — comportamiento
+    // conservador idéntico al actual, sin cambios para datos existentes.
+    this.version(12).stores({
+      sales: 'id, business_id, shift_id, date, sync_status, status, [shift_id+business_id], [business_id+date], [business_id+status]',
+    });
+
     // Backup pre-migración: si la versión del schema cambió, crear backup de seguridad
     this.on('ready', () => {
       const SCHEMA_KEY = 'nexus_db_schema_version';
-      const currentVersion = 11; // Debe coincidir con la última versión declarada arriba
+      const currentVersion = 12; // Debe coincidir con la última versión declarada arriba
       const savedVersion = parseInt(localStorage.getItem(SCHEMA_KEY) || '0');
 
       if (savedVersion > 0 && savedVersion < currentVersion) {

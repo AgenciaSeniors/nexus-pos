@@ -22,6 +22,7 @@ import {
 import { BillCounter } from '../components/BillCounter';
 import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
 import { computeVoidDelta } from '../lib/saleRefund';
+import { isSaleValidAtTime, endOfLocalDay } from '../lib/shiftStats';
 
 const EMPTY_ARRAY: never[] = [];
 
@@ -289,9 +290,18 @@ export function FinancePage() {
   };
 
   const dailyStats = useMemo(() => {
+    // Reportes históricos inmutables: una venta anulada DESPUÉS del fin del periodo
+    // sigue contando para ese periodo (al cierre seguía siendo válida). Solo
+    // anulaciones DENTRO del periodo se descuentan.
+    // - Modo día: fin del periodo = 23:59:59.999 de selectedDate
+    // - Modo rango: fin del periodo = 23:59:59.999 de dateTo
+    const periodEnd = reportMode === 'range'
+      ? endOfLocalDay(dateTo).getTime()
+      : endOfLocalDay(selectedDate).getTime();
+
     const salesForDay = reportMode === 'range'
-      ? allSales.filter((sale) => saleMatchesRange(sale.date) && sale.status !== 'voided')
-      : allSales.filter((sale) => saleMatchesLocalDate(sale.date, selectedDate) && sale.status !== 'voided');
+      ? allSales.filter((sale) => saleMatchesRange(sale.date) && isSaleValidAtTime(sale, periodEnd))
+      : allSales.filter((sale) => saleMatchesLocalDate(sale.date, selectedDate) && isSaleValidAtTime(sale, periodEnd));
     let revenue = 0, cost = 0;
     const hourlyCounts: Record<string, number> = {};
     const categoryCounts: Record<string, number> = {};
@@ -709,8 +719,15 @@ export function FinancePage() {
                   pointsToRevertNow,
               } = voidDelta;
 
-              // 1. Marcar venta como anulada
-              await db.sales.update(sale.id, { status: 'voided', sync_status: 'pending_update' });
+              // 1. Marcar venta como anulada con timestamp de anulación.
+              // voided_at permite distinguir si la anulación ocurrió DENTRO o
+              // DESPUÉS del cierre del turno (clave para reportes inmutables).
+              const voidedAt = new Date().toISOString();
+              await db.sales.update(sale.id, {
+                  status: 'voided',
+                  voided_at: voidedAt,
+                  sync_status: 'pending_update',
+              });
               await addToQueue('VOID_SALE', { saleId: sale.id });
 
               // 2. Revertir puntos de lealtad si la venta tenía cliente
