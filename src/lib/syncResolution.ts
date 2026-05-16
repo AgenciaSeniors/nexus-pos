@@ -143,3 +143,82 @@ export const RETRY_CONFIG = {
   BACKOFF_BASE_MS: 30_000,
   BACKOFF_MAX_MS: 300_000,
 };
+
+/**
+ * Prioridad de procesamiento por tipo de operación, según sus dependencias
+ * de foreign key en el servidor. Menor número = se procesa primero.
+ *
+ * Razón: si un AUDIT o un SHIFT se sube ANTES que el negocio/empleado/venta
+ * del que depende, Postgres rechaza con "foreign key constraint violation".
+ * Procesando en orden de dependencia, las entidades base existen antes que
+ * las que las referencian.
+ *
+ * Niveles:
+ *  10 — Entidades base (no dependen de nada nuevo): config, empleados,
+ *       productos, clientes.
+ *  20 — Turnos de caja (dependen de empleado).
+ *  30 — Ventas (dependen de turno, productos, cliente).
+ *  40 — Operaciones que dependen de una venta/turno ya existente:
+ *       movimientos de inventario, de caja, auditoría.
+ *  50 — Mutaciones sobre ventas existentes: anulación, devolución, puntos.
+ */
+export const QUEUE_TYPE_PRIORITY: Record<string, number> = {
+  SETTINGS_SYNC: 10,
+  STAFF_SYNC: 10,
+  PRODUCT_SYNC: 10,
+  CUSTOMER_SYNC: 10,
+  SHIFT: 20,
+  SALE: 30,
+  MOVEMENT: 40,
+  CASH_MOVEMENT: 40,
+  AUDIT: 40,
+  VOID_SALE: 50,
+  PARTIAL_REFUND: 50,
+  LOYALTY_CHANGE: 50,
+};
+
+const DEFAULT_PRIORITY = 35; // tipos desconocidos: en medio, antes que mutaciones
+
+interface QueueItemOrderable {
+  type: string;
+  timestamp: number;
+}
+
+/**
+ * Comparador para ordenar la cola de sync: primero por prioridad de dependencia,
+ * luego por timestamp (FIFO dentro del mismo nivel).
+ *
+ * Uso: `pendingItems.sort(compareQueueOrder)`
+ */
+export function compareQueueOrder(a: QueueItemOrderable, b: QueueItemOrderable): number {
+  const pa = QUEUE_TYPE_PRIORITY[a.type] ?? DEFAULT_PRIORITY;
+  const pb = QUEUE_TYPE_PRIORITY[b.type] ?? DEFAULT_PRIORITY;
+  if (pa !== pb) return pa - pb;
+  return a.timestamp - b.timestamp;
+}
+
+/**
+ * Ordena una lista de items de cola por dependencia + timestamp.
+ * No muta el array original.
+ */
+export function sortQueueByDependency<T extends QueueItemOrderable>(items: T[]): T[] {
+  return [...items].sort(compareQueueOrder);
+}
+
+/**
+ * Detecta si un item de cola lleva "atascado" demasiado tiempo en estado
+ * `processing` — señal de que la app se cerró/crasheó a mitad del procesamiento.
+ *
+ * @param status   Estado actual del item
+ * @param timestamp Último timestamp del item
+ * @param now      Tiempo actual (default Date.now())
+ * @param staleMs  Umbral para considerarlo atascado (default 2 min)
+ */
+export function isStuckInProcessing(
+  status: string,
+  timestamp: number,
+  now: number = Date.now(),
+  staleMs: number = 120_000,
+): boolean {
+  return status === 'processing' && (now - timestamp) >= staleMs;
+}

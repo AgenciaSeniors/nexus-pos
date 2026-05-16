@@ -1,0 +1,291 @@
+// @vitest-environment happy-dom
+/**
+ * Tests de INTEGRACIÓN del motor de sincronización.
+ *
+ * A diferencia de los tests unitarios (funciones puras en syncResolution.test.ts),
+ * estos ejecutan el motor REAL (`addToQueue`, `processQueue`, `_runQueue`) contra:
+ *   - Una IndexedDB de verdad (fake-indexeddb, en memoria)
+ *   - Un Supabase mockeado y CONTROLABLE (simula éxito, error, red caída)
+ *
+ * Objetivo: verificar que la cola se vacía, respeta el orden de dependencias,
+ * no se bloquea con items rotos, y recupera items atascados — los bugs
+ * reportados en producción.
+ */
+import 'fake-indexeddb/auto';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// ── Mock controlable de Supabase ────────────────────────────────────────────
+// Los tests configuran `mockState.responses` para simular qué devuelve cada
+// operación, y leen `mockState.calls` para verificar qué se llamó.
+interface MockResult { data?: unknown; error?: unknown }
+const mockState = {
+  responses: {} as Record<string, MockResult>,
+  calls: [] as Array<{ op: string; key: string; payload?: unknown }>,
+};
+
+function resetMock() {
+  mockState.responses = {};
+  mockState.calls = [];
+}
+
+vi.mock('./supabase', () => {
+  const result = (key: string): Promise<MockResult> =>
+    Promise.resolve(mockState.responses[key] ?? { data: null, error: null });
+
+  // Objeto chainable para .update().eq().eq() y .select().eq()...
+  const chainable = (key: string) => {
+    const obj: Record<string, unknown> = {
+      eq: () => obj,
+      neq: () => obj,
+      gt: () => obj,
+      lt: () => obj,
+      gte: () => obj,
+      order: () => obj,
+      range: () => obj,
+      limit: () => obj,
+      single: () => result(key),
+      then: (resolve: (v: MockResult) => unknown) => result(key).then(resolve),
+    };
+    return obj;
+  };
+
+  return {
+    supabase: {
+      rpc: (name: string, args: unknown) => {
+        mockState.calls.push({ op: 'rpc', key: name, payload: args });
+        return result(`rpc:${name}`);
+      },
+      from: (table: string) => ({
+        insert: (d: unknown) => {
+          mockState.calls.push({ op: 'insert', key: table, payload: d });
+          return result(`${table}:insert`);
+        },
+        upsert: (d: unknown) => {
+          mockState.calls.push({ op: 'upsert', key: table, payload: d });
+          return result(`${table}:upsert`);
+        },
+        update: (d: unknown) => {
+          mockState.calls.push({ op: 'update', key: table, payload: d });
+          return chainable(`${table}:update`);
+        },
+        select: () => {
+          mockState.calls.push({ op: 'select', key: table });
+          return chainable(`${table}:select`);
+        },
+      }),
+      auth: {
+        getUser: () => Promise.resolve({ data: { user: { id: 'admin-test-id' } } }),
+      },
+    },
+  };
+});
+
+// Importar DESPUÉS del mock para que sync.ts use el supabase mockeado
+const { db } = await import('./db');
+const { addToQueue, processQueue } = await import('./sync');
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+async function clearDb() {
+  await db.action_queue.clear();
+  await db.sales.clear();
+  await db.products.clear();
+  await db.customers.clear();
+  await db.cash_shifts.clear();
+}
+
+/** Inserta un item directo en la cola con control total de sus campos. */
+async function seedQueueItem(opts: {
+  type: string; status?: string; retries?: number; timestamp?: number; payload?: unknown;
+}) {
+  const id = crypto.randomUUID();
+  await db.action_queue.add({
+    id,
+    type: opts.type as never,
+    payload: (opts.payload ?? {}) as never,
+    timestamp: opts.timestamp ?? Date.now(),
+    retries: opts.retries ?? 0,
+    status: (opts.status ?? 'pending') as never,
+  });
+  return id;
+}
+
+/** navigator.onLine es read-only; se sobrescribe con defineProperty. */
+function setOnline(value: boolean) {
+  Object.defineProperty(navigator, 'onLine', {
+    configurable: true,
+    get: () => value,
+  });
+}
+
+beforeEach(async () => {
+  resetMock();
+  await clearDb();
+  setOnline(true);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+describe('Motor de cola — vaciado básico', () => {
+  it('procesa y elimina un item exitoso', async () => {
+    await seedQueueItem({
+      type: 'PRODUCT_SYNC',
+      payload: { id: 'p1', business_id: 'b1', name: 'Test', sync_status: 'pending_create' },
+    });
+    // products:upsert → sin error
+    await processQueue();
+    expect(await db.action_queue.count()).toBe(0);
+  });
+
+  it('procesa varios items y vacía la cola completa', async () => {
+    for (let i = 0; i < 10; i++) {
+      await seedQueueItem({
+        type: 'PRODUCT_SYNC',
+        payload: { id: `p${i}`, business_id: 'b1', name: `P${i}` },
+        timestamp: Date.now() + i,
+      });
+    }
+    await processQueue();
+    expect(await db.action_queue.count()).toBe(0);
+  });
+});
+
+describe('Motor de cola — items rotos NO bloquean a los sanos (BUG A)', () => {
+  it('un item envenenado no impide procesar los nuevos', async () => {
+    // 5 SHIFT rotos (el upsert de cash_shifts devuelve error)
+    mockState.responses['cash_shifts:upsert'] = { error: { message: 'columna faltante' } };
+    for (let i = 0; i < 5; i++) {
+      await seedQueueItem({ type: 'SHIFT', timestamp: 1000 + i,
+        payload: { id: `shift${i}`, business_id: 'b1' } });
+    }
+    // 1 venta nueva (timestamp mucho mayor) — el RPC responde OK
+    mockState.responses['rpc:process_sale_transaction'] = { data: { ok: true } };
+    const ventaId = 'venta-nueva';
+    await db.sales.add({
+      id: ventaId, business_id: 'b1', date: new Date().toISOString(),
+      shift_id: 's1', total: 100, items: [], payment_method: 'efectivo',
+      sync_status: 'pending_create',
+    } as never);
+    await seedQueueItem({ type: 'SALE', timestamp: 999999,
+      payload: { sale: { id: ventaId, business_id: 'b1', sync_status: 'pending_create' }, items: [] } });
+
+    await processQueue();
+
+    // La venta nueva DEBE haberse procesado (no quedó atrás de los SHIFT rotos)
+    const ventaProcesada = mockState.calls.some(c => c.op === 'rpc' && c.key === 'process_sale_transaction');
+    expect(ventaProcesada).toBe(true);
+    // La venta ya no está en la cola
+    const colaRestante = await db.action_queue.where('type').equals('SALE').count();
+    expect(colaRestante).toBe(0);
+    // Los SHIFT rotos siguen en cola con retries incrementados
+    const shiftsEnCola = await db.action_queue.where('type').equals('SHIFT').toArray();
+    expect(shiftsEnCola.length).toBe(5);
+    expect(shiftsEnCola.every(s => s.retries > 0)).toBe(true);
+  });
+
+  it('item roto llega a failed tras 5 intentos sin bloquear la cola', async () => {
+    mockState.responses['audit_logs:insert'] = { error: { message: 'FK violation' } };
+    // timestamp viejo (hace 10 min) → ya superó el backoff del retry 4, se procesa ya
+    const id = await seedQueueItem({ type: 'AUDIT', retries: 4,
+      timestamp: Date.now() - 10 * 60 * 1000,
+      payload: { id: 'a1', business_id: 'b1' } });
+
+    await processQueue();
+
+    const item = await db.action_queue.get(id);
+    expect(item?.status).toBe('failed');
+    expect(item?.error).toContain('ABANDONADO');
+  });
+});
+
+describe('Motor de cola — orden de dependencias FK (BUG C)', () => {
+  it('procesa STAFF antes que AUDIT aunque el AUDIT sea más viejo', async () => {
+    // AUDIT con timestamp viejo, STAFF con timestamp nuevo.
+    // Sin orden por dependencia, AUDIT iría primero y fallaría FK.
+    await seedQueueItem({ type: 'AUDIT', timestamp: 100,
+      payload: { id: 'a1', business_id: 'b1', staff_id: 'staff-x' } });
+    await seedQueueItem({ type: 'STAFF_SYNC', timestamp: 200,
+      payload: { id: 'staff-x', business_id: 'b1', name: 'Vendedor' } });
+
+    await processQueue();
+
+    // Verificar el ORDEN real de las llamadas a Supabase
+    const staffIdx = mockState.calls.findIndex(c => c.key === 'staff');
+    const auditIdx = mockState.calls.findIndex(c => c.key === 'audit_logs');
+    expect(staffIdx).toBeGreaterThanOrEqual(0);
+    expect(auditIdx).toBeGreaterThanOrEqual(0);
+    expect(staffIdx).toBeLessThan(auditIdx); // STAFF primero
+  });
+
+  it('procesa SHIFT antes que SALE antes que VOID_SALE', async () => {
+    await seedQueueItem({ type: 'VOID_SALE', timestamp: 1, payload: { saleId: 'x' } });
+    await seedQueueItem({ type: 'SALE', timestamp: 2,
+      payload: { sale: { id: 'x', business_id: 'b1' }, items: [] } });
+    await seedQueueItem({ type: 'SHIFT', timestamp: 3, payload: { id: 's1', business_id: 'b1' } });
+    // VOID_SALE necesita la venta local
+    await db.sales.add({ id: 'x', business_id: 'b1', date: '', shift_id: 's1',
+      total: 0, items: [], payment_method: 'efectivo', sync_status: 'synced' } as never);
+    mockState.responses['rpc:process_sale_transaction'] = { data: {} };
+
+    await processQueue();
+
+    const order = mockState.calls.map(c => c.key);
+    const shiftIdx = order.indexOf('cash_shifts');
+    const saleIdx = order.findIndex(k => k === 'process_sale_transaction');
+    const voidIdx = order.indexOf('sales'); // VOID_SALE hace update sobre 'sales'
+    expect(shiftIdx).toBeLessThan(saleIdx);
+    expect(saleIdx).toBeLessThan(voidIdx);
+  });
+});
+
+describe('Motor de cola — recuperación de items atascados (BUG B)', () => {
+  it('resetea un item atascado en processing y lo procesa', async () => {
+    // Item que quedó en 'processing' (la app crasheó a mitad del primer intento).
+    // retries:0 → sin backoff, debe procesarse de inmediato al resetearse.
+    const id = await seedQueueItem({
+      type: 'PRODUCT_SYNC', status: 'processing', retries: 0,
+      payload: { id: 'p1', business_id: 'b1', name: 'Atascado' },
+    });
+
+    await processQueue();
+
+    // Debe haberse procesado (eliminado de la cola)
+    expect(await db.action_queue.get(id)).toBeUndefined();
+  });
+
+  it('item en processing con retries respeta el backoff al resetearse', async () => {
+    // Item atascado que YA tenía reintentos: tras resetear a pending, el backoff
+    // exponencial sigue vigente (no se martillea el servidor).
+    const id = await seedQueueItem({
+      type: 'PRODUCT_SYNC', status: 'processing', retries: 2, timestamp: Date.now(),
+      payload: { id: 'p1', business_id: 'b1', name: 'ConBackoff' },
+    });
+
+    await processQueue();
+
+    // Reseteado a pending pero NO procesado todavía (en backoff)
+    const item = await db.action_queue.get(id);
+    expect(item?.status).toBe('pending');
+  });
+});
+
+describe('Motor de cola — offline', () => {
+  it('no procesa nada si está offline', async () => {
+    setOnline(false);
+    await seedQueueItem({ type: 'PRODUCT_SYNC', payload: { id: 'p1', business_id: 'b1' } });
+    await processQueue();
+    expect(await db.action_queue.count()).toBe(1); // sigue ahí
+    expect(mockState.calls.length).toBe(0); // no se llamó a Supabase
+  });
+});
+
+describe('Motor de cola — addToQueue', () => {
+  it('addToQueue agrega y procesa inmediatamente si hay conexión', async () => {
+    mockState.responses['products:upsert'] = { error: null };
+    await addToQueue('PRODUCT_SYNC', {
+      id: 'p1', business_id: 'b1', name: 'X', price: 1, stock: 1,
+      sku: null, sync_status: 'pending_create',
+    } as never);
+    // dar tiempo al processQueue disparado internamente
+    await new Promise(r => setTimeout(r, 50));
+    expect(await db.action_queue.count()).toBe(0);
+  });
+});

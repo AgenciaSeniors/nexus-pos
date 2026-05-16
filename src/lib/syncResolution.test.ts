@@ -5,6 +5,10 @@ import {
   computeBackoffMs,
   isReadyToRetry,
   canResolveStockConflict,
+  sortQueueByDependency,
+  compareQueueOrder,
+  isStuckInProcessing,
+  QUEUE_TYPE_PRIORITY,
   QUEUE_TYPE_LABELS,
   RETRY_CONFIG,
 } from './syncResolution';
@@ -243,5 +247,151 @@ describe('Constantes exportadas', () => {
     expect(RETRY_CONFIG.MAX_RETRIES).toBeGreaterThan(0);
     expect(RETRY_CONFIG.BACKOFF_BASE_MS).toBeGreaterThan(0);
     expect(RETRY_CONFIG.BACKOFF_MAX_MS).toBeGreaterThan(RETRY_CONFIG.BACKOFF_BASE_MS);
+  });
+});
+
+// =============================================================================
+// compareQueueOrder / sortQueueByDependency — orden de la cola por dependencia FK
+// =============================================================================
+describe('compareQueueOrder', () => {
+  it('entidad base (STAFF_SYNC) va antes que dependiente (AUDIT)', () => {
+    const staff = { type: 'STAFF_SYNC', timestamp: 100 };
+    const audit = { type: 'AUDIT', timestamp: 50 }; // más viejo pero depende
+    expect(compareQueueOrder(staff, audit)).toBeLessThan(0); // staff primero
+  });
+
+  it('SHIFT va antes que SALE', () => {
+    const shift = { type: 'SHIFT', timestamp: 200 };
+    const sale = { type: 'SALE', timestamp: 100 };
+    expect(compareQueueOrder(shift, sale)).toBeLessThan(0);
+  });
+
+  it('SALE va antes que VOID_SALE (no se anula algo que no existe)', () => {
+    const sale = { type: 'SALE', timestamp: 100 };
+    const voidSale = { type: 'VOID_SALE', timestamp: 50 };
+    expect(compareQueueOrder(sale, voidSale)).toBeLessThan(0);
+  });
+
+  it('mismo tipo → ordena por timestamp (FIFO)', () => {
+    const a = { type: 'SALE', timestamp: 100 };
+    const b = { type: 'SALE', timestamp: 200 };
+    expect(compareQueueOrder(a, b)).toBeLessThan(0); // el más viejo primero
+    expect(compareQueueOrder(b, a)).toBeGreaterThan(0);
+  });
+
+  it('mismo nivel de prioridad, distinto tipo → ordena por timestamp', () => {
+    // MOVEMENT y AUDIT ambos prioridad 40
+    const mov = { type: 'MOVEMENT', timestamp: 300 };
+    const audit = { type: 'AUDIT', timestamp: 100 };
+    expect(compareQueueOrder(mov, audit)).toBeGreaterThan(0); // audit más viejo
+  });
+
+  it('tipo desconocido recibe prioridad media', () => {
+    const unknown = { type: 'TIPO_RARO', timestamp: 100 };
+    const base = { type: 'PRODUCT_SYNC', timestamp: 999 };
+    const mutation = { type: 'VOID_SALE', timestamp: 1 };
+    expect(compareQueueOrder(base, unknown)).toBeLessThan(0);    // base antes
+    expect(compareQueueOrder(unknown, mutation)).toBeLessThan(0); // antes que mutación
+  });
+});
+
+describe('sortQueueByDependency', () => {
+  it('ordena una cola mixta respetando dependencias', () => {
+    // Cola desordenada como llegaría de IndexedDB
+    const queue = [
+      { id: '1', type: 'AUDIT', timestamp: 10 },
+      { id: '2', type: 'SALE', timestamp: 20 },
+      { id: '3', type: 'STAFF_SYNC', timestamp: 30 },
+      { id: '4', type: 'SHIFT', timestamp: 40 },
+      { id: '5', type: 'VOID_SALE', timestamp: 5 },
+      { id: '6', type: 'PRODUCT_SYNC', timestamp: 50 },
+    ];
+    const sorted = sortQueueByDependency(queue);
+    const order = sorted.map(i => i.type);
+    // Base (STAFF/PRODUCT) → SHIFT → SALE → AUDIT → VOID_SALE
+    expect(order).toEqual([
+      'STAFF_SYNC', 'PRODUCT_SYNC', 'SHIFT', 'SALE', 'AUDIT', 'VOID_SALE',
+    ]);
+  });
+
+  it('no muta el array original', () => {
+    const queue = [
+      { id: '1', type: 'AUDIT', timestamp: 10 },
+      { id: '2', type: 'STAFF_SYNC', timestamp: 20 },
+    ];
+    const original = [...queue];
+    sortQueueByDependency(queue);
+    expect(queue).toEqual(original);
+  });
+
+  it('cola vacía → array vacío', () => {
+    expect(sortQueueByDependency([])).toEqual([]);
+  });
+
+  it('escenario real del bug: items viejos rotos no impiden ordenar los nuevos', () => {
+    // 5 SHIFT viejos rotos + 1 SALE nueva. La SALE debe poder procesarse.
+    const queue = [
+      { id: 's1', type: 'SHIFT', timestamp: 1 },
+      { id: 's2', type: 'SHIFT', timestamp: 2 },
+      { id: 's3', type: 'SHIFT', timestamp: 3 },
+      { id: 's4', type: 'SHIFT', timestamp: 4 },
+      { id: 's5', type: 'SHIFT', timestamp: 5 },
+      { id: 'venta-nueva', type: 'SALE', timestamp: 9999 },
+    ];
+    const sorted = sortQueueByDependency(queue);
+    // La venta nueva está presente y ordenada (después de los shifts por prioridad)
+    expect(sorted.find(i => i.id === 'venta-nueva')).toBeDefined();
+    expect(sorted.length).toBe(6);
+  });
+});
+
+// =============================================================================
+// isStuckInProcessing
+// =============================================================================
+describe('isStuckInProcessing', () => {
+  const NOW = 1_000_000_000;
+
+  it('item pending nunca está atascado', () => {
+    expect(isStuckInProcessing('pending', NOW - 999_999, NOW)).toBe(false);
+  });
+
+  it('item processing reciente NO está atascado', () => {
+    expect(isStuckInProcessing('processing', NOW - 10_000, NOW)).toBe(false); // 10s
+  });
+
+  it('item processing viejo (>2min) SÍ está atascado', () => {
+    expect(isStuckInProcessing('processing', NOW - 130_000, NOW)).toBe(true); // 2m10s
+  });
+
+  it('umbral exacto de 2 min cuenta como atascado', () => {
+    expect(isStuckInProcessing('processing', NOW - 120_000, NOW)).toBe(true);
+  });
+
+  it('umbral configurable', () => {
+    expect(isStuckInProcessing('processing', NOW - 60_000, NOW, 30_000)).toBe(true);
+    expect(isStuckInProcessing('processing', NOW - 20_000, NOW, 30_000)).toBe(false);
+  });
+
+  it('item failed no se considera atascado en processing', () => {
+    expect(isStuckInProcessing('failed', NOW - 999_999, NOW)).toBe(false);
+  });
+});
+
+// =============================================================================
+// QUEUE_TYPE_PRIORITY — sanity check
+// =============================================================================
+describe('QUEUE_TYPE_PRIORITY', () => {
+  it('entidades base tienen prioridad menor que mutaciones', () => {
+    expect(QUEUE_TYPE_PRIORITY.STAFF_SYNC).toBeLessThan(QUEUE_TYPE_PRIORITY.SHIFT);
+    expect(QUEUE_TYPE_PRIORITY.SHIFT).toBeLessThan(QUEUE_TYPE_PRIORITY.SALE);
+    expect(QUEUE_TYPE_PRIORITY.SALE).toBeLessThan(QUEUE_TYPE_PRIORITY.AUDIT);
+    expect(QUEUE_TYPE_PRIORITY.AUDIT).toBeLessThan(QUEUE_TYPE_PRIORITY.VOID_SALE);
+  });
+
+  it('cubre todos los tipos de operación', () => {
+    const tipos = ['SALE','PRODUCT_SYNC','CUSTOMER_SYNC','MOVEMENT','AUDIT',
+      'SETTINGS_SYNC','SHIFT','CASH_MOVEMENT','STAFF_SYNC','VOID_SALE',
+      'PARTIAL_REFUND','LOYALTY_CHANGE'];
+    for (const t of tipos) expect(QUEUE_TYPE_PRIORITY[t]).toBeGreaterThan(0);
   });
 });

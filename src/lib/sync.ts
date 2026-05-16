@@ -21,6 +21,7 @@ import {
   filterRemoteItemsForBulkPut,
   isReadyToRetry,
   canResolveStockConflict,
+  sortQueueByDependency,
   QUEUE_TYPE_LABELS,
   RETRY_CONFIG,
 } from './syncResolution';
@@ -256,6 +257,11 @@ export async function processQueue() {
 
   _isProcessingQueue = true;
   try {
+    // Recuperación de crash: cualquier item en `processing` al entrar aquí
+    // quedó de una ejecución anterior interrumpida (la app se cerró a mitad).
+    // El guard _isProcessingQueue garantiza que no hay otro _runQueue activo,
+    // así que es seguro devolverlos a `pending`.
+    await resetProcessingItems();
     await _runQueue();
   } finally {
     _isProcessingQueue = false;
@@ -291,20 +297,34 @@ export async function pruneOldQueueItems(maxAgeDays = 30): Promise<number> {
 
 async function _runQueue() {
   if (!db.isOpen()) return;
-  const pendingItems = await db.action_queue.where('status').equals('pending').limit(5).sortBy('timestamp');
-  if (pendingItems.length === 0) return;
+
+  // Traer TODA la cola pendiente, no solo los 5 más viejos.
+  //
+  // BUG HISTÓRICO: `.limit(5).sortBy('timestamp')` tomaba siempre los 5 items
+  // más viejos. Si esos 5 estaban rotos (error de schema, FK, etc.), los items
+  // NUEVOS detrás de ellos nunca se procesaban — la cola entera quedaba
+  // "colgada". Ahora recorremos todo y los items rotos no bloquean a los sanos.
+  const allPending = await db.action_queue.where('status').equals('pending').toArray();
+  if (allPending.length === 0) return;
+
+  // Ordenar por dependencia de foreign key (entidades base primero) y luego
+  // FIFO. Esto evita errores "foreign key violation" al subir, por ejemplo,
+  // un AUDIT antes que la venta/empleado del que depende. (lógica en syncResolution.ts)
+  const ordered = sortQueueByDependency(allPending);
 
   let processedCount = 0;
 
-  for (const item of pendingItems) {
-    // Backoff exponencial: el timestamp se actualiza en cada reintento,
-    // así persiste incluso si la app se cierra y reabre. (Lógica en syncResolution.ts)
+  for (const item of ordered) {
+    // Backoff exponencial: si el item falló antes y aún no cumple su espera,
+    // se SALTA — pero NO bloquea a los siguientes (clave del fix).
     if (!isReadyToRetry(item.retries, item.timestamp)) continue;
 
     processedCount++;
 
     try {
-      await db.action_queue.update(item.id, { status: 'processing' });
+      // timestamp actualizado al entrar en processing: permite detectar items
+      // realmente atascados (app crasheada) vs. en proceso normal.
+      await db.action_queue.update(item.id, { status: 'processing', timestamp: Date.now() });
       await processItem(item);
       await db.action_queue.delete(item.id);
     } catch (error: unknown) {
@@ -325,9 +345,14 @@ async function _runQueue() {
     }
   }
 
-  // Solo recursar si se procesó al menos un ítem en esta vuelta.
-  if (processedCount > 0 && (await db.action_queue.where('status').equals('pending').count()) > 0) {
-    await _runQueue();
+  // Recursar SOLO si se procesó algo y quedan items LISTOS (no en backoff).
+  // Esto procesa items encolados durante esta vuelta (ej: una venta nueva)
+  // sin esperar al ciclo de 30s. Los items en backoff NO disparan recursión,
+  // así que no hay loop infinito sobre items rotos.
+  if (processedCount > 0) {
+    const stillPending = await db.action_queue.where('status').equals('pending').toArray();
+    const hasReady = stillPending.some(i => isReadyToRetry(i.retries, i.timestamp));
+    if (hasReady) await _runQueue();
   }
 }
 
@@ -577,7 +602,8 @@ export async function syncBusinessProfile(businessId: string) {
 }
 
 export async function syncPush() {
-    await resetProcessingItems();
+    // processQueue ya resetea internamente los items atascados en `processing`
+    // (dentro de su guard de concurrencia), así que no hace falta llamarlo aparte.
     await processQueue();
 }
 
