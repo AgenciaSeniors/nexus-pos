@@ -112,10 +112,17 @@ export function FinancePage() {
   });
   const [dateTo, setDateTo] = useState(today);
 
-  const businessSettings = useLiveQuery(() => db.settings.toArray());
+  // CRÍTICO: filtrar por el business_id activo. Si la tabla `settings` tuviera
+  // más de una fila (config huérfana de otro negocio), `[0]` podría tomar la
+  // equivocada y verificar el PIN contra el negocio incorrecto.
+  const businessSettings = useLiveQuery(async () => {
+    const bId = localStorage.getItem('nexus_business_id');
+    if (!bId) return null;
+    return await db.settings.where('id').equals(bId).first();
+  }, []);
   // null si no está configurado → nunca coincide con entrada del usuario
   // (evita que todos los negocios sin PIN usen el mismo '1234' por defecto)
-  const masterPin = businessSettings?.[0]?.master_pin || null;
+  const masterPin = businessSettings?.master_pin || null;
 
   const activeShift = useLiveQuery(async () => {
     let bId = localStorage.getItem('nexus_business_id');

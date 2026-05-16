@@ -449,12 +449,44 @@ export async function syncCriticalData(businessId: string) {
     ]);
 
     if (businessResult.data) {
+      const remoteBiz = businessResult.data;
+
+      // Bug 1 fix: garantizar que `settings` tenga SOLO la fila del negocio actual.
+      // Si quedaron configs huérfanas de otros negocios (cambio de cuenta, datos
+      // de prueba), se eliminan — de lo contrario el código que hace settings[0]
+      // podría leer la fila equivocada (ej: verificar PIN contra otro negocio).
+      const orphanSettings = await db.settings
+        .filter(s => s.id !== remoteBiz.id)
+        .primaryKeys();
+      if (orphanSettings.length > 0) {
+        await db.settings.bulkDelete(orphanSettings);
+        console.warn(`🧹 Eliminadas ${orphanSettings.length} config(s) de settings huérfanas`);
+      }
+
+      // Bug 3 fix: NO pisar campos editados localmente que aún no se sincronizaron.
+      // Si la fila local tiene sync_status 'pending_update', el usuario cambió
+      // algo (típicamente el master_pin) y el push todavía no subió. Sobrescribir
+      // con el valor del servidor revertiría ese cambio. Preservamos los campos
+      // sensibles del local hasta que el push complete.
+      const localSettings = await db.settings.get(remoteBiz.id);
+      const localIsDirty = localSettings?.sync_status === 'pending_update';
+
       await db.settings.put({
-        id: businessResult.data.id, name: businessResult.data.name, address: businessResult.data.address,
-        phone: businessResult.data.phone, receipt_message: businessResult.data.receipt_message,
-        master_pin: businessResult.data.master_pin, 
-        subscription_expires_at: businessResult.data.subscription_expires_at, status: businessResult.data.status as any,
-        last_check: new Date().toISOString(), sync_status: 'synced'
+        id: remoteBiz.id,
+        name: remoteBiz.name,
+        address: remoteBiz.address,
+        phone: remoteBiz.phone,
+        receipt_message: remoteBiz.receipt_message,
+        // master_pin: si hay edición local pendiente, conservar el local
+        master_pin: localIsDirty && localSettings?.master_pin
+          ? localSettings.master_pin
+          : remoteBiz.master_pin,
+        subscription_expires_at: remoteBiz.subscription_expires_at,
+        status: remoteBiz.status as any,
+        last_check: new Date().toISOString(),
+        // Si había cambios locales pendientes, mantener el estado dirty para
+        // que el push los suba; si no, marcar como synced.
+        sync_status: localIsDirty ? 'pending_update' : 'synced',
       });
     }
 
