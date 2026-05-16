@@ -371,7 +371,9 @@ export function PosPage() {
             business_id: bId,
             date: new Date().toISOString(),
             shift_id: activeShift.id,
-            staff_id: currentStaff?.id || 'admin',
+            // staff_id debe ser un UUID o quedar vacío — NUNCA un string como
+            // 'admin', que rompería el cast ::uuid en el RPC del servidor.
+            staff_id: currentStaff?.id,
             staff_name: currentStaff?.name || 'Cajero',
             total: saleTotal,
             payment_method: normalizedMethod,
