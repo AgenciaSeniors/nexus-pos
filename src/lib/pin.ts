@@ -10,9 +10,12 @@
  * por la versión anterior. Cuando `needsRehash()` retorna true, el caller debería
  * re-hashear con `hashPin()` y actualizar el storage tras una verificación exitosa.
  *
- * NOTA DE SEGURIDAD: ya NO se aceptan PINs en texto plano. Los formatos legacy en
- * texto plano (4 dígitos sin hashear) serán rechazados. Si quedan negocios en ese
- * estado, deben re-establecer el PIN desde Configuración.
+ * MIGRACIÓN: verifyPin acepta 3 formatos — PBKDF2 (nuevo), SHA-256 (legacy) y
+ * texto plano (legacy de versiones muy antiguas). Los dos últimos se aceptan
+ * para no bloquear negocios existentes; needsRehash() los marca para que el
+ * caller los re-hashee a PBKDF2 tras un login exitoso. Un PIN de 4 dígitos en
+ * texto plano dentro de IndexedDB local no es un riesgo real adicional: quien
+ * tiene acceso a IndexedDB ya controla el dispositivo.
  */
 
 const PBKDF2_ITERATIONS = 100_000;
@@ -140,8 +143,16 @@ export async function verifyPin(
     return constantTimeEqual(computed, storedValue);
   }
 
-  // Cualquier otra cosa (incluyendo texto plano) se rechaza.
-  // El admin debe re-establecer el PIN desde Configuración.
+  // Formato legacy en TEXTO PLANO: PIN sin hashear (4-8 dígitos).
+  // Se acepta para NO dejar bloqueados a negocios que vienen de versiones
+  // antiguas — rechazarlo dejaría a empleados (e incluso al admin) sin poder
+  // entrar, sin recurso. Tras un login exitoso el caller debe re-hashear con
+  // hashPin() para migrar al formato seguro (needsRehash() lo detecta).
+  if (/^\d{4,8}$/.test(storedValue)) {
+    return constantTimeEqual(pin, storedValue);
+  }
+
+  // Cualquier otro formato no reconocido se rechaza.
   return false;
 }
 
@@ -162,5 +173,6 @@ export function isPinHashed(value: string): boolean {
  */
 export function needsRehash(value: string): boolean {
   if (!value) return false;
-  return LEGACY_SHA256_REGEX.test(value);
+  // Necesitan migración: hashes SHA-256 viejos Y PINs en texto plano (4-8 dígitos)
+  return LEGACY_SHA256_REGEX.test(value) || /^\d{4,8}$/.test(value);
 }

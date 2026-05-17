@@ -68,16 +68,24 @@ describe('verifyPin — formato legacy SHA-256', () => {
   });
 });
 
-describe('verifyPin — rechaza texto plano (regresión)', () => {
-  it('NO acepta un valor en texto plano como PIN aunque coincida', async () => {
-    expect(await verifyPin('1234', 'entity-1', '1234')).toBe(false);
-    expect(await verifyPin('5678', 'entity-1', '5678')).toBe(false);
+describe('verifyPin — texto plano legacy (negocios de versiones antiguas)', () => {
+  it('ACEPTA un PIN en texto plano si coincide (no bloquea legacy)', async () => {
+    expect(await verifyPin('1234', 'entity-1', '1234')).toBe(true);
+    expect(await verifyPin('2580', 'entity-1', '2580')).toBe(true);
+    expect(await verifyPin('123456', 'entity-1', '123456')).toBe(true);
   });
 
-  it('rechaza cualquier formato no reconocido', async () => {
+  it('rechaza un PIN en texto plano que NO coincide', async () => {
+    expect(await verifyPin('1234', 'entity-1', '5678')).toBe(false);
+    expect(await verifyPin('0000', 'entity-1', '2580')).toBe(false);
+  });
+
+  it('rechaza cualquier formato no reconocido (no es hash ni PIN numérico)', async () => {
     expect(await verifyPin('1234', 'entity-1', 'foo')).toBe(false);
     expect(await verifyPin('1234', 'entity-1', 'pbkdf2$100$badformat')).toBe(false);
-    expect(await verifyPin('1234', 'entity-1', '')).toBe(false);
+    expect(await verifyPin('1234', 'entity-1', 'abcd')).toBe(false);
+    // 'texto plano' demasiado largo o con letras → no es un PIN válido
+    expect(await verifyPin('1234', 'entity-1', '123456789')).toBe(false);
   });
 
   it('rechaza con storedValue vacío o nulo', async () => {
@@ -108,12 +116,17 @@ describe('needsRehash', () => {
     expect(needsRehash(hex64)).toBe(true);
   });
 
+  it('retorna true para PINs en texto plano (deben migrarse a PBKDF2)', () => {
+    expect(needsRehash('1234')).toBe(true);
+    expect(needsRehash('2580')).toBe(true);
+    expect(needsRehash('123456')).toBe(true);
+  });
+
   it('retorna false para hashes PBKDF2 modernos', () => {
     expect(needsRehash('pbkdf2$100000$abc$def')).toBe(false);
   });
 
-  it('retorna false para valores vacíos o texto plano', () => {
+  it('retorna false para valores vacíos', () => {
     expect(needsRehash('')).toBe(false);
-    expect(needsRehash('1234')).toBe(false);
   });
 });
