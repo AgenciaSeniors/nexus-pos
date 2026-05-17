@@ -264,6 +264,35 @@ async function processItem(item: QueueItem) {
 // Guard para evitar ejecuciones concurrentes del procesador de cola
 let _isProcessingQueue = false;
 
+// Timeout por item. Si una operación de red tarda más que esto, se aborta la
+// espera y el item se reintenta luego.
+const ITEM_PROCESS_TIMEOUT_MS = 25_000;
+
+/**
+ * Envuelve una promesa con un timeout. Si no resuelve en `ms`, rechaza.
+ *
+ * CRÍTICO para offline-first con red inestable (Cuba): una llamada de red
+ * (supabase.rpc / fetch) puede quedarse colgada INDEFINIDAMENTE si la conexión
+ * se corta a mitad de la petición — el navegador no siempre la aborta. Sin
+ * este timeout, un solo item colgado congela TODO el motor: processItem nunca
+ * retorna → _runQueue nunca termina → el `finally` de processQueue nunca corre
+ * → el flag _isProcessingQueue queda en `true` para siempre → la cola no se
+ * vuelve a procesar nunca más (el síntoma "se queda colgado en sincronizando").
+ *
+ * El fetch huérfano sigue vivo en segundo plano pero ya no bloquea: el item
+ * se cuenta como fallo y se reintentará con backoff.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Tiempo de espera agotado (${Math.round(ms / 1000)}s) procesando ${label}`)),
+      ms,
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer)) as Promise<T>;
+}
+
 export async function processQueue() {
   if (!isOnline() || _isProcessingQueue) return;
 
@@ -337,7 +366,9 @@ async function _runQueue() {
       // timestamp actualizado al entrar en processing: permite detectar items
       // realmente atascados (app crasheada) vs. en proceso normal.
       await db.action_queue.update(item.id, { status: 'processing', timestamp: Date.now() });
-      await processItem(item);
+      // withTimeout: si la operación de red se cuelga, se aborta la espera para
+      // que el item pase a retry y la cola NO se congele (ver withTimeout arriba).
+      await withTimeout(processItem(item), ITEM_PROCESS_TIMEOUT_MS, item.type);
       await db.action_queue.delete(item.id);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
