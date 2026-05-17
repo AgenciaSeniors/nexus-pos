@@ -74,10 +74,22 @@ export async function addToQueue(type: QueueItem['type'], payload: QueuePayload)
       status: 'pending'
     });
 
-    // Disparar processQueue inmediatamente (sin setTimeout — el guard interno
-    // _isProcessingQueue evita ejecuciones concurrentes; el loop de 30s sirve de red).
+    // Disparar el procesamiento de la cola DIFERIDO al siguiente macrotask.
+    //
+    // CRÍTICO: addToQueue se llama frecuentemente DENTRO de transacciones Dexie
+    // (al registrar una venta, anular, devolver, etc. — todo ocurre dentro de un
+    // db.transaction). Si processQueue corriera de inmediato, lo haría con la
+    // transacción AÚN ABIERTA: sus llamadas async a Supabase rompen el contexto
+    // transaccional y las operaciones Dexie siguientes fallan con "Transaction
+    // inactive". Ese error quedaba tragado por el .catch → la venta NO subía
+    // hasta un Sincronizar manual. (Era el bug "no sincroniza".)
+    //
+    // setTimeout(0) difiere processQueue al siguiente macrotask, garantizado
+    // DESPUÉS de que la transacción haya hecho commit.
     if (isOnline()) {
-      processQueue().catch(err => console.error("Error en sync background:", err));
+      setTimeout(() => {
+        processQueue().catch(err => console.error("Error en sync background:", err));
+      }, 0);
     }
   } catch (error) {
     console.error("Error crítico al añadir a la cola:", error);
