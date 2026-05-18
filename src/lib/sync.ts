@@ -22,8 +22,8 @@ import {
   isReadyToRetry,
   canResolveStockConflict,
   sortQueueByDependency,
+  decideQueueItemOutcome,
   QUEUE_TYPE_LABELS,
-  RETRY_CONFIG,
 } from './syncResolution';
 
 // ─── LAST SYNC TIMESTAMP ──────────────────────────────────────────────────────
@@ -265,8 +265,9 @@ async function processItem(item: QueueItem) {
 let _isProcessingQueue = false;
 
 // Timeout por item. Si una operación de red tarda más que esto, se aborta la
-// espera y el item se reintenta luego.
-const ITEM_PROCESS_TIMEOUT_MS = 25_000;
+// espera y el item se reintenta luego. 35s da margen a redes lentas (Cuba)
+// sin dejar la cola esperando indefinidamente cuando la red está muerta.
+const ITEM_PROCESS_TIMEOUT_MS = 35_000;
 
 /**
  * Envuelve una promesa con un timeout. Si no resuelve en `ms`, rechaza.
@@ -372,18 +373,31 @@ async function _runQueue() {
       await db.action_queue.delete(item.id);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const newRetries = (item.retries || 0) + 1;
 
-      console.error(`❌ Fallo ítem ${item.type} (${item.id}):`, errorMessage);
+      // Decide el resultado: los errores de RED son transitorios y NUNCA mandan
+      // el item a `failed` — se reintentan indefinidamente hasta que la conexión
+      // coopere. Solo los errores PERMANENTES (FK, schema, dato inválido) van a
+      // `failed` tras MAX_RETRIES. (lógica pura en syncResolution.ts)
+      const decision = decideQueueItemOutcome(errorMessage, item.retries || 0);
 
-      if (newRetries >= RETRY_CONFIG.MAX_RETRIES) {
+      console.error(
+        `❌ Fallo ítem ${item.type} (${item.id})${decision.transient ? ' [red — se reintentará]' : ''}:`,
+        errorMessage,
+      );
+
+      if (decision.outcome === 'failed') {
           await db.action_queue.update(item.id, { status: 'failed', error: `ABANDONADO: ${errorMessage}` });
           window.dispatchEvent(new CustomEvent('nexus-sync-failed', {
             detail: { type: QUEUE_TYPE_LABELS[item.type] || item.type, error: errorMessage }
           }));
       } else {
           // timestamp actualizado = persistencia del backoff (sobrevive cierre de app)
-          await db.action_queue.update(item.id, { status: 'pending', retries: newRetries, error: errorMessage, timestamp: Date.now() });
+          await db.action_queue.update(item.id, {
+            status: 'pending',
+            retries: decision.retries,
+            error: decision.transient ? `Red: ${errorMessage}` : errorMessage,
+            timestamp: Date.now(),
+          });
       }
     }
   }

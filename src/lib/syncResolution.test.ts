@@ -8,6 +8,8 @@ import {
   sortQueueByDependency,
   compareQueueOrder,
   isStuckInProcessing,
+  isTransientError,
+  decideQueueItemOutcome,
   QUEUE_TYPE_PRIORITY,
   QUEUE_TYPE_LABELS,
   RETRY_CONFIG,
@@ -374,6 +376,97 @@ describe('isStuckInProcessing', () => {
 
   it('item failed no se considera atascado en processing', () => {
     expect(isStuckInProcessing('failed', NOW - 999_999, NOW)).toBe(false);
+  });
+});
+
+// =============================================================================
+// isTransientError — distinguir errores de red de errores permanentes
+// =============================================================================
+describe('isTransientError', () => {
+  it('detecta timeout del withTimeout (español)', () => {
+    expect(isTransientError('Tiempo de espera agotado (35s) procesando SALE')).toBe(true);
+  });
+
+  it('detecta errores de red comunes', () => {
+    expect(isTransientError('Failed to fetch')).toBe(true);
+    expect(isTransientError('NetworkError when attempting to fetch resource')).toBe(true);
+    expect(isTransientError('TypeError: network request failed')).toBe(true);
+    expect(isTransientError('fetch failed')).toBe(true);
+    expect(isTransientError('Load failed')).toBe(true); // Safari
+    expect(isTransientError('ECONNRESET')).toBe(true);
+    expect(isTransientError('ETIMEDOUT')).toBe(true);
+    expect(isTransientError('The operation was aborted')).toBe(true);
+    expect(isTransientError('net::ERR_INTERNET_DISCONNECTED')).toBe(true);
+  });
+
+  it('detecta errores de servidor temporal (5xx)', () => {
+    expect(isTransientError('503 Service Unavailable')).toBe(true);
+    expect(isTransientError('504 Gateway Timeout')).toBe(true);
+  });
+
+  it('NO marca como transitorio errores permanentes de base de datos', () => {
+    expect(isTransientError('insert or update on table "audit_logs" violates foreign key constraint')).toBe(false);
+    expect(isTransientError("Could not find the 'transfer_count' column of 'cash_shifts'")).toBe(false);
+    expect(isTransientError('null value in column "id" violates not-null constraint')).toBe(false);
+    expect(isTransientError('La venta no tiene un id válido (payload corrupto)')).toBe(false);
+    expect(isTransientError('duplicate key value violates unique constraint')).toBe(false);
+  });
+
+  it('string vacío o sin sentido → no transitorio', () => {
+    expect(isTransientError('')).toBe(false);
+    expect(isTransientError('algo raro')).toBe(false);
+  });
+
+  it('es case-insensitive', () => {
+    expect(isTransientError('FAILED TO FETCH')).toBe(true);
+    expect(isTransientError('TiMeOuT')).toBe(true);
+  });
+});
+
+// =============================================================================
+// decideQueueItemOutcome — el reintento inteligente
+// =============================================================================
+describe('decideQueueItemOutcome', () => {
+  it('error de red → SIEMPRE retry, nunca failed (aunque lleve muchos intentos)', () => {
+    for (const prev of [0, 1, 4, 5, 10, 50]) {
+      const d = decideQueueItemOutcome('Failed to fetch', prev);
+      expect(d.outcome).toBe('retry');
+      expect(d.transient).toBe(true);
+    }
+  });
+
+  it('error de red → retries se capea en MAX_RETRIES (para el backoff)', () => {
+    const d = decideQueueItemOutcome('Tiempo de espera agotado', 20);
+    expect(d.retries).toBe(RETRY_CONFIG.MAX_RETRIES);
+  });
+
+  it('error permanente → retry mientras no agote intentos', () => {
+    const d = decideQueueItemOutcome('foreign key constraint violation', 0);
+    expect(d.outcome).toBe('retry');
+    expect(d.retries).toBe(1);
+    expect(d.transient).toBe(false);
+  });
+
+  it('error permanente → failed al llegar a MAX_RETRIES', () => {
+    const d = decideQueueItemOutcome('foreign key constraint violation', RETRY_CONFIG.MAX_RETRIES - 1);
+    expect(d.outcome).toBe('failed');
+    expect(d.transient).toBe(false);
+  });
+
+  it('error permanente con retries ya por encima del máximo → failed', () => {
+    const d = decideQueueItemOutcome('null value in column', 10);
+    expect(d.outcome).toBe('failed');
+  });
+
+  it('el caso del bug: 5 timeouts de red NO mandan la venta a failed', () => {
+    // Simula una venta que falla 5 veces seguidas por red mala
+    let retries = 0;
+    for (let i = 0; i < 5; i++) {
+      const d = decideQueueItemOutcome('Tiempo de espera agotado (35s) procesando SALE', retries);
+      expect(d.outcome).toBe('retry'); // ← nunca 'failed'
+      retries = d.retries;
+    }
+    // Tras 5 fallos de red, la venta SIGUE en la cola lista para reintentar
   });
 });
 

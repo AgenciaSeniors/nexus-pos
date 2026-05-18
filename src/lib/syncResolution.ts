@@ -145,6 +145,81 @@ export const RETRY_CONFIG = {
 };
 
 /**
+ * Determina si un error de procesamiento es TRANSITORIO (red, timeout, servidor
+ * temporalmente caído) y por tanto NO debe contar hacia el límite de reintentos
+ * que envía un item a `failed`.
+ *
+ * Razón: un error de red es temporal — la operación ES válida y debe
+ * reintentarse indefinidamente hasta que la conexión coopere. En cambio, un
+ * error PERMANENTE (foreign key, columna inexistente, dato inválido) sí debe
+ * ir a `failed` tras MAX_RETRIES, porque reintentarlo nunca lo va a arreglar.
+ *
+ * CRÍTICO para offline-first en redes inestables (Cuba): sin esta distinción,
+ * una venta legítima terminaría en `failed` solo por sufrir 5 timeouts de red
+ * seguidos — y dejaría de subir sola hasta un "Reintentar" manual.
+ */
+export function isTransientError(errorMessage: string): boolean {
+  if (!errorMessage) return false;
+  const m = errorMessage.toLowerCase();
+  return (
+    m.includes('tiempo de espera') ||          // withTimeout (sync.ts)
+    m.includes('timeout') ||
+    m.includes('timed out') ||
+    m.includes('failed to fetch') ||           // fetch sin red
+    m.includes('networkerror') ||
+    m.includes('network request failed') ||
+    m.includes('network error') ||
+    m.includes('fetch failed') ||
+    m.includes('load failed') ||               // Safari/iOS
+    m.includes('econnreset') ||
+    m.includes('econnrefused') ||
+    m.includes('etimedout') ||
+    m.includes('enotfound') ||
+    m.includes('socket hang up') ||
+    m.includes('the operation was aborted') ||
+    m.includes('err_network') ||
+    m.includes('err_internet_disconnected') ||
+    m.includes('err_connection') ||
+    m.includes('503') ||                       // servidor temporalmente no disponible
+    m.includes('504') ||                       // gateway timeout
+    m.includes('upstream')
+  );
+}
+
+/**
+ * Decide el resultado de un item de cola que falló al procesarse.
+ *
+ * @param errorMessage Mensaje del error capturado
+ * @param previousRetries Reintentos que ya tenía el item (antes de este fallo)
+ * @returns El nuevo estado del item:
+ *   - `retry`     → vuelve a `pending`; el contador de retries indicado
+ *   - `failed`    → error permanente agotó los reintentos
+ *
+ * Errores transitorios (red): SIEMPRE `retry`, indefinidamente. El retries se
+ * capea a MAX_RETRIES solo para que el backoff no crezca sin fin.
+ * Errores permanentes: `retry` hasta MAX_RETRIES, luego `failed`.
+ */
+export function decideQueueItemOutcome(
+  errorMessage: string,
+  previousRetries: number,
+): { outcome: 'retry' | 'failed'; retries: number; transient: boolean } {
+  const transient = isTransientError(errorMessage);
+  const newRetries = (previousRetries || 0) + 1;
+
+  if (transient) {
+    return {
+      outcome: 'retry',
+      retries: Math.min(newRetries, RETRY_CONFIG.MAX_RETRIES),
+      transient: true,
+    };
+  }
+  if (newRetries >= RETRY_CONFIG.MAX_RETRIES) {
+    return { outcome: 'failed', retries: newRetries, transient: false };
+  }
+  return { outcome: 'retry', retries: newRetries, transient: false };
+}
+
+/**
  * Prioridad de procesamiento por tipo de operación, según sus dependencias
  * de foreign key en el servidor. Menor número = se procesa primero.
  *
