@@ -3,21 +3,23 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Comanda, type RestaurantTable, type Staff } from '../lib/db';
 import { addToQueue } from '../lib/sync';
 import { comandaTotal } from '../lib/comanda';
-import { UtensilsCrossed, Plus, Settings as SettingsIcon } from 'lucide-react';
+import { UtensilsCrossed, Plus, Settings as SettingsIcon, Clock, CircleDollarSign, Armchair } from 'lucide-react';
 import { toast } from 'sonner';
-import { PageHeader, EmptyState, Button } from '../components/ui';
+import { PageHeader, EmptyState, Button, StatCard } from '../components/ui';
+import { useNow, minutesSince, formatElapsed } from '../lib/time';
 
 const STATE_STYLES: Record<RestaurantTable['state'], { box: string; dot: string; label: string }> = {
-  libre: { box: 'border-[#7AC142]/30 bg-[#7AC142]/5 hover:border-[#7AC142]', dot: 'bg-[#7AC142]', label: 'Libre' },
-  ocupada: { box: 'border-amber-300 bg-amber-50 hover:border-amber-400', dot: 'bg-amber-500', label: 'Ocupada' },
-  por_cobrar: { box: 'border-red-300 bg-red-50 hover:border-red-400', dot: 'bg-red-500', label: 'Por cobrar' },
-  reservada: { box: 'border-blue-300 bg-blue-50 hover:border-blue-400', dot: 'bg-blue-500', label: 'Reservada' },
+  libre: { box: 'border-[#7AC142]/30 bg-[#7AC142]/5 hover:border-[#7AC142] hover:shadow-card-hover', dot: 'bg-[#7AC142] shadow-[0_0_6px_#7AC142]', label: 'Libre' },
+  ocupada: { box: 'border-amber-300 bg-amber-50 hover:border-amber-400 hover:shadow-card-hover', dot: 'bg-amber-500 shadow-[0_0_6px_#f59e0b]', label: 'Ocupada' },
+  por_cobrar: { box: 'border-red-300 bg-red-50 hover:border-red-400 hover:shadow-card-hover', dot: 'bg-red-500 shadow-[0_0_6px_#ef4444]', label: 'Por cobrar' },
+  reservada: { box: 'border-blue-300 bg-blue-50 hover:border-blue-400 hover:shadow-card-hover', dot: 'bg-blue-500 shadow-[0_0_6px_#3b82f6]', label: 'Reservada' },
 };
 
 export default function FloorMapPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
   const navigate = useNavigate();
   const businessId = localStorage.getItem('nexus_business_id') || '';
+  const now = useNow();
 
   const areas = useLiveQuery(async () => {
     if (!businessId) return [];
@@ -98,21 +100,32 @@ export default function FloorMapPage() {
     );
   }
 
+  // Resumen para la barra superior.
+  const occupiedCount = tables.filter(t => openByTable[t.id]).length;
+  const freeCount = tables.length - occupiedCount;
+  const totalInProgress = Object.values(openByTable).reduce((sum, c) => sum + (itemsByComanda[c.id] ?? 0), 0);
+
   const renderTable = (table: RestaurantTable) => {
     const comanda = openByTable[table.id];
     const state: RestaurantTable['state'] = comanda ? (table.state === 'por_cobrar' ? 'por_cobrar' : 'ocupada') : 'libre';
     const style = STATE_STYLES[state];
     const total = comanda ? itemsByComanda[comanda.id] ?? 0 : 0;
+    const mins = comanda ? minutesSince(comanda.opened_at, now) : 0;
     return (
       <button key={table.id} onClick={() => openTable(table)}
-        className={`relative p-4 rounded-2xl border-2 text-left transition-all active:scale-95 ${style.box}`}>
+        className={`relative p-4 rounded-2xl border-2 text-left transition-all duration-200 active:scale-95 shadow-card hover:-translate-y-0.5 ${style.box}`}>
         <div className="flex items-center justify-between mb-1">
-          <span className="font-black text-[#1F2937] text-lg">{table.name}</span>
-          <span className={`w-2.5 h-2.5 rounded-full ${style.dot}`} />
+          <span className="font-black text-[#1F2937] text-lg truncate">{table.name}</span>
+          <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${style.dot}`} />
         </div>
         <p className="text-[11px] font-bold text-[#6B7280] uppercase">{style.label}</p>
         {comanda && (
-          <p className="text-sm font-bold text-[#0B3B68] mt-1">${total.toFixed(2)}</p>
+          <div className="flex items-center justify-between mt-1.5">
+            <span className="text-sm font-black text-[#0B3B68]">${total.toFixed(2)}</span>
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[#6B7280]">
+              <Clock size={11} /> {formatElapsed(mins)}
+            </span>
+          </div>
         )}
       </button>
     );
@@ -123,13 +136,19 @@ export default function FloorMapPage() {
       <PageHeader
         title="Mesas"
         icon={<UtensilsCrossed className="text-[#0B3B68]" />}
-        className="mb-5"
+        className="mb-4"
         action={
           <Button variant="ghost" size="sm" icon={<Plus size={16} />} onClick={() => navigate('/configuracion?tab=restaurant')}>
             Áreas y mesas
           </Button>
         }
       />
+
+      <div className="grid grid-cols-3 gap-3 mb-6">
+        <StatCard label="Libres" value={freeCount} icon={<Armchair size={16} />} />
+        <StatCard label="Ocupadas" value={occupiedCount} icon={<Clock size={16} />} />
+        <StatCard tone="green" label="En curso" value={`$${totalInProgress.toFixed(2)}`} icon={<CircleDollarSign size={16} />} />
+      </div>
 
       {areas.map(area => (
         <section key={area.id} className="mb-6">
