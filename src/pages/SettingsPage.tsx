@@ -87,7 +87,8 @@ export function SettingsPage() {
     address: '',
     phone: '',
     receipt_message: '¡Gracias por su compra!',
-    master_pin: ''
+    master_pin: '',
+    business_type: 'retail' as 'retail' | 'restaurant'
   });
 
   const [showResetDbConfirm, setShowResetDbConfirm] = useState(false);
@@ -237,7 +238,8 @@ export function SettingsPage() {
         receipt_message: settings.receipt_message || '¡Gracias por su compra!',
         // Si el PIN almacenado ya es un hash, no lo cargamos en el campo:
         // el admin ingresa un nuevo PIN solo si quiere cambiarlo.
-        master_pin: isPinHashed(settings.master_pin || '') ? '' : (settings.master_pin || '')
+        master_pin: isPinHashed(settings.master_pin || '') ? '' : (settings.master_pin || ''),
+        business_type: settings.business_type === 'restaurant' ? 'restaurant' : 'retail'
       });
     }
   }, [settings]);
@@ -265,6 +267,7 @@ export function SettingsPage() {
             phone: businessForm.phone,
             receipt_message: businessForm.receipt_message,
             master_pin: pinFinal,
+            business_type: businessForm.business_type,
             status: 'active',
             sync_status: 'pending_update'
         };
@@ -461,6 +464,30 @@ export function SettingsPage() {
                             <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Dirección Física</label>
                             <input type="text" value={businessForm.address} onChange={e => setBusinessForm({...businessForm, address: e.target.value})}
                                 className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none transition-all" placeholder="Calle Principal #123" />
+                        </div>
+
+                        {/* ── MODO DEL NEGOCIO (retail / restaurante) ───────── */}
+                        <div className="pt-4">
+                            <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Tipo de Negocio</label>
+                            <div className="grid grid-cols-2 gap-3">
+                                {([
+                                    { key: 'retail' as const, title: 'Tienda', desc: 'Punto de venta de productos' },
+                                    { key: 'restaurant' as const, title: 'Restaurante', desc: 'Mesas, comandas y cocina' },
+                                ]).map(opt => {
+                                    const active = businessForm.business_type === opt.key;
+                                    return (
+                                        <button type="button" key={opt.key}
+                                            onClick={() => setBusinessForm({ ...businessForm, business_type: opt.key })}
+                                            className={`text-left p-4 rounded-xl border-2 transition-all ${active ? 'border-[#7AC142] bg-[#7AC142]/5' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                                            <p className={`font-bold ${active ? 'text-[#0B3B68]' : 'text-[#6B7280]'}`}>{opt.title}</p>
+                                            <p className="text-[11px] text-[#6B7280] mt-0.5">{opt.desc}</p>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <p className="text-[10px] text-[#6B7280] mt-2">
+                                El modo restaurante cambia la pantalla principal por el plano de mesas. Cambiarlo no afecta tus datos de productos ni ventas.
+                            </p>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-4">

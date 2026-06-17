@@ -181,12 +181,13 @@ async function processItem(item: QueueItem) {
     }
     case 'SETTINGS_SYNC': {
       const config = payload as BusinessConfig;
-      const updateData = { 
-          name: config.name, 
-          address: config.address, 
-          phone: config.phone, 
+      const updateData = {
+          name: config.name,
+          address: config.address,
+          phone: config.phone,
           receipt_message: config.receipt_message,
-          master_pin: config.master_pin
+          master_pin: config.master_pin,
+          business_type: config.business_type
       };
       const { error } = await supabase.from('businesses').update(updateData).eq('id', config.id);
       if (error) throw new Error(`Error negocio: ${error.message}`);
@@ -580,6 +581,7 @@ export async function syncCriticalData(businessId: string) {
         master_pin: localIsDirty && localSettings?.master_pin
           ? localSettings.master_pin
           : remoteBiz.master_pin,
+        business_type: remoteBiz.business_type ?? 'retail',
         subscription_expires_at: remoteBiz.subscription_expires_at,
         status: remoteBiz.status as any,
         last_check: new Date().toISOString(),

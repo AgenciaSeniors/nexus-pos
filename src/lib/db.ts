@@ -93,10 +93,17 @@ export interface BusinessConfig {
   phone?: string;
   receipt_message?: string;
   master_pin?: string; // ✅ PIN MAESTRO AÑADIDO
+  /**
+   * Tipo de negocio. Controla el modo de la app:
+   * - 'retail' (default): punto de venta clásico de productos.
+   * - 'restaurant': mesas, comandas, cocina, etc.
+   * Si está ausente se asume 'retail' para compatibilidad con tenants existentes.
+   */
+  business_type?: 'retail' | 'restaurant';
   subscription_expires_at?: string;
   last_check?: string;
   status?: 'active' | 'suspended' | 'pending' | 'trial';
-  sync_status?: 'synced' | 'pending_create' | 'pending_update'; 
+  sync_status?: 'synced' | 'pending_create' | 'pending_update';
 }
 
 export interface Customer {
