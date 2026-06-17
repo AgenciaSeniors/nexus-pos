@@ -22,7 +22,8 @@ import {
   type KitchenStatusPayload,
   type ModifierGroup,
   type Modifier,
-  type ProductModifierGroup
+  type ProductModifierGroup,
+  type RecipeIngredient
 } from './db';
 import { supabase } from './supabase';
 import type { Table } from 'dexie';
@@ -391,6 +392,15 @@ async function processItem(item: QueueItem) {
       const { error } = await supabase.from('product_modifier_groups').upsert(clean);
       throwUnlessDuplicate(error, 'Error asignación modificador', link.id);
       await db.product_modifier_groups.update(link.id, { sync_status: 'synced' });
+      break;
+    }
+    case 'RECIPE_SYNC': {
+      const recipe = payload as RecipeIngredient;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = recipe;
+      const { error } = await supabase.from('recipe_ingredients').upsert(clean);
+      throwUnlessDuplicate(error, 'Error receta', recipe.id);
+      await db.recipe_ingredients.update(recipe.id, { sync_status: 'synced' });
       break;
     }
     default:
@@ -1055,6 +1065,11 @@ export async function syncLiveData() {
             if (mRes.data?.length) await safeBulkPut(db.modifiers as never, mRes.data.map((r: any) => ({ ...r, sync_status: 'synced' as const })));
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             if (pmgRes.data?.length) await safeBulkPut(db.product_modifier_groups as never, pmgRes.data.map((r: any) => ({ ...r, sync_status: 'synced' as const })));
+
+            // Recetas (lista de materiales) — baja rotación.
+            const recipesRes = await supabase.from('recipe_ingredients').select('*').eq('business_id', businessId);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (recipesRes.data?.length) await safeBulkPut(db.recipe_ingredients as never, recipesRes.data.map((r: any) => ({ ...r, sync_status: 'synced' as const })));
         }
 
         // 7. Mejora 5: Verificar suscripción/trial con datos locales actualizados

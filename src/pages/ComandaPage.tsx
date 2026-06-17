@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type ComandaItem, type ComandaItemModifier, type Product, type Sale, type SaleItem, type Staff } from '../lib/db';
 import { addToQueue, syncPush } from '../lib/sync';
 import { comandaItemTotal, comandaTotal } from '../lib/comanda';
+import { computeStockDeductions } from '../lib/recipe';
 import { currency } from '../lib/currency';
 import { logAuditAction } from '../lib/audit';
 import { PaymentModal } from '../components/PaymentModal';
@@ -35,8 +36,18 @@ export default function ComandaPage() {
   const products = useLiveQuery(async () => {
     if (!businessId) return [];
     const rows = await db.products.where('business_id').equals(businessId).toArray();
-    return rows.filter(p => !p.deleted_at).sort((a, b) => a.name.localeCompare(b.name));
+    // Los ingredientes (is_ingredient) no se venden en el menú.
+    return rows.filter(p => !p.deleted_at && !p.is_ingredient).sort((a, b) => a.name.localeCompare(b.name));
   }, [businessId]) || [];
+
+  // Recetas (plato → ingredientes) para descontar stock al cobrar.
+  const recipesByDish = useLiveQuery(async () => {
+    if (!businessId) return new Map<string, import('../lib/db').RecipeIngredient[]>();
+    const rows = (await db.recipe_ingredients.where('business_id').equals(businessId).toArray()).filter(r => !r.deleted_at);
+    const map = new Map<string, import('../lib/db').RecipeIngredient[]>();
+    for (const r of rows) { const arr = map.get(r.dish_product_id) || []; arr.push(r); map.set(r.dish_product_id, arr); }
+    return map;
+  }, [businessId]) || new Map();
 
   const activeShift = useLiveQuery(
     () => businessId ? db.cash_shifts.where({ business_id: businessId, status: 'open' }).first() : undefined,
@@ -179,12 +190,15 @@ export default function ComandaPage() {
         [db.sales, db.products, db.comandas, db.restaurant_tables, db.action_queue, db.audit_logs],
         async () => {
           for (const s of sales) await db.sales.add(s);
-          // Descuento de stock agregado por producto (una sola vez, sin importar el split).
-          const agg: Record<string, number> = {};
-          for (const it of live) agg[it.product_id] = (agg[it.product_id] || 0) + it.quantity;
-          for (const pid of Object.keys(agg)) {
+          // Descuento de stock (una sola vez): por receta si el plato la tiene, o su
+          // propio stock si no. El RPC close_comanda re-aplica esto en el servidor.
+          const deductions = computeStockDeductions(
+            live.map(i => ({ product_id: i.product_id, quantity: i.quantity })),
+            recipesByDish,
+          );
+          for (const [pid, qty] of deductions) {
             const p = await db.products.get(pid);
-            if (p) await db.products.update(pid, { stock: p.stock - agg[pid], sync_status: 'pending_update' });
+            if (p) await db.products.update(pid, { stock: p.stock - qty, sync_status: 'pending_update' });
           }
           await db.comandas.update(comanda.id, { status: 'closed', closed_at: now, total: grandTotal, sale_ids: sales.map(s => s.id), sync_status: 'pending_update' });
           await db.restaurant_tables.update(comanda.table_id, { state: 'libre', current_comanda_id: null, sync_status: 'pending_update' });

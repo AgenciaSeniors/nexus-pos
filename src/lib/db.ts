@@ -14,6 +14,10 @@ export interface Product {
   unit?: string;
   expiration_date?: string;
   low_stock_threshold?: number;
+  // Modo restaurante: marca un producto como ingrediente (no se vende en el menú;
+  // se descuenta vía recetas). `tracks_recipe` es informativo (tiene receta asociada).
+  is_ingredient?: boolean;
+  tracks_recipe?: boolean;
   created_at?: string;
   updated_at?: string;
   sync_status: 'synced' | 'pending_create' | 'pending_update' | 'pending_delete';
@@ -340,6 +344,20 @@ export interface ProductModifierGroup {
   sync_status: 'synced' | 'pending_create' | 'pending_update' | 'pending_delete';
 }
 
+// ─── RECETAS (lista de materiales: plato → ingredientes) ──────────────────────
+export interface RecipeIngredient {
+  id: string;
+  business_id: string;
+  dish_product_id: string;       // el Product vendible (plato)
+  ingredient_product_id: string; // un Product con stock (ingrediente)
+  quantity: number;              // consumo por 1 unidad de plato (fraccional)
+  unit?: string;                 // snapshot para mostrar
+  deleted_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  sync_status: 'synced' | 'pending_create' | 'pending_update' | 'pending_delete';
+}
+
 export type ComandaClosePayload = {
   comanda_id: string;
   sales: Sale[];
@@ -397,11 +415,12 @@ export type QueuePayload =
     | KitchenStatusPayload
     | ModifierGroup
     | Modifier
-    | ProductModifierGroup;
+    | ProductModifierGroup
+    | RecipeIngredient;
 
 export interface QueueItem {
   id: string;
-  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT' | 'STAFF_SYNC' | 'VOID_SALE' | 'PARTIAL_REFUND' | 'LOYALTY_CHANGE' | 'AREA_SYNC' | 'TABLE_SYNC' | 'COMANDA_SYNC' | 'COMANDA_ITEM_SYNC' | 'COMANDA_CLOSE' | 'KITCHEN_STATUS' | 'MODIFIER_GROUP_SYNC' | 'MODIFIER_SYNC' | 'PRODUCT_MODIFIER_SYNC';
+  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT' | 'STAFF_SYNC' | 'VOID_SALE' | 'PARTIAL_REFUND' | 'LOYALTY_CHANGE' | 'AREA_SYNC' | 'TABLE_SYNC' | 'COMANDA_SYNC' | 'COMANDA_ITEM_SYNC' | 'COMANDA_CLOSE' | 'KITCHEN_STATUS' | 'MODIFIER_GROUP_SYNC' | 'MODIFIER_SYNC' | 'PRODUCT_MODIFIER_SYNC' | 'RECIPE_SYNC';
   payload: QueuePayload;
   timestamp: number;
   retries: number;
@@ -430,6 +449,7 @@ export class NexusDB extends Dexie {
   modifier_groups!: Table<ModifierGroup>;
   modifiers!: Table<Modifier>;
   product_modifier_groups!: Table<ProductModifierGroup>;
+  recipe_ingredients!: Table<RecipeIngredient>;
 
   constructor() {
     super('NexusPOS_DB');
@@ -511,10 +531,15 @@ export class NexusDB extends Dexie {
       product_modifier_groups: 'id, business_id, product_id, group_id, sync_status, [business_id+product_id]',
     });
 
+    // v15: RECETAS — lista de materiales plato→ingredientes. No-op para retail.
+    this.version(15).stores({
+      recipe_ingredients: 'id, business_id, dish_product_id, ingredient_product_id, sync_status, [business_id+dish_product_id]',
+    });
+
     // Backup pre-migración: si la versión del schema cambió, crear backup de seguridad
     this.on('ready', () => {
       const SCHEMA_KEY = 'nexus_db_schema_version';
-      const currentVersion = 14; // Debe coincidir con la última versión declarada arriba
+      const currentVersion = 15; // Debe coincidir con la última versión declarada arriba
       const savedVersion = parseInt(localStorage.getItem(SCHEMA_KEY) || '0');
 
       if (savedVersion > 0 && savedVersion < currentVersion) {

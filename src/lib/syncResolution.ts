@@ -145,6 +145,7 @@ export const QUEUE_TYPE_LABELS: Record<string, string> = {
   MODIFIER_GROUP_SYNC: 'Grupo de modificadores',
   MODIFIER_SYNC: 'Modificador',
   PRODUCT_MODIFIER_SYNC: 'Modificador de producto',
+  RECIPE_SYNC: 'Receta',
 };
 
 export const RETRY_CONFIG = {
@@ -267,6 +268,7 @@ export const QUEUE_TYPE_PRIORITY: Record<string, number> = {
   MODIFIER_GROUP_SYNC: 12,
   MODIFIER_SYNC: 14,
   PRODUCT_MODIFIER_SYNC: 16,
+  RECIPE_SYNC: 16,
   COMANDA_SYNC: 25,
   COMANDA_ITEM_SYNC: 30,
   KITCHEN_STATUS: 40,

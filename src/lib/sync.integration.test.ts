@@ -108,6 +108,7 @@ async function clearDb() {
   await db.modifier_groups.clear();
   await db.modifiers.clear();
   await db.product_modifier_groups.clear();
+  await db.recipe_ingredients.clear();
 }
 
 /** Inserta un item directo en la cola con control total de sus campos. */
@@ -649,5 +650,16 @@ describe('Modo restaurante — sync de mesas/comandas', () => {
     // Las 3 ventas comparten el mismo split_group_id
     const groups = new Set([await db.sales.get('s1'), await db.sales.get('s2'), await db.sales.get('s3')].map(s => s?.split_group_id));
     expect(groups).toEqual(new Set([gid]));
+  });
+
+  it('RECIPE_SYNC hace upsert y marca synced', async () => {
+    await db.recipe_ingredients.add({ id: 'r1', business_id: 'b1', dish_product_id: 'd1', ingredient_product_id: 'ing1', quantity: 0.15, sync_status: 'pending_create' } as never);
+    mockState.responses['recipe_ingredients:upsert'] = { data: null };
+    await seedQueueItem({ type: 'RECIPE_SYNC', payload: { id: 'r1', business_id: 'b1', dish_product_id: 'd1', ingredient_product_id: 'ing1', quantity: 0.15 } });
+
+    await processQueue();
+
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.recipe_ingredients.get('r1'))?.sync_status).toBe('synced');
   });
 });
