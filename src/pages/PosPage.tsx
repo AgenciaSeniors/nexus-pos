@@ -39,7 +39,22 @@ export function PosPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('Todo');
   const [productsPage, setProductsPage] = useState(1);
   const PRODUCTS_PER_PAGE = 40;
-  const [cart, setCart] = useState<CartItem[]>([]);
+  // El carrito se persiste en sessionStorage por negocio: si la app se recarga
+  // a media venta (watchdog de sesión, refresh accidental, crash), la venta en
+  // curso no se pierde. Se limpia sola al cerrar la pestaña o al cobrar.
+  const cartStorageKey = () => {
+    const bId = localStorage.getItem('nexus_business_id');
+    return bId ? `nexus_pos_cart_${bId}` : null;
+  };
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    try {
+      const key = cartStorageKey();
+      if (!key) return [];
+      const saved = sessionStorage.getItem(key);
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+  });
   const [isCheckout, setIsCheckout] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
   const [orderNote, setOrderNote] = useState('');
@@ -131,7 +146,9 @@ export function PosPage() {
   const categories = useMemo(() => ['Todo', ...new Set(products.map(p => p.category || 'General'))], [products]);
 
   const filteredProducts = useMemo(() => products.filter(p => {
-    const matchQuery = p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.includes(query);
+    // p.sku puede ser null (ver Product en db.ts) → checar antes de .includes
+    // o la búsqueda crashea la página entera al teclear.
+    const matchQuery = p.name.toLowerCase().includes(query.toLowerCase()) || (!!p.sku && p.sku.includes(query));
     const matchCat = selectedCategory === 'Todo' || p.category === selectedCategory;
     return matchQuery && matchCat;
   }), [products, query, selectedCategory]);
@@ -168,11 +185,24 @@ export function PosPage() {
   // Reset página al cambiar filtros
   useEffect(() => { setProductsPage(1); }, [query, selectedCategory]);
 
+  // Persistir el carrito en cada cambio (recuperación tras recarga inesperada).
+  // Vacío → borrar la clave para no dejar basura.
+  useEffect(() => {
+    try {
+      const key = cartStorageKey();
+      if (!key) return;
+      if (cart.length === 0) sessionStorage.removeItem(key);
+      else sessionStorage.setItem(key, JSON.stringify(cart));
+    } catch { /* sessionStorage lleno o no disponible */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart]);
+
   const visibleProducts = useMemo(() => filteredProducts.slice(0, productsPage * PRODUCTS_PER_PAGE), [filteredProducts, productsPage]);
   const hasMoreProducts = visibleProducts.length < filteredProducts.length;
 
   // --- LÓGICA DEL CARRITO ---
   const addToCart = (product: Product) => {
+    let added = false; // ¿se modificó realmente el carrito?
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
       if (existing) {
@@ -180,17 +210,46 @@ export function PosPage() {
             toast.error(`Stock insuficiente: solo ${product.stock} unidades de "${product.name}"`);
             return prev;
         }
+        added = true;
         return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
       }
       if (product.stock <= 0) {
         toast.error(`"${product.name}" no tiene stock disponible`);
         return prev;
       }
+      added = true;
       return [...prev, { ...product, quantity: 1 }];
     });
-    
-    if (navigator.vibrate) navigator.vibrate(50);
-    toast.success("Agregado", { duration: 800, position: 'bottom-center' });
+
+    // Solo confirmar (vibrar + "Agregado") si de verdad se agregó. Antes el toast
+    // de éxito salía SIEMPRE, hasta cuando el stock estaba agotado (mensaje doble).
+    if (added) {
+      if (navigator.vibrate) navigator.vibrate(50);
+      toast.success("Agregado", { duration: 800, position: 'bottom-center' });
+    }
+  };
+
+  // Enter en la búsqueda → agrega al carrito.
+  // Habilita lectores de código de barras (que "teclean" el código + Enter) y la
+  // venta rápida por teclado. Prioridad:
+  //  1) match EXACTO de SKU (lo que envía un lector de códigos) → agrega ese
+  //  2) si la búsqueda filtra a UN solo producto → agrega ese
+  //  3) varios resultados → no hace nada (el usuario elige tocando)
+  //  4) cero resultados → avisa
+  const handleSearchEnter = () => {
+    const q = query.trim();
+    if (!q) return;
+    const exactSku = products.find(p => p.sku && p.sku.toLowerCase() === q.toLowerCase());
+    const target = exactSku ?? (filteredProducts.length === 1 ? filteredProducts[0] : null);
+    if (target) {
+      addToCart(target);
+      setQuery('');
+      // mantener el foco para escanear/teclear el siguiente sin tocar la pantalla
+      setTimeout(() => searchInputRef.current?.focus(), 0);
+    } else if (filteredProducts.length === 0) {
+      toast.error(`No se encontró "${q}"`, { duration: 1500 });
+    }
+    // si hay varios resultados, no hacemos nada: que el usuario elija tocando
   };
 
   const updateQuantity = (id: string, delta: number) => {
@@ -570,16 +629,22 @@ export function PosPage() {
                     <input
                         ref={searchInputRef}
                         type="text"
-                        placeholder="Buscar por nombre, código o SKU..."
+                        inputMode="search"
+                        enterKeyHint="enter"
+                        placeholder="Buscar o escanear código..."
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSearchEnter(); } }}
                         autoFocus
                         className="w-full pl-12 pr-10 py-3 bg-background border-none rounded-2xl text-lg focus:ring-2 focus:ring-bisne-navy focus:bg-surface transition-all shadow-inner outline-none text-text-main placeholder-gray-400 font-body"
                     />
-                    {query && (
+                    {query ? (
                         <button onClick={() => {setQuery(''); searchInputRef.current?.focus();}} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-secondary hover:text-state-error p-1">
                             <X size={18} />
                         </button>
+                    ) : (
+                        // Pista visual de que el campo acepta lector de código de barras
+                        <Barcode className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 w-5 h-5 pointer-events-none" />
                     )}
                 </div>
                 <button
@@ -878,8 +943,8 @@ export function PosPage() {
 
                         <div className="flex justify-between items-center bg-background p-1 rounded-lg mt-1 border border-gray-100">
                             <div className="flex items-center gap-1">
-                                <button onClick={() => updateQuantity(item.id, -1)} className="w-9 h-9 flex items-center justify-center bg-surface rounded-md text-text-main shadow-sm hover:bg-gray-100 border border-gray-200 active:scale-95 transition-all">
-                                    <Minus size={16}/>
+                                <button onClick={() => updateQuantity(item.id, -1)} aria-label="Quitar una unidad" className="w-10 h-10 flex items-center justify-center bg-surface rounded-md text-text-main shadow-sm hover:bg-gray-100 border border-gray-200 active:scale-95 transition-all">
+                                    <Minus size={18}/>
                                 </button>
                                 {editingQtyId === item.id ? (
                                     <input
@@ -891,7 +956,7 @@ export function PosPage() {
                                         onChange={e => setEditQtyValue(e.target.value)}
                                         onBlur={() => { setDirectQuantity(item.id, editQtyValue); }}
                                         onKeyDown={e => {
-                                            if (e.key === 'Enter') setDirectQuantity(item.id, editQtyValue);
+                                            if (e.key === 'Enter') { e.preventDefault(); setDirectQuantity(item.id, editQtyValue); }
                                             if (e.key === 'Escape') setEditingQtyId(null);
                                         }}
                                         className="w-14 text-center font-bold text-base text-bisne-navy border-b-2 border-bisne-navy outline-none bg-transparent tabular-nums"
@@ -905,13 +970,13 @@ export function PosPage() {
                                         {fmtQty(item.quantity)}
                                     </button>
                                 )}
-                                <button onClick={() => updateQuantity(item.id, 1)} className="w-9 h-9 flex items-center justify-center bg-bisne-navy text-white rounded-md shadow-sm hover:bg-bisne-navy/90 active:scale-95 transition-all">
-                                    <Plus size={16}/>
+                                <button onClick={() => updateQuantity(item.id, 1)} aria-label="Agregar una unidad" className="w-10 h-10 flex items-center justify-center bg-bisne-navy text-white rounded-md shadow-sm hover:bg-bisne-navy/90 active:scale-95 transition-all">
+                                    <Plus size={18}/>
                                 </button>
                             </div>
                             {item.unit && <span className="text-[10px] text-gray-400 font-medium">{item.unit}</span>}
-                            <button onClick={() => removeFromCart(item.id)} className="p-2 text-gray-400 hover:text-state-error hover:bg-red-50 rounded-lg transition-colors">
-                                <X size={18} />
+                            <button onClick={() => removeFromCart(item.id)} aria-label={`Quitar ${item.name} del carrito`} className="w-10 h-10 flex items-center justify-center ml-3 text-gray-400 hover:text-state-error hover:bg-red-50 rounded-lg transition-colors">
+                                <X size={20} />
                             </button>
                         </div>
                     </div>

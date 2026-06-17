@@ -684,6 +684,13 @@ function BusinessApp() {
     // Backup automático cada 15 minutos (protección contra apagones)
     startAutoBackup();
 
+    // Watchdog de sesión: si tras horas/días la sesión Supabase queda "zombie"
+    // (token sin poder renovarse → getSession colgado), detecta y recupera
+    // automáticamente limpiando tokens + recarga. Evita el "se queda sincronizando".
+    import('./lib/sessionWatchdog').then(({ startSessionWatchdog }) => {
+      startSessionWatchdog();
+    }).catch(() => {});
+
     // Android: registrar handler del botón Back hardware + lifecycle pause/resume.
     // Sin esto, el back nativo cierra la app inmediatamente desde cualquier pantalla
     // (pierde ventas en curso, parked orders, modales). En web/desktop es no-op.
@@ -760,6 +767,10 @@ function BusinessApp() {
         // Desregistrar el handler de back/lifecycle de Android
         import('./lib/androidBackHandler').then(({ unregisterBackHandler }) => {
           unregisterBackHandler();
+        }).catch(() => {});
+        // Detener el watchdog de sesión
+        import('./lib/sessionWatchdog').then(({ stopSessionWatchdog }) => {
+          stopSessionWatchdog();
         }).catch(() => {});
     };
   }, []); // Sin dependencias: el efecto corre solo al montar. Los refs evitan race conditions.

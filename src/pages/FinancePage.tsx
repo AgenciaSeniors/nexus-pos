@@ -1106,7 +1106,7 @@ export function FinancePage() {
           )}
           <div className="w-px h-6 bg-gray-200 mx-1 self-center"></div>
           <button onClick={() => setViewMode('closing')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${viewMode === 'closing' ? 'bg-[#1F2937] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}>
-            <ClipboardCheck size={16} /> Corte Z
+            <ClipboardCheck size={16} /> Cierre del día
           </button>
         </div>
       </div>
@@ -2212,7 +2212,7 @@ export function FinancePage() {
         <div className="fixed inset-0 bg-[#0B3B68]/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
             <div className="bg-white rounded-2xl p-0 max-w-md w-full shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
                 <div className="bg-[#0B3B68] p-6 text-white flex justify-between items-center sticky top-0 z-10">
-                    <h2 className="text-xl font-black flex items-center gap-2"><Lock className="text-[#7AC142]"/> CORTE DE CAJA</h2>
+                    <h2 className="text-xl font-black flex items-center gap-2"><Lock className="text-[#7AC142]"/> CIERRE DE CAJA</h2>
                     <button onClick={() => { setIsClosing(false); setClosingShiftStats(null); setAmount(''); setTransferCount(''); }}><X className="text-gray-400 hover:text-white"/></button>
                 </div>
                 <div className="p-6 space-y-5">
