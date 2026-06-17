@@ -10,8 +10,13 @@ describe('comandaItemTotal', () => {
     expect(comandaItemTotal({ price: 10, custom_price: 8, quantity: 2 })).toBe(16);
   });
 
-  it('suma modifiers_total', () => {
+  it('suma modifiers_total por unidad', () => {
     expect(comandaItemTotal({ price: 10, quantity: 1, modifiers_total: 2.5 })).toBe(12.5);
+  });
+
+  it('modifiers_total es por unidad: se multiplica por la cantidad', () => {
+    // (10 + 2) * 2 = 24
+    expect(comandaItemTotal({ price: 10, quantity: 2, modifiers_total: 2 })).toBe(24);
   });
 
   it('una línea anulada no suma', () => {

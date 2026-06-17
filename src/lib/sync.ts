@@ -19,7 +19,10 @@ import {
   type Comanda,
   type ComandaItem,
   type ComandaClosePayload,
-  type KitchenStatusPayload
+  type KitchenStatusPayload,
+  type ModifierGroup,
+  type Modifier,
+  type ProductModifierGroup
 } from './db';
 import { supabase } from './supabase';
 import type { Table } from 'dexie';
@@ -361,6 +364,33 @@ async function processItem(item: QueueItem) {
       });
       if (error) throw new Error(`Error estado cocina: ${error.message}`);
       await db.comanda_items.update(item_id, { sync_status: 'synced' });
+      break;
+    }
+    case 'MODIFIER_GROUP_SYNC': {
+      const group = payload as ModifierGroup;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = group;
+      const { error } = await supabase.from('modifier_groups').upsert(clean);
+      throwUnlessDuplicate(error, 'Error grupo modificador', group.id);
+      await db.modifier_groups.update(group.id, { sync_status: 'synced' });
+      break;
+    }
+    case 'MODIFIER_SYNC': {
+      const modifier = payload as Modifier;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = modifier;
+      const { error } = await supabase.from('modifiers').upsert(clean);
+      throwUnlessDuplicate(error, 'Error modificador', modifier.id);
+      await db.modifiers.update(modifier.id, { sync_status: 'synced' });
+      break;
+    }
+    case 'PRODUCT_MODIFIER_SYNC': {
+      const link = payload as ProductModifierGroup;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = link;
+      const { error } = await supabase.from('product_modifier_groups').upsert(clean);
+      throwUnlessDuplicate(error, 'Error asignación modificador', link.id);
+      await db.product_modifier_groups.update(link.id, { sync_status: 'synced' });
       break;
     }
     default:
@@ -1012,6 +1042,19 @@ export async function syncLiveData() {
             if (comandasRes.data?.length) await safeBulkPut(db.comandas as never, comandasRes.data.map((c: any) => ({ ...c, sync_status: 'synced' as const })));
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             if (itemsData.length) await safeBulkPut(db.comanda_items as never, itemsData.map((i: any) => ({ ...i, sync_status: 'synced' as const })));
+
+            // Config del menú (modificadores) — baja rotación, full select.
+            const [mgRes, mRes, pmgRes] = await Promise.all([
+                supabase.from('modifier_groups').select('*').eq('business_id', businessId),
+                supabase.from('modifiers').select('*').eq('business_id', businessId),
+                supabase.from('product_modifier_groups').select('*').eq('business_id', businessId),
+            ]);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (mgRes.data?.length) await safeBulkPut(db.modifier_groups as never, mgRes.data.map((r: any) => ({ ...r, sync_status: 'synced' as const })));
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (mRes.data?.length) await safeBulkPut(db.modifiers as never, mRes.data.map((r: any) => ({ ...r, sync_status: 'synced' as const })));
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (pmgRes.data?.length) await safeBulkPut(db.product_modifier_groups as never, pmgRes.data.map((r: any) => ({ ...r, sync_status: 'synced' as const })));
         }
 
         // 7. Mejora 5: Verificar suscripción/trial con datos locales actualizados

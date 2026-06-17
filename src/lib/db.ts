@@ -29,6 +29,8 @@ export interface SaleItem {
   cost?: number;
   note?: string;
   custom_price?: number;
+  // Modo restaurante: modificadores aplicados (snapshot para ticket/reportes).
+  modifiers?: ComandaItemModifier[];
 }
 
 export interface Sale {
@@ -293,6 +295,45 @@ export interface ComandaItem {
   sync_status: 'synced' | 'pending_create' | 'pending_update';
 }
 
+// ─── MODIFICADORES (configuración del menú) ───────────────────────────────────
+export interface ModifierGroup {
+  id: string;
+  business_id: string;
+  name: string;              // "Término", "Extras"
+  min_select?: number;
+  max_select?: number;       // 1 = única opción; >1 o null = múltiple
+  required?: boolean;
+  sort_order?: number;
+  deleted_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  sync_status: 'synced' | 'pending_create' | 'pending_update' | 'pending_delete';
+}
+
+export interface Modifier {
+  id: string;
+  business_id: string;
+  group_id: string;
+  name: string;              // "Bien cocido", "+Queso"
+  price_delta: number;       // 0 o +X (por unidad)
+  sort_order?: number;
+  deleted_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  sync_status: 'synced' | 'pending_create' | 'pending_update' | 'pending_delete';
+}
+
+export interface ProductModifierGroup {
+  id: string;
+  business_id: string;
+  product_id: string;
+  group_id: string;
+  sort_order?: number;
+  deleted_at?: string | null;
+  updated_at?: string;
+  sync_status: 'synced' | 'pending_create' | 'pending_update' | 'pending_delete';
+}
+
 export type ComandaClosePayload = {
   comanda_id: string;
   sales: Sale[];
@@ -347,11 +388,14 @@ export type QueuePayload =
     | Comanda
     | ComandaItem
     | ComandaClosePayload
-    | KitchenStatusPayload;
+    | KitchenStatusPayload
+    | ModifierGroup
+    | Modifier
+    | ProductModifierGroup;
 
 export interface QueueItem {
   id: string;
-  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT' | 'STAFF_SYNC' | 'VOID_SALE' | 'PARTIAL_REFUND' | 'LOYALTY_CHANGE' | 'AREA_SYNC' | 'TABLE_SYNC' | 'COMANDA_SYNC' | 'COMANDA_ITEM_SYNC' | 'COMANDA_CLOSE' | 'KITCHEN_STATUS';
+  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT' | 'STAFF_SYNC' | 'VOID_SALE' | 'PARTIAL_REFUND' | 'LOYALTY_CHANGE' | 'AREA_SYNC' | 'TABLE_SYNC' | 'COMANDA_SYNC' | 'COMANDA_ITEM_SYNC' | 'COMANDA_CLOSE' | 'KITCHEN_STATUS' | 'MODIFIER_GROUP_SYNC' | 'MODIFIER_SYNC' | 'PRODUCT_MODIFIER_SYNC';
   payload: QueuePayload;
   timestamp: number;
   retries: number;
@@ -377,6 +421,9 @@ export class NexusDB extends Dexie {
   restaurant_tables!: Table<RestaurantTable>;
   comandas!: Table<Comanda>;
   comanda_items!: Table<ComandaItem>;
+  modifier_groups!: Table<ModifierGroup>;
+  modifiers!: Table<Modifier>;
+  product_modifier_groups!: Table<ProductModifierGroup>;
 
   constructor() {
     super('NexusPOS_DB');
@@ -450,10 +497,18 @@ export class NexusDB extends Dexie {
       comanda_items: 'id, comanda_id, business_id, kitchen_status, sync_status, [comanda_id+sync_status], [business_id+kitchen_status]',
     });
 
+    // v14: MODIFICADORES — configuración del menú (grupos/modificadores y su asignación
+    // a productos). No toca tablas existentes; no-op para retail.
+    this.version(14).stores({
+      modifier_groups: 'id, business_id, sync_status, [business_id+sync_status]',
+      modifiers: 'id, business_id, group_id, sync_status, [group_id], [business_id+sync_status]',
+      product_modifier_groups: 'id, business_id, product_id, group_id, sync_status, [business_id+product_id]',
+    });
+
     // Backup pre-migración: si la versión del schema cambió, crear backup de seguridad
     this.on('ready', () => {
       const SCHEMA_KEY = 'nexus_db_schema_version';
-      const currentVersion = 13; // Debe coincidir con la última versión declarada arriba
+      const currentVersion = 14; // Debe coincidir con la última versión declarada arriba
       const savedVersion = parseInt(localStorage.getItem(SCHEMA_KEY) || '0');
 
       if (savedVersion > 0 && savedVersion < currentVersion) {

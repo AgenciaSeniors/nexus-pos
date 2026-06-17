@@ -19,16 +19,18 @@ import {
 import { supabase } from '../lib/supabase';
 import { checkForUpdate, type AppVersionInfo } from '../lib/version';
 import { RestaurantAdmin } from '../components/RestaurantAdmin';
+import { MenuModifiersAdmin } from '../components/MenuModifiersAdmin';
 
 export function SettingsPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
   const businessId = localStorage.getItem('nexus_business_id');
   
   const [searchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState<'general' | 'devices' | 'data' | 'team' | 'help' | 'legal' | 'restaurant'>(
+  const [activeTab, setActiveTab] = useState<'general' | 'devices' | 'data' | 'team' | 'help' | 'legal' | 'restaurant' | 'menu'>(
     searchParams.get('tab') === 'help' ? 'help'
       : searchParams.get('tab') === 'legal' ? 'legal'
       : searchParams.get('tab') === 'restaurant' ? 'restaurant'
+      : searchParams.get('tab') === 'menu' ? 'menu'
       : 'general'
   );
   const [isLoading, setIsLoading] = useState(false);
@@ -54,7 +56,8 @@ export function SettingsPage() {
       SHIFT: 'turnos', CASH_MOVEMENT: 'mov. caja', STAFF_SYNC: 'empleados',
       VOID_SALE: 'anulaciones', PARTIAL_REFUND: 'devoluciones', LOYALTY_CHANGE: 'puntos',
       AREA_SYNC: 'áreas', TABLE_SYNC: 'mesas', COMANDA_SYNC: 'comandas',
-      COMANDA_ITEM_SYNC: 'ítems', COMANDA_CLOSE: 'cierres', KITCHEN_STATUS: 'cocina'
+      COMANDA_ITEM_SYNC: 'ítems', COMANDA_CLOSE: 'cierres', KITCHEN_STATUS: 'cocina',
+      MODIFIER_GROUP_SYNC: 'grupos', MODIFIER_SYNC: 'modificadores', PRODUCT_MODIFIER_SYNC: 'modificadores'
     };
     const breakdown: Record<string, number> = {};
     pendingItems.forEach(i => {
@@ -443,6 +446,9 @@ export function SettingsPage() {
             {currentStaff?.role === 'admin' && settings?.business_type === 'restaurant' && (
               <button onClick={() => setActiveTab('restaurant')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'restaurant' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Store size={20}/> Mesas y Áreas</button>
             )}
+            {currentStaff?.role === 'admin' && settings?.business_type === 'restaurant' && (
+              <button onClick={() => setActiveTab('menu')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'menu' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><ShoppingCart size={20}/> Menú</button>
+            )}
             <button onClick={() => setActiveTab('devices')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'devices' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Printer size={20}/> Hardware</button>
             <button onClick={() => setActiveTab('data')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'data' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Shield size={20}/> Datos y Respaldo</button>
             <button onClick={() => setActiveTab('help')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'help' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><HelpCircle size={20}/> Guía Rápida</button>
@@ -603,6 +609,15 @@ export function SettingsPage() {
                         <Store className="text-[#7AC142]"/> Mesas y Áreas
                     </h2>
                     <RestaurantAdmin />
+                </div>
+            )}
+
+            {activeTab === 'menu' && (
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 animate-in fade-in slide-in-from-right-4 duration-300">
+                    <h2 className="text-xl font-bold text-[#1F2937] flex items-center gap-2 mb-6">
+                        <ShoppingCart className="text-[#7AC142]"/> Menú y Modificadores
+                    </h2>
+                    <MenuModifiersAdmin />
                 </div>
             )}
 

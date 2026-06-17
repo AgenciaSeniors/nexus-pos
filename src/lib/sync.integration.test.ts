@@ -105,6 +105,9 @@ async function clearDb() {
   await db.restaurant_tables.clear();
   await db.comandas.clear();
   await db.comanda_items.clear();
+  await db.modifier_groups.clear();
+  await db.modifiers.clear();
+  await db.product_modifier_groups.clear();
 }
 
 /** Inserta un item directo en la cola con control total de sus campos. */
@@ -606,5 +609,18 @@ describe('Modo restaurante — sync de mesas/comandas', () => {
     expect((call?.payload as { p_status: string }).p_status).toBe('preparando');
     expect(await db.action_queue.count()).toBe(0);
     expect((await db.comanda_items.get('i3'))?.sync_status).toBe('synced');
+  });
+
+  it('MODIFIER_GROUP_SYNC y MODIFIER_SYNC hacen upsert y marcan synced', async () => {
+    await db.modifier_groups.add({ id: 'g1', business_id: 'b1', name: 'Término', sync_status: 'pending_create' } as never);
+    await db.modifiers.add({ id: 'm1', business_id: 'b1', group_id: 'g1', name: 'Medio', price_delta: 0, sync_status: 'pending_create' } as never);
+    await seedQueueItem({ type: 'MODIFIER_GROUP_SYNC', payload: { id: 'g1', business_id: 'b1', name: 'Término' } });
+    await seedQueueItem({ type: 'MODIFIER_SYNC', payload: { id: 'm1', business_id: 'b1', group_id: 'g1', name: 'Medio', price_delta: 0 } });
+
+    await processQueue();
+
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.modifier_groups.get('g1'))?.sync_status).toBe('synced');
+    expect((await db.modifiers.get('m1'))?.sync_status).toBe('synced');
   });
 });

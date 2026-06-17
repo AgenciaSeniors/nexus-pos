@@ -1,11 +1,13 @@
 import { useState, useMemo } from 'react';
 import { useParams, useNavigate, useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type ComandaItem, type Product, type Sale, type SaleItem, type Staff } from '../lib/db';
+import { db, type ComandaItem, type ComandaItemModifier, type Product, type Sale, type SaleItem, type Staff } from '../lib/db';
 import { addToQueue, syncPush } from '../lib/sync';
 import { comandaItemTotal, comandaTotal } from '../lib/comanda';
+import { currency } from '../lib/currency';
 import { logAuditAction } from '../lib/audit';
 import { PaymentModal } from '../components/PaymentModal';
+import { ModifierPickerModal } from '../components/ModifierPickerModal';
 import { ArrowLeft, Search, Plus, Minus, Trash2, Package, CreditCard, ChefHat } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -18,6 +20,7 @@ export default function ComandaPage() {
   const [query, setQuery] = useState('');
   const [showPayment, setShowPayment] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  const [pickerProduct, setPickerProduct] = useState<Product | null>(null);
 
   const comanda = useLiveQuery(() => db.comandas.get(comandaId), [comandaId]);
   const table = useLiveQuery(() => comanda ? db.restaurant_tables.get(comanda.table_id) : undefined, [comanda?.table_id]);
@@ -38,6 +41,25 @@ export default function ComandaPage() {
     [businessId],
   );
 
+  // Config de modificadores del menú.
+  const modifierGroups = useLiveQuery(async () => {
+    if (!businessId) return [];
+    return (await db.modifier_groups.where('business_id').equals(businessId).toArray()).filter(g => !g.deleted_at);
+  }, [businessId]) || [];
+  const modifiersAll = useLiveQuery(async () => {
+    if (!businessId) return [];
+    return (await db.modifiers.where('business_id').equals(businessId).toArray()).filter(m => !m.deleted_at);
+  }, [businessId]) || [];
+  const productLinks = useLiveQuery(async () => {
+    if (!businessId) return [];
+    return (await db.product_modifier_groups.where('business_id').equals(businessId).toArray()).filter(l => !l.deleted_at);
+  }, [businessId]) || [];
+
+  const groupsForProduct = (productId: string) => {
+    const ids = new Set(productLinks.filter(l => l.product_id === productId).map(l => l.group_id));
+    return modifierGroups.filter(g => ids.has(g.id)).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  };
+
   const filteredProducts = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return products;
@@ -46,22 +68,26 @@ export default function ComandaPage() {
 
   const total = comandaTotal(items);
 
-  const addProduct = async (product: Product) => {
+  const createItem = async (product: Product, modifiers?: ComandaItemModifier[], perUnitTotal?: number) => {
     if (!comanda) return;
+    const hasMods = !!modifiers && modifiers.length > 0;
     try {
-      // Si ya existe una línea de este producto sin nota ni modificadores, sumar cantidad.
-      const existing = items.find(i => i.product_id === product.id && !i.note && !i.modifiers?.length && !i.voided);
-      if (existing) {
-        const updated: ComandaItem = { ...existing, quantity: existing.quantity + 1, sync_status: 'pending_update' };
-        await db.transaction('rw', [db.comanda_items, db.action_queue], async () => {
-          await db.comanda_items.update(existing.id, { quantity: updated.quantity, sync_status: 'pending_update' });
-          await addToQueue('COMANDA_ITEM_SYNC', updated);
-        });
-        return;
+      // Sin modificadores ni nota: si ya existe una línea idéntica, sumar cantidad.
+      if (!hasMods) {
+        const existing = items.find(i => i.product_id === product.id && !i.note && !i.modifiers?.length && !i.voided);
+        if (existing) {
+          const updated: ComandaItem = { ...existing, quantity: existing.quantity + 1, sync_status: 'pending_update' };
+          await db.transaction('rw', [db.comanda_items, db.action_queue], async () => {
+            await db.comanda_items.update(existing.id, { quantity: updated.quantity, sync_status: 'pending_update' });
+            await addToQueue('COMANDA_ITEM_SYNC', updated);
+          });
+          return;
+        }
       }
       const item: ComandaItem = {
         id: crypto.randomUUID(), comanda_id: comanda.id, business_id: businessId,
         product_id: product.id, name: product.name, quantity: 1, price: product.price,
+        ...(hasMods ? { modifiers, modifiers_total: perUnitTotal ?? 0 } : {}),
         kitchen_status: 'pending', sync_status: 'pending_create',
       };
       await db.transaction('rw', [db.comanda_items, db.action_queue], async () => {
@@ -72,6 +98,16 @@ export default function ComandaPage() {
       console.error(e);
       toast.error('No se pudo agregar el producto');
     }
+  };
+
+  const addProduct = async (product: Product) => {
+    if (!comanda) return;
+    // Si el producto tiene grupos de modificadores, abrir el selector.
+    if (groupsForProduct(product.id).length > 0) {
+      setPickerProduct(product);
+      return;
+    }
+    await createItem(product);
   };
 
   const changeQty = async (item: ComandaItem, delta: number) => {
@@ -124,12 +160,18 @@ export default function ComandaPage() {
       const liveItems = items.filter(i => !i.voided);
       if (liveItems.length === 0) { toast.error('La comanda está vacía'); setIsClosing(false); return; }
 
-      const saleItems: SaleItem[] = liveItems.map(i => ({
-        product_id: i.product_id, name: i.name, quantity: i.quantity,
-        price: i.custom_price ?? i.price,
-        ...(i.note && { note: i.note }),
-        ...(i.custom_price !== undefined && { custom_price: i.custom_price }),
-      }));
+      const saleItems: SaleItem[] = liveItems.map(i => {
+        // Precio unitario final incluye los modificadores (por unidad), para que
+        // price × quantity coincida con el total de la línea y el de la venta.
+        const unit = currency.add(i.custom_price ?? i.price, i.modifiers_total ?? 0);
+        return {
+          product_id: i.product_id, name: i.name, quantity: i.quantity,
+          price: unit,
+          custom_price: unit,
+          ...(i.note && { note: i.note }),
+          ...(i.modifiers?.length ? { modifiers: i.modifiers } : {}),
+        };
+      });
 
       const sale: Sale = {
         id: saleId, business_id: businessId, date: now, shift_id: activeShift.id,
@@ -223,6 +265,10 @@ export default function ComandaPage() {
             <div key={it.id} className="flex items-center gap-2 p-2 rounded-xl bg-gray-50">
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-sm text-[#1F2937] truncate">{it.name}</p>
+                {it.modifiers?.length ? (
+                  <p className="text-[11px] text-[#6B7280] truncate">{it.modifiers.map(m => m.modifier_name).join(', ')}</p>
+                ) : null}
+                {it.note ? <p className="text-[11px] text-amber-700 truncate">📝 {it.note}</p> : null}
                 <p className="text-xs text-[#6B7280]">${comandaItemTotal(it).toFixed(2)}</p>
               </div>
               <button onClick={() => changeQty(it, -1)} className="p-1.5 rounded-lg bg-white border border-gray-200"><Minus size={14} /></button>
@@ -253,6 +299,16 @@ export default function ComandaPage() {
 
       {showPayment && (
         <PaymentModal total={total} customer={null} onCancel={() => setShowPayment(false)} onConfirm={handleCheckout} />
+      )}
+
+      {pickerProduct && (
+        <ModifierPickerModal
+          product={pickerProduct}
+          groups={groupsForProduct(pickerProduct.id)}
+          modifiers={modifiersAll}
+          onCancel={() => setPickerProduct(null)}
+          onConfirm={(mods, perUnit) => { createItem(pickerProduct, mods, perUnit); setPickerProduct(null); }}
+        />
       )}
     </div>
   );

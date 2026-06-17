@@ -142,6 +142,9 @@ export const QUEUE_TYPE_LABELS: Record<string, string> = {
   COMANDA_ITEM_SYNC: 'Ítem de comanda',
   COMANDA_CLOSE: 'Cierre de comanda',
   KITCHEN_STATUS: 'Estado de cocina',
+  MODIFIER_GROUP_SYNC: 'Grupo de modificadores',
+  MODIFIER_SYNC: 'Modificador',
+  PRODUCT_MODIFIER_SYNC: 'Modificador de producto',
 };
 
 export const RETRY_CONFIG = {
@@ -260,6 +263,10 @@ export const QUEUE_TYPE_PRIORITY: Record<string, number> = {
   // y el cierre al final (produce ventas y referencia la comanda ya sincronizada).
   AREA_SYNC: 10,
   TABLE_SYNC: 15,
+  // Config base del menú: antes que las comandas que la referencian.
+  MODIFIER_GROUP_SYNC: 12,
+  MODIFIER_SYNC: 14,
+  PRODUCT_MODIFIER_SYNC: 16,
   COMANDA_SYNC: 25,
   COMANDA_ITEM_SYNC: 30,
   KITCHEN_STATUS: 40,

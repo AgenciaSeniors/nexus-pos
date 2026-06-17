@@ -139,6 +139,9 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
                     <td className="py-2 align-top font-bold">{item.quantity}</td>
                     <td className="py-2 align-top pr-2">
                         <div className="uppercase">{item.name}</div>
+                        {item.modifiers && item.modifiers.length > 0 && (
+                            <div className="text-[10px] text-slate-600 mt-0.5">↳ {item.modifiers.map(m => m.modifier_name).join(', ')}</div>
+                        )}
                         {item.note && (
                             <div className="text-[10px] text-slate-600 italic mt-0.5">↳ {item.note}</div>
                         )}

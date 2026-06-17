@@ -82,6 +82,9 @@ export default function KdsPage() {
                         <p className="font-bold text-[#1F2937]">
                           <span className="text-[#0B3B68]">{it.quantity}×</span> {it.name}
                         </p>
+                        {it.modifiers?.length ? (
+                          <p className="text-xs text-[#0B3B68] mt-0.5">{it.modifiers.map(m => m.modifier_name).join(', ')}</p>
+                        ) : null}
                         {it.note && <p className="text-xs text-amber-700 mt-0.5">📝 {it.note}</p>}
                       </div>
                     </div>

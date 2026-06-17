@@ -222,7 +222,8 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
       SHIFT: 'turno', CASH_MOVEMENT: 'mov. caja', STAFF_SYNC: 'empleado',
       VOID_SALE: 'anulación', PARTIAL_REFUND: 'devolución', LOYALTY_CHANGE: 'puntos',
       AREA_SYNC: 'área', TABLE_SYNC: 'mesa', COMANDA_SYNC: 'comanda',
-      COMANDA_ITEM_SYNC: 'ítem', COMANDA_CLOSE: 'cierre', KITCHEN_STATUS: 'cocina'
+      COMANDA_ITEM_SYNC: 'ítem', COMANDA_CLOSE: 'cierre', KITCHEN_STATUS: 'cocina',
+      MODIFIER_GROUP_SYNC: 'grupo', MODIFIER_SYNC: 'modificador', PRODUCT_MODIFIER_SYNC: 'modificador'
     };
     const counts: Record<string, number> = {};
     items.forEach(i => {
