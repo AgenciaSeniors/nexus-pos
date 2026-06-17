@@ -8,7 +8,8 @@ import { currency } from '../lib/currency';
 import { logAuditAction } from '../lib/audit';
 import { PaymentModal } from '../components/PaymentModal';
 import { ModifierPickerModal } from '../components/ModifierPickerModal';
-import { ArrowLeft, Search, Plus, Minus, Trash2, Package, CreditCard, ChefHat } from 'lucide-react';
+import { SplitBillModal } from '../components/SplitBillModal';
+import { ArrowLeft, Search, Plus, Minus, Trash2, Package, CreditCard, ChefHat, Users } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function ComandaPage() {
@@ -19,6 +20,7 @@ export default function ComandaPage() {
 
   const [query, setQuery] = useState('');
   const [showPayment, setShowPayment] = useState(false);
+  const [showSplit, setShowSplit] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [pickerProduct, setPickerProduct] = useState<Product | null>(null);
 
@@ -40,6 +42,13 @@ export default function ComandaPage() {
     () => businessId ? db.cash_shifts.where({ business_id: businessId, status: 'open' }).first() : undefined,
     [businessId],
   );
+
+  // Meseros activos para acreditar la propina.
+  const staffList = useLiveQuery(async () => {
+    if (!businessId) return [];
+    const rows = await db.staff.where('business_id').equals(businessId).toArray();
+    return rows.filter(s => s.active !== false).map(s => ({ id: s.id, name: s.name }));
+  }, [businessId]) || [];
 
   // Config de modificadores del menú.
   const modifierGroups = useLiveQuery(async () => {
@@ -146,62 +155,45 @@ export default function ComandaPage() {
     toast.success('Enviado a cocina');
   };
 
-  const handleCheckout = async (
-    methodInput: string, tendered: number, change: number,
-    cashAmount?: number, transferAmount?: number,
-  ) => {
-    if (!comanda || !activeShift?.id) { toast.error('Caja cerrada o turno inválido'); return; }
-    setShowPayment(false);
+  // Convierte una línea de comanda en línea de venta (modificadores plegados en el precio).
+  const buildSaleItem = (i: ComandaItem): SaleItem => {
+    const unit = currency.add(i.custom_price ?? i.price, i.modifiers_total ?? 0);
+    return {
+      product_id: i.product_id, name: i.name, quantity: i.quantity,
+      price: unit, custom_price: unit,
+      ...(i.note && { note: i.note }),
+      ...(i.modifiers?.length ? { modifiers: i.modifiers } : {}),
+    };
+  };
+
+  // Cierra la comanda: descuenta stock UNA sola vez (todos los ítems vivos) e
+  // inserta la(s) venta(s). Sirve para cobro completo y para cobro dividido.
+  const finalizeComanda = async (sales: Sale[]) => {
+    if (!comanda) return;
     setIsClosing(true);
     try {
       const now = new Date().toISOString();
-      const saleId = crypto.randomUUID();
-      const method = methodInput as Sale['payment_method'];
-      const liveItems = items.filter(i => !i.voided);
-      if (liveItems.length === 0) { toast.error('La comanda está vacía'); setIsClosing(false); return; }
-
-      const saleItems: SaleItem[] = liveItems.map(i => {
-        // Precio unitario final incluye los modificadores (por unidad), para que
-        // price × quantity coincida con el total de la línea y el de la venta.
-        const unit = currency.add(i.custom_price ?? i.price, i.modifiers_total ?? 0);
-        return {
-          product_id: i.product_id, name: i.name, quantity: i.quantity,
-          price: unit,
-          custom_price: unit,
-          ...(i.note && { note: i.note }),
-          ...(i.modifiers?.length ? { modifiers: i.modifiers } : {}),
-        };
-      });
-
-      const sale: Sale = {
-        id: saleId, business_id: businessId, date: now, shift_id: activeShift.id,
-        staff_id: comanda.staff_id ?? currentStaff?.id,
-        staff_name: comanda.staff_name ?? currentStaff?.name ?? 'Cajero',
-        total, payment_method: method, amount_tendered: tendered, change,
-        items: saleItems, comanda_id: comanda.id,
-        ...(cashAmount !== undefined && { cash_amount: cashAmount }),
-        ...(transferAmount !== undefined && { transfer_amount: transferAmount }),
-        sync_status: 'pending_create',
-      };
-
+      const live = items.filter(i => !i.voided);
+      const grandTotal = comandaTotal(items);
       await db.transaction('rw',
         [db.sales, db.products, db.comandas, db.restaurant_tables, db.action_queue, db.audit_logs],
         async () => {
-          await db.sales.add(sale);
-          // Descuento de stock local (el RPC close_comanda lo re-aplica en el servidor).
-          for (const it of saleItems) {
-            const p = await db.products.get(it.product_id);
-            if (p) await db.products.update(it.product_id, { stock: p.stock - it.quantity, sync_status: 'pending_update' });
+          for (const s of sales) await db.sales.add(s);
+          // Descuento de stock agregado por producto (una sola vez, sin importar el split).
+          const agg: Record<string, number> = {};
+          for (const it of live) agg[it.product_id] = (agg[it.product_id] || 0) + it.quantity;
+          for (const pid of Object.keys(agg)) {
+            const p = await db.products.get(pid);
+            if (p) await db.products.update(pid, { stock: p.stock - agg[pid], sync_status: 'pending_update' });
           }
-          await db.comandas.update(comanda.id, { status: 'closed', closed_at: now, total, sale_ids: [saleId], sync_status: 'pending_update' });
+          await db.comandas.update(comanda.id, { status: 'closed', closed_at: now, total: grandTotal, sale_ids: sales.map(s => s.id), sync_status: 'pending_update' });
           await db.restaurant_tables.update(comanda.table_id, { state: 'libre', current_comanda_id: null, sync_status: 'pending_update' });
-          await addToQueue('COMANDA_CLOSE', { comanda_id: comanda.id, sales: [sale], business_id: businessId, idempotency_key: crypto.randomUUID() });
-          const freedTable = await db.restaurant_tables.get(comanda.table_id);
-          if (freedTable) await addToQueue('TABLE_SYNC', freedTable);
-          await logAuditAction('SALE', { total, comanda: comanda.id }, currentStaff);
+          await addToQueue('COMANDA_CLOSE', { comanda_id: comanda.id, sales, business_id: businessId, idempotency_key: crypto.randomUUID() });
+          const freed = await db.restaurant_tables.get(comanda.table_id);
+          if (freed) await addToQueue('TABLE_SYNC', freed);
+          await logAuditAction('SALE', { total: grandTotal, comanda: comanda.id, ventas: sales.length }, currentStaff);
         },
       );
-
       syncPush().catch(() => {});
       toast.success('Comanda cobrada');
       navigate('/mesas');
@@ -211,6 +203,30 @@ export default function ComandaPage() {
     } finally {
       setIsClosing(false);
     }
+  };
+
+  // Cobro COMPLETO (una sola venta). Recibe propina opcional desde PaymentModal.
+  const handleCheckout = async (
+    methodInput: string, tendered: number, change: number,
+    cashAmount?: number, transferAmount?: number, _redeemed?: number,
+    tipAmount?: number, tipStaffId?: string,
+  ) => {
+    if (!comanda || !activeShift?.id) { toast.error('Caja cerrada o turno inválido'); return; }
+    const live = items.filter(i => !i.voided);
+    if (live.length === 0) { toast.error('La comanda está vacía'); return; }
+    setShowPayment(false);
+    const sale: Sale = {
+      id: crypto.randomUUID(), business_id: businessId, date: new Date().toISOString(), shift_id: activeShift.id,
+      staff_id: comanda.staff_id ?? currentStaff?.id,
+      staff_name: comanda.staff_name ?? currentStaff?.name ?? 'Cajero',
+      total, payment_method: methodInput as Sale['payment_method'], amount_tendered: tendered, change,
+      items: live.map(buildSaleItem), comanda_id: comanda.id,
+      ...(cashAmount !== undefined && { cash_amount: cashAmount }),
+      ...(transferAmount !== undefined && { transfer_amount: transferAmount }),
+      ...(tipAmount ? { tip_amount: tipAmount, ...(tipStaffId ? { tip_staff_id: tipStaffId } : {}) } : {}),
+      sync_status: 'pending_create',
+    };
+    await finalizeComanda([sale]);
   };
 
   if (comanda === undefined) {
@@ -289,16 +305,40 @@ export default function ComandaPage() {
               <ChefHat size={20} /> Enviar a cocina ({pendingToSend.length})
             </button>
           )}
-          <button onClick={() => setShowPayment(true)}
-            disabled={liveItems.length === 0 || isClosing || !activeShift}
-            className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${liveItems.length === 0 || !activeShift ? 'bg-gray-200 text-gray-400' : 'bg-[#7AC142] text-white active:scale-95'}`}>
-            <CreditCard size={20} /> {!activeShift ? 'Caja cerrada' : 'Cobrar'}
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => setShowSplit(true)}
+              disabled={liveItems.length === 0 || isClosing || !activeShift}
+              className={`px-4 py-3 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all ${liveItems.length === 0 || !activeShift ? 'bg-gray-100 text-gray-400' : 'bg-white border-2 border-[#0B3B68] text-[#0B3B68] active:scale-95'}`}>
+              <Users size={18} /> Dividir
+            </button>
+            <button onClick={() => setShowPayment(true)}
+              disabled={liveItems.length === 0 || isClosing || !activeShift}
+              className={`flex-1 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${liveItems.length === 0 || !activeShift ? 'bg-gray-200 text-gray-400' : 'bg-[#7AC142] text-white active:scale-95'}`}>
+              <CreditCard size={20} /> {!activeShift ? 'Caja cerrada' : 'Cobrar'}
+            </button>
+          </div>
         </div>
       </div>
 
       {showPayment && (
-        <PaymentModal total={total} customer={null} onCancel={() => setShowPayment(false)} onConfirm={handleCheckout} />
+        <PaymentModal total={total} customer={null} tipEnabled staffList={staffList}
+          onCancel={() => setShowPayment(false)} onConfirm={handleCheckout} />
+      )}
+
+      {showSplit && (
+        <SplitBillModal
+          liveItems={liveItems}
+          grandTotal={total}
+          shiftId={activeShift?.id || ''}
+          businessId={businessId}
+          comandaId={comanda.id}
+          staffId={comanda.staff_id ?? currentStaff?.id}
+          staffName={comanda.staff_name ?? currentStaff?.name}
+          staffList={staffList}
+          buildSaleItem={buildSaleItem}
+          onCancel={() => setShowSplit(false)}
+          onComplete={(sales) => { setShowSplit(false); finalizeComanda(sales); }}
+        />
       )}
 
       {pickerProduct && (

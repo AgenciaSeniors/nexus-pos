@@ -68,6 +68,12 @@ export interface Sale {
   refunded_items?: RefundedItem[];
   // Modo restaurante: referencia a la comanda de la que salió esta venta (si aplica).
   comanda_id?: string;
+  // Propina: se registra aparte, NO cuenta como ingreso ni entra a la caja.
+  tip_amount?: number;
+  tip_staff_id?: string;     // mesero acreditado con la propina
+  // Dividir cuenta: las N ventas de un mismo split comparten split_group_id.
+  split_group_id?: string;
+  split_index?: number;      // 1, 2, 3… dentro del grupo
   sync_status: 'synced' | 'pending_create' | 'pending_update';
 }
 

@@ -623,4 +623,31 @@ describe('Modo restaurante — sync de mesas/comandas', () => {
     expect((await db.modifier_groups.get('g1'))?.sync_status).toBe('synced');
     expect((await db.modifiers.get('m1'))?.sync_status).toBe('synced');
   });
+
+  it('COMANDA_CLOSE con split: marca synced las N ventas y cierra la comanda', async () => {
+    await db.comandas.add({ id: 'cs', business_id: 'b1', table_id: 't1', opened_at: '', status: 'open', sync_status: 'pending_update' } as never);
+    const gid = 'split-grp-1';
+    for (const [id, idx] of [['s1', 1], ['s2', 2], ['s3', 3]] as const) {
+      await db.sales.add({ id, business_id: 'b1', date: '', shift_id: 'sh1', total: 10, items: [], payment_method: 'efectivo', comanda_id: 'cs', split_group_id: gid, split_index: idx, sync_status: 'pending_create' } as never);
+    }
+    mockState.responses['rpc:close_comanda'] = { data: { ok: true } };
+    await seedQueueItem({ type: 'COMANDA_CLOSE',
+      payload: { comanda_id: 'cs', business_id: 'b1', idempotency_key: 'kc',
+        sales: [
+          { id: 's1', business_id: 'b1', total: 10, split_group_id: gid, split_index: 1 },
+          { id: 's2', business_id: 'b1', total: 10, split_group_id: gid, split_index: 2 },
+          { id: 's3', business_id: 'b1', total: 10, split_group_id: gid, split_index: 3 },
+        ] } });
+
+    await processQueue();
+
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.comandas.get('cs'))?.status).toBe('closed');
+    for (const id of ['s1', 's2', 's3']) {
+      expect((await db.sales.get(id))?.sync_status).toBe('synced');
+    }
+    // Las 3 ventas comparten el mismo split_group_id
+    const groups = new Set([await db.sales.get('s1'), await db.sales.get('s2'), await db.sales.get('s3')].map(s => s?.split_group_id));
+    expect(groups).toEqual(new Set([gid]));
+  });
 });
