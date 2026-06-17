@@ -54,7 +54,7 @@ export function SettingsPage() {
       SHIFT: 'turnos', CASH_MOVEMENT: 'mov. caja', STAFF_SYNC: 'empleados',
       VOID_SALE: 'anulaciones', PARTIAL_REFUND: 'devoluciones', LOYALTY_CHANGE: 'puntos',
       AREA_SYNC: 'áreas', TABLE_SYNC: 'mesas', COMANDA_SYNC: 'comandas',
-      COMANDA_ITEM_SYNC: 'ítems', COMANDA_CLOSE: 'cierres'
+      COMANDA_ITEM_SYNC: 'ítems', COMANDA_CLOSE: 'cierres', KITCHEN_STATUS: 'cocina'
     };
     const breakdown: Record<string, number> = {};
     pendingItems.forEach(i => {

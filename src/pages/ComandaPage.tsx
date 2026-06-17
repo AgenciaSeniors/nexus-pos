@@ -6,7 +6,7 @@ import { addToQueue, syncPush } from '../lib/sync';
 import { comandaItemTotal, comandaTotal } from '../lib/comanda';
 import { logAuditAction } from '../lib/audit';
 import { PaymentModal } from '../components/PaymentModal';
-import { ArrowLeft, Search, Plus, Minus, Trash2, Package, CreditCard } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Minus, Trash2, Package, CreditCard, ChefHat } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function ComandaPage() {
@@ -91,6 +91,23 @@ export default function ComandaPage() {
       await db.comanda_items.update(item.id, { voided: true, sync_status: 'pending_update' });
       await addToQueue('COMANDA_ITEM_SYNC', updated);
     });
+  };
+
+  const pendingToSend = items.filter(i => !i.voided && i.kitchen_status === 'pending');
+
+  const sendToKitchen = async () => {
+    if (pendingToSend.length === 0) return;
+    const now = new Date().toISOString();
+    await db.transaction('rw', [db.comanda_items, db.action_queue], async () => {
+      for (const it of pendingToSend) {
+        await db.comanda_items.update(it.id, { kitchen_status: 'sent', sent_at: now, item_updated_at: now, sync_status: 'pending_update' });
+        await addToQueue('KITCHEN_STATUS', {
+          item_id: it.id, comanda_id: it.comanda_id, business_id: businessId,
+          kitchen_status: 'sent', item_updated_at: now,
+        });
+      }
+    });
+    toast.success('Enviado a cocina');
   };
 
   const handleCheckout = async (
@@ -220,6 +237,12 @@ export default function ComandaPage() {
             <span className="font-bold text-[#6B7280]">Total</span>
             <span className="text-2xl font-black text-[#0B3B68]">${total.toFixed(2)}</span>
           </div>
+          {pendingToSend.length > 0 && (
+            <button onClick={sendToKitchen}
+              className="w-full mb-2 py-3 rounded-xl font-bold flex items-center justify-center gap-2 bg-[#0B3B68] text-white active:scale-95 transition-all">
+              <ChefHat size={20} /> Enviar a cocina ({pendingToSend.length})
+            </button>
+          )}
           <button onClick={() => setShowPayment(true)}
             disabled={liveItems.length === 0 || isClosing || !activeShift}
             className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${liveItems.length === 0 || !activeShift ? 'bg-gray-200 text-gray-400' : 'bg-[#7AC142] text-white active:scale-95'}`}>

@@ -18,7 +18,8 @@ import {
   type RestaurantTable,
   type Comanda,
   type ComandaItem,
-  type ComandaClosePayload
+  type ComandaClosePayload,
+  type KitchenStatusPayload
 } from './db';
 import { supabase } from './supabase';
 import type { Table } from 'dexie';
@@ -311,7 +312,10 @@ async function processItem(item: QueueItem) {
       const item = payload as ComandaItem;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...clean } = item;
-      const { error } = await supabase.from('comanda_items').upsert(clean);
+      // upsert_comanda_item escribe SOLO columnas del mesero (cantidad/precio/nota/
+      // modificadores/voided), nunca kitchen_status — así la cocina (KDS) y el mesero
+      // tienen conjuntos de columnas disjuntos y no se pisan. (Propiedad disjunta, Fase 2)
+      const { error } = await supabase.rpc('upsert_comanda_item', { p_item: clean });
       throwUnlessDuplicate(error, 'Error ítem comanda', item.id);
       await db.comanda_items.update(item.id, { sync_status: 'synced' });
       break;
@@ -343,6 +347,20 @@ async function processItem(item: QueueItem) {
         }
         await db.comandas.update(comanda_id, { status: 'closed', sync_status: 'synced' });
       }
+      break;
+    }
+    case 'KITCHEN_STATUS': {
+      // El KDS marca el estado de cocina. El RPC solo actualiza columnas de cocina y
+      // descarta escrituras viejas comparando item_updated_at (guard de concurrencia).
+      const { item_id, business_id, kitchen_status, item_updated_at } = payload as KitchenStatusPayload;
+      const { error } = await supabase.rpc('set_kitchen_status', {
+        p_item_id: item_id,
+        p_business_id: business_id,
+        p_status: kitchen_status,
+        p_item_updated_at: item_updated_at,
+      });
+      if (error) throw new Error(`Error estado cocina: ${error.message}`);
+      await db.comanda_items.update(item_id, { sync_status: 'synced' });
       break;
     }
     default:
@@ -519,6 +537,23 @@ async function safeBulkPut<T extends { id: string; sync_status?: string; updated
   if (safeItems.length > 0) {
     await table.bulkPut(safeItems);
   }
+}
+
+/**
+ * Aplica una fila recibida por Realtime (KDS) a Dexie, respetando cambios locales
+ * pendientes vía safeBulkPut. Pull-only: las escrituras siguen yendo por la cola
+ * offline. Usado por `lib/realtime.ts`.
+ */
+export async function applyRealtimeRow(
+  table: 'comandas' | 'comanda_items' | 'restaurant_tables',
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  row: any,
+) {
+  if (!db.isOpen() || !row?.id) return;
+  const clean = { ...row, sync_status: 'synced' as const };
+  if (table === 'comandas') await safeBulkPut(db.comandas as never, [clean]);
+  else if (table === 'comanda_items') await safeBulkPut(db.comanda_items as never, [clean]);
+  else if (table === 'restaurant_tables') await safeBulkPut(db.restaurant_tables as never, [clean]);
 }
 
 /**

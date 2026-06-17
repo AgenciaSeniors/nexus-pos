@@ -579,4 +579,32 @@ describe('Modo restaurante — sync de mesas/comandas', () => {
     expect(mockState.calls.some(c => c.key === 'comandas')).toBe(false);
     expect(mockState.calls.some(c => c.key === 'restaurant_tables')).toBe(false);
   });
+
+  it('COMANDA_ITEM_SYNC usa el RPC upsert_comanda_item (columnas del mesero)', async () => {
+    await db.comanda_items.add({ id: 'i2', comanda_id: 'c1', business_id: 'b1', product_id: 'p1', name: 'X', quantity: 1, price: 5, kitchen_status: 'pending', sync_status: 'pending_create' } as never);
+    mockState.responses['rpc:upsert_comanda_item'] = { data: null };
+    await seedQueueItem({ type: 'COMANDA_ITEM_SYNC',
+      payload: { id: 'i2', comanda_id: 'c1', business_id: 'b1', product_id: 'p1', name: 'X', quantity: 1, price: 5, kitchen_status: 'pending' } });
+
+    await processQueue();
+
+    expect(mockState.calls.some(c => c.op === 'rpc' && c.key === 'upsert_comanda_item')).toBe(true);
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.comanda_items.get('i2'))?.sync_status).toBe('synced');
+  });
+
+  it('KITCHEN_STATUS llama set_kitchen_status y marca el ítem synced', async () => {
+    await db.comanda_items.add({ id: 'i3', comanda_id: 'c1', business_id: 'b1', product_id: 'p1', name: 'Y', quantity: 1, price: 5, kitchen_status: 'sent', sync_status: 'pending_update' } as never);
+    mockState.responses['rpc:set_kitchen_status'] = { data: null };
+    await seedQueueItem({ type: 'KITCHEN_STATUS',
+      payload: { item_id: 'i3', comanda_id: 'c1', business_id: 'b1', kitchen_status: 'preparando', item_updated_at: new Date().toISOString() } });
+
+    await processQueue();
+
+    const call = mockState.calls.find(c => c.op === 'rpc' && c.key === 'set_kitchen_status');
+    expect(call).toBeTruthy();
+    expect((call?.payload as { p_status: string }).p_status).toBe('preparando');
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.comanda_items.get('i3'))?.sync_status).toBe('synced');
+  });
 });

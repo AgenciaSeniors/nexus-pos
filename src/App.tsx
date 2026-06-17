@@ -4,6 +4,7 @@ import { supabase } from './lib/supabase';
 import { type Staff, db } from './lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { isRestaurantMode } from './lib/businessType';
+import { startKdsRealtime, stopKdsRealtime } from './lib/realtime';
 import { type Session } from '@supabase/supabase-js';
 import { Toaster, toast } from 'sonner';
 import { syncCriticalData, syncHeavyData, stopSyncListeners } from './lib/sync';
@@ -24,6 +25,7 @@ const SuperAdminLogin = lazy(() => import('./pages/SuperAdminLogin').then(m => (
 const CustomersPage = lazy(() => import('./components/CustomersPage').then(m => ({ default: m.CustomersPage })));
 const FloorMapPage = lazy(() => import('./pages/FloorMapPage'));
 const ComandaPage = lazy(() => import('./pages/ComandaPage'));
+const KdsPage = lazy(() => import('./pages/KdsPage'));
 
 import { Loader2, Store, User, Lock, Mail, Phone, ArrowRight, CheckCircle, Shield, Eye, EyeOff } from 'lucide-react';
 
@@ -439,6 +441,15 @@ function BusinessApp() {
   // Modo del negocio: en restaurante la pantalla principal es el plano de mesas.
   const settingsRows = useLiveQuery(() => db.settings.toArray());
   const isRestaurant = isRestaurantMode(settingsRows);
+
+  // Realtime del KDS: solo activo en modo restaurante y con sesión de staff.
+  useEffect(() => {
+    const bid = localStorage.getItem('nexus_business_id') || '';
+    if (isRestaurant && bid && currentStaff) {
+      startKdsRealtime(bid);
+      return () => stopKdsRealtime();
+    }
+  }, [isRestaurant, currentStaff]);
   // Bandera para evitar que onAuthStateChange procese SIGNED_IN durante el registro
   const isRegisteringRef = useRef(false);
   // Bandera para saber si el staff ya fue cargado (evita doble-carga y loop de efectos)
@@ -863,6 +874,7 @@ function BusinessApp() {
             <Route path="/" element={isRestaurant ? <FloorMapPage /> : <PosPage />} />
             <Route path="/mesas" element={<FloorMapPage />} />
             <Route path="/comanda/:id" element={<ComandaPage />} />
+            <Route path="/cocina" element={<KdsPage />} />
             <Route path="/clientes" element={<CustomersPage />} />
             <Route path="/inventario" element={<InventoryPage />} />
             <Route path="/finanzas" element={<FinancePage />} />

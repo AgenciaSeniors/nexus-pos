@@ -141,6 +141,7 @@ export const QUEUE_TYPE_LABELS: Record<string, string> = {
   COMANDA_SYNC: 'Comanda',
   COMANDA_ITEM_SYNC: 'Ítem de comanda',
   COMANDA_CLOSE: 'Cierre de comanda',
+  KITCHEN_STATUS: 'Estado de cocina',
 };
 
 export const RETRY_CONFIG = {
@@ -261,6 +262,7 @@ export const QUEUE_TYPE_PRIORITY: Record<string, number> = {
   TABLE_SYNC: 15,
   COMANDA_SYNC: 25,
   COMANDA_ITEM_SYNC: 30,
+  KITCHEN_STATUS: 40,
   COMANDA_CLOSE: 50,
 };
 

@@ -300,6 +300,20 @@ export type ComandaClosePayload = {
   idempotency_key: string;
 };
 
+/**
+ * Cambio de estado de cocina de un ítem (KDS). Sigue la regla de "propiedad de
+ * columnas disjunta": el KDS solo toca kitchen_status/sent_at/ready_at, nunca las
+ * columnas del mesero (cantidad/precio/nota). El servidor descarta escrituras
+ * viejas comparando `item_updated_at`.
+ */
+export type KitchenStatusPayload = {
+  item_id: string;
+  comanda_id: string;
+  business_id: string;
+  kitchen_status: ComandaItem['kitchen_status'];
+  item_updated_at: string;
+};
+
 export type SalePayload = { sale: Sale; items: SaleItem[] };
 export type VoidSalePayload = { saleId: string };
 export type PartialRefundPayload = { saleId: string; refunded_items: RefundedItem[] };
@@ -332,11 +346,12 @@ export type QueuePayload =
     | RestaurantTable
     | Comanda
     | ComandaItem
-    | ComandaClosePayload;
+    | ComandaClosePayload
+    | KitchenStatusPayload;
 
 export interface QueueItem {
   id: string;
-  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT' | 'STAFF_SYNC' | 'VOID_SALE' | 'PARTIAL_REFUND' | 'LOYALTY_CHANGE' | 'AREA_SYNC' | 'TABLE_SYNC' | 'COMANDA_SYNC' | 'COMANDA_ITEM_SYNC' | 'COMANDA_CLOSE';
+  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT' | 'STAFF_SYNC' | 'VOID_SALE' | 'PARTIAL_REFUND' | 'LOYALTY_CHANGE' | 'AREA_SYNC' | 'TABLE_SYNC' | 'COMANDA_SYNC' | 'COMANDA_ITEM_SYNC' | 'COMANDA_CLOSE' | 'KITCHEN_STATUS';
   payload: QueuePayload;
   timestamp: number;
   retries: number;
