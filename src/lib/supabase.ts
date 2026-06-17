@@ -15,7 +15,3 @@ export const supabase = createClient(supabaseUrl, supabaseKey, {
     detectSessionInUrl: true,   // Detecta tokens de recuperación de contraseña en la URL
   }
 });
-
-// 👇 ESTA LÍNEA ES LA CLAVE (Asegúrate de que esté aquí)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-//(window as any).supabase = supabase;

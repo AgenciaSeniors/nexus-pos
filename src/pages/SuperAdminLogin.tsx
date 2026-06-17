@@ -3,12 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Shield, Mail, Lock, Loader2, ArrowRight, AlertTriangle, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
+import { superAdminRateLimit, formatLockoutTime } from '../lib/loginRateLimit';
 
 export function SuperAdminLogin() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [lockout, setLockout] = useState(() => superAdminRateLimit.check(''));
 
   // Si ya hay sesión de super admin, lo mandamos directo al panel
   useEffect(() => {
@@ -33,6 +35,17 @@ export function SuperAdminLogin() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Rate-limit: el panel maestro controla todos los tenants, así que su login
+    // es el objetivo más sensible. Bloquea tras 3 intentos fallidos por 30 min.
+    const id = email.trim().toLowerCase();
+    const pre = superAdminRateLimit.check(id);
+    if (pre.isLocked) {
+      toast.error(`Demasiados intentos. Acceso bloqueado ${formatLockoutTime(pre.secondsLeft)}.`);
+      setLockout(pre);
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -51,8 +64,9 @@ export function SuperAdminLogin() {
               .select('is_super_admin')
               .eq('id', data.user.id)
               .single();
-          
+
           if (profile?.is_super_admin) {
+              superAdminRateLimit.recordSuccess(id);
               toast.success('Bienvenido, Administrador');
               navigate('/super-panel', { replace: true });
           } else {
@@ -63,8 +77,15 @@ export function SuperAdminLogin() {
       }
     } catch (error) {
       console.error(error);
-      const errorMessage = error instanceof Error ? error.message : "Error en la autenticación";
-      toast.error(errorMessage);
+      // Registrar el intento fallido y avisar cuántos quedan / si quedó bloqueado
+      const status = superAdminRateLimit.recordFailure(id);
+      setLockout(status);
+      const baseMsg = error instanceof Error ? error.message : "Error en la autenticación";
+      if (status.isLocked) {
+        toast.error(`Demasiados intentos fallidos. Acceso bloqueado ${formatLockoutTime(status.secondsLeft)}.`);
+      } else {
+        toast.error(`${baseMsg}${status.attemptsLeft > 0 ? ` · ${status.attemptsLeft} intento(s) restante(s)` : ''}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -132,12 +153,19 @@ export function SuperAdminLogin() {
                     </div>
                 </div>
 
-                <button 
-                    type="submit" disabled={loading}
-                    className="w-full bg-red-600 text-white font-bold py-4 rounded-xl hover:bg-red-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-red-900/50 active:scale-[0.98] disabled:opacity-70 mt-4"
+                {lockout.isLocked && (
+                    <div className="flex items-center gap-2 text-xs font-bold text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+                        <AlertTriangle size={14} className="flex-shrink-0" />
+                        Acceso bloqueado por seguridad. Reintenta en {formatLockoutTime(lockout.secondsLeft)}.
+                    </div>
+                )}
+
+                <button
+                    type="submit" disabled={loading || lockout.isLocked}
+                    className="w-full bg-red-600 text-white font-bold py-4 rounded-xl hover:bg-red-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-red-900/50 active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed mt-4"
                 >
-                    {loading ? <Loader2 className="animate-spin w-5 h-5" /> : "Verificar Credenciales"}
-                    {!loading && <ArrowRight size={20} />}
+                    {loading ? <Loader2 className="animate-spin w-5 h-5" /> : lockout.isLocked ? "Bloqueado temporalmente" : "Verificar Credenciales"}
+                    {!loading && !lockout.isLocked && <ArrowRight size={20} />}
                 </button>
             </form>
         </div>

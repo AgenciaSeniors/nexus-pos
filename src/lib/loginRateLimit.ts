@@ -265,3 +265,10 @@ export const registerRateLimit = createRateLimit('register', { maxAttempts: 3, l
 
 /** Anulación de ventas: 5 intentos / 5 min (más permisivo — operación legítima frecuente) */
 export const voidSaleRateLimit = createRateLimit('voidSale', { maxAttempts: 5, lockoutMs: 5 * 60 * 1000, windowMs: 5 * 60 * 1000 });
+
+/**
+ * Login de super-admin: 3 intentos / 30 min (el más estricto).
+ * El panel maestro controla TODOS los tenants (suspender, borrar, reset de
+ * password ajeno), así que su login es el objetivo más valioso para un atacante.
+ */
+export const superAdminRateLimit = createRateLimit('superadmin', { maxAttempts: 3, lockoutMs: 30 * 60 * 1000, windowMs: 30 * 60 * 1000 });

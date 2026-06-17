@@ -5,6 +5,8 @@ import {
   recordSuccess,
   formatLockoutTime,
   RATE_LIMIT_CONFIG,
+  superAdminRateLimit,
+  registerRateLimit,
 } from './loginRateLimit';
 
 // Mock de localStorage para tests en Node
@@ -118,5 +120,34 @@ describe('formatLockoutTime', () => {
   it('retorna cadena vacía para 0 o negativo', () => {
     expect(formatLockoutTime(0)).toBe('');
     expect(formatLockoutTime(-5)).toBe('');
+  });
+});
+
+describe('superAdminRateLimit — más estricto (3 intentos)', () => {
+  const ID = 'admin@bisne.com';
+
+  it('bloquea tras 3 intentos fallidos (no 5)', () => {
+    expect(superAdminRateLimit.check(ID).attemptsLeft).toBe(3);
+    superAdminRateLimit.recordFailure(ID); // 1
+    superAdminRateLimit.recordFailure(ID); // 2
+    const third = superAdminRateLimit.recordFailure(ID); // 3 → bloqueado
+    expect(third.isLocked).toBe(true);
+    expect(superAdminRateLimit.check(ID).isLocked).toBe(true);
+  });
+
+  it('recordSuccess limpia el bloqueo', () => {
+    superAdminRateLimit.recordFailure(ID);
+    superAdminRateLimit.recordFailure(ID);
+    superAdminRateLimit.recordSuccess(ID);
+    expect(superAdminRateLimit.check(ID).attemptsLeft).toBe(3);
+    expect(superAdminRateLimit.check(ID).isLocked).toBe(false);
+  });
+
+  it('namespaces aislados: super-admin no afecta a registro', () => {
+    superAdminRateLimit.recordFailure(ID);
+    superAdminRateLimit.recordFailure(ID);
+    superAdminRateLimit.recordFailure(ID); // super-admin bloqueado
+    // registro con el MISMO email sigue intacto (namespace distinto)
+    expect(registerRateLimit.check(ID).isLocked).toBe(false);
   });
 });
