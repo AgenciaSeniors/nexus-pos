@@ -220,7 +220,9 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
       SALE: 'venta', PRODUCT_SYNC: 'producto', CUSTOMER_SYNC: 'cliente',
       MOVEMENT: 'movimiento', AUDIT: 'auditoría', SETTINGS_SYNC: 'configuración',
       SHIFT: 'turno', CASH_MOVEMENT: 'mov. caja', STAFF_SYNC: 'empleado',
-      VOID_SALE: 'anulación', PARTIAL_REFUND: 'devolución', LOYALTY_CHANGE: 'puntos'
+      VOID_SALE: 'anulación', PARTIAL_REFUND: 'devolución', LOYALTY_CHANGE: 'puntos',
+      AREA_SYNC: 'área', TABLE_SYNC: 'mesa', COMANDA_SYNC: 'comanda',
+      COMANDA_ITEM_SYNC: 'ítem', COMANDA_CLOSE: 'cierre'
     };
     const counts: Record<string, number> = {};
     items.forEach(i => {

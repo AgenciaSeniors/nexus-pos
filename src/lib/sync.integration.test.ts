@@ -101,6 +101,10 @@ async function clearDb() {
   await db.cash_movements.clear();
   await db.staff.clear();
   await db.settings.clear();
+  await db.restaurant_areas.clear();
+  await db.restaurant_tables.clear();
+  await db.comandas.clear();
+  await db.comanda_items.clear();
 }
 
 /** Inserta un item directo en la cola con control total de sus campos. */
@@ -500,5 +504,79 @@ describe('syncLiveData — pull de fondo multi-dispositivo', () => {
     // clearDb (beforeEach global) ya dejó settings vacío.
     await syncLiveData();
     expect(mockState.calls.length).toBe(0);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+describe('Modo restaurante — sync de mesas/comandas', () => {
+  it('AREA_SYNC y TABLE_SYNC hacen upsert y marcan synced', async () => {
+    await db.restaurant_areas.add({ id: 'a1', business_id: 'b1', name: 'Salón', sync_status: 'pending_create' } as never);
+    await db.restaurant_tables.add({ id: 't1', business_id: 'b1', area_id: 'a1', name: 'Mesa 1', state: 'libre', sync_status: 'pending_create' } as never);
+    await seedQueueItem({ type: 'AREA_SYNC', payload: { id: 'a1', business_id: 'b1', name: 'Salón' } });
+    await seedQueueItem({ type: 'TABLE_SYNC', payload: { id: 't1', business_id: 'b1', area_id: 'a1', name: 'Mesa 1', state: 'libre' } });
+
+    await processQueue();
+
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.restaurant_areas.get('a1'))?.sync_status).toBe('synced');
+    expect((await db.restaurant_tables.get('t1'))?.sync_status).toBe('synced');
+  });
+
+  it('COMANDA_CLOSE cierra la comanda y marca la venta synced', async () => {
+    await db.comandas.add({ id: 'c1', business_id: 'b1', table_id: 't1', opened_at: '', status: 'open', sync_status: 'pending_update' } as never);
+    await db.sales.add({ id: 'sale1', business_id: 'b1', date: '', shift_id: 'sh1', total: 30, items: [], payment_method: 'efectivo', comanda_id: 'c1', sync_status: 'pending_create' } as never);
+    mockState.responses['rpc:close_comanda'] = { data: { ok: true } };
+    await seedQueueItem({ type: 'COMANDA_CLOSE',
+      payload: { comanda_id: 'c1', business_id: 'b1', idempotency_key: 'k1',
+        sales: [{ id: 'sale1', business_id: 'b1', total: 30 }] } });
+
+    await processQueue();
+
+    expect(mockState.calls.some(c => c.op === 'rpc' && c.key === 'close_comanda')).toBe(true);
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.comandas.get('c1'))?.status).toBe('closed');
+    expect((await db.sales.get('sale1'))?.sync_status).toBe('synced');
+  });
+
+  it('COMANDA_CLOSE con conflicto de stock marca la venta en stock_conflict', async () => {
+    await db.comandas.add({ id: 'c2', business_id: 'b1', table_id: 't1', opened_at: '', status: 'open', sync_status: 'pending_update' } as never);
+    await db.sales.add({ id: 'sale2', business_id: 'b1', date: '', shift_id: 'sh1', total: 10, items: [], payment_method: 'efectivo', comanda_id: 'c2', sync_status: 'pending_create' } as never);
+    mockState.responses['rpc:close_comanda'] = { data: { conflict: true, conflict_items: ['Mojito'] } };
+    await seedQueueItem({ type: 'COMANDA_CLOSE',
+      payload: { comanda_id: 'c2', business_id: 'b1', idempotency_key: 'k2',
+        sales: [{ id: 'sale2', business_id: 'b1', total: 10 }] } });
+
+    await processQueue();
+
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.sales.get('sale2'))?.status).toBe('stock_conflict');
+    // La comanda NO se cierra cuando hubo conflicto.
+    expect((await db.comandas.get('c2'))?.status).toBe('open');
+  });
+
+  it('syncLiveData baja comandas y mesas solo en modo restaurante', async () => {
+    await db.settings.put({ id: 'b1', name: 'Resto', status: 'active', business_type: 'restaurant', sync_status: 'synced' } as never);
+    localStorage.setItem('nexus_last_sync_at', Date.now().toString());
+    localStorage.setItem('nexus_last_heavy_sync_at', Date.now().toString());
+    mockState.responses['restaurant_tables:select'] = { data: [{ id: 't1', business_id: 'b1', area_id: 'a1', name: 'Mesa 1', state: 'ocupada' }] };
+    mockState.responses['comandas:select'] = { data: [{ id: 'c1', business_id: 'b1', table_id: 't1', opened_at: '', status: 'open' }] };
+    mockState.responses['comanda_items:select'] = { data: [{ id: 'i1', comanda_id: 'c1', business_id: 'b1', product_id: 'p1', name: 'Café', quantity: 2, price: 5, kitchen_status: 'pending' }] };
+
+    await syncLiveData();
+
+    expect((await db.restaurant_tables.get('t1'))?.state).toBe('ocupada');
+    expect(await db.comandas.get('c1')).toBeDefined();
+    expect((await db.comanda_items.get('i1'))?.name).toBe('Café');
+  });
+
+  it('syncLiveData NO consulta tablas de restaurante en modo retail', async () => {
+    await db.settings.put({ id: 'b1', name: 'Tienda', status: 'active', business_type: 'retail', sync_status: 'synced' } as never);
+    localStorage.setItem('nexus_last_sync_at', Date.now().toString());
+    localStorage.setItem('nexus_last_heavy_sync_at', Date.now().toString());
+
+    await syncLiveData();
+
+    expect(mockState.calls.some(c => c.key === 'comandas')).toBe(false);
+    expect(mockState.calls.some(c => c.key === 'restaurant_tables')).toBe(false);
   });
 });

@@ -13,7 +13,12 @@ import {
   type Staff,
   type VoidSalePayload,
   type PartialRefundPayload,
-  type LoyaltyChangePayload
+  type LoyaltyChangePayload,
+  type RestaurantArea,
+  type RestaurantTable,
+  type Comanda,
+  type ComandaItem,
+  type ComandaClosePayload
 } from './db';
 import { supabase } from './supabase';
 import type { Table } from 'dexie';
@@ -273,6 +278,72 @@ async function processItem(item: QueueItem) {
         const finalPoints = typeof newPoints === 'number' ? newPoints : 0;
         await db.customers.update(customer_id, { loyalty_points: finalPoints, sync_status: 'synced' });
         break;
+    }
+    // ─── MODO RESTAURANTE ──────────────────────────────────────────────────
+    case 'AREA_SYNC': {
+      const area = payload as RestaurantArea;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = area;
+      const { error } = await supabase.from('restaurant_areas').upsert(clean);
+      throwUnlessDuplicate(error, 'Error área', area.id);
+      await db.restaurant_areas.update(area.id, { sync_status: 'synced' });
+      break;
+    }
+    case 'TABLE_SYNC': {
+      const table = payload as RestaurantTable;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = table;
+      const { error } = await supabase.from('restaurant_tables').upsert(clean);
+      throwUnlessDuplicate(error, 'Error mesa', table.id);
+      await db.restaurant_tables.update(table.id, { sync_status: 'synced' });
+      break;
+    }
+    case 'COMANDA_SYNC': {
+      const comanda = payload as Comanda;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = comanda;
+      const { error } = await supabase.from('comandas').upsert(clean);
+      throwUnlessDuplicate(error, 'Error comanda', comanda.id);
+      await db.comandas.update(comanda.id, { sync_status: 'synced' });
+      break;
+    }
+    case 'COMANDA_ITEM_SYNC': {
+      const item = payload as ComandaItem;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = item;
+      const { error } = await supabase.from('comanda_items').upsert(clean);
+      throwUnlessDuplicate(error, 'Error ítem comanda', item.id);
+      await db.comanda_items.update(item.id, { sync_status: 'synced' });
+      break;
+    }
+    case 'COMANDA_CLOSE': {
+      // Cierre de comanda: el RPC descuenta stock e inserta la(s) venta(s) de forma
+      // atómica e idempotente. Mismo contrato de conflicto de stock que 'SALE'.
+      const { comanda_id, sales, business_id, idempotency_key } = payload as ComandaClosePayload;
+      const { data: rpcData, error } = await supabase.rpc('close_comanda', {
+        p_comanda_id: comanda_id,
+        p_sales: sales,
+        p_business_id: business_id,
+        p_idempotency_key: idempotency_key,
+      });
+      if (error && error.code !== '23505') throw new Error(`Error cerrando comanda: ${error.message}`);
+
+      if (rpcData?.conflict) {
+        // Stock insuficiente para algún producto al cerrar — marcar las ventas en conflicto.
+        for (const s of sales) {
+          await db.sales.update(s.id, { status: 'stock_conflict', sync_status: 'synced' });
+        }
+        const names = (rpcData.conflict_items as string[] || []).join(', ');
+        window.dispatchEvent(new CustomEvent('nexus-stock-conflict', {
+          detail: { saleId: sales[0]?.id, items: names }
+        }));
+      } else {
+        for (const s of sales) {
+          await db.sales.update(s.id, { sync_status: 'synced' });
+        }
+        await db.comandas.update(comanda_id, { status: 'closed', sync_status: 'synced' });
+      }
+      break;
     }
     default:
       throw new Error(`Tipo de acción desconocido: ${type}`);
@@ -886,6 +957,26 @@ export async function syncLiveData() {
                 .filter((s: any) => !adminId || s.id !== adminId)
                 .map((s: any) => ({ ...s, sync_status: 'synced' as const }));
             await safeBulkPut(db.staff as never, cleanStaff);
+        }
+
+        // 6b. MODO RESTAURANTE: pull de áreas/mesas y comandas abiertas + sus ítems.
+        // Solo si el negocio es restaurante (evita tráfico inútil en retail). 30s es
+        // suficiente en Fase 1 (sin KDS). safeBulkPut preserva cambios locales pendientes.
+        if (settings[0]?.business_type === 'restaurant') {
+            const [areasRes, tablesRes, comandasRes, itemsData] = await Promise.all([
+                supabase.from('restaurant_areas').select('*').eq('business_id', businessId),
+                supabase.from('restaurant_tables').select('*').eq('business_id', businessId),
+                supabase.from('comandas').select('*').eq('business_id', businessId).eq('status', 'open'),
+                fetchSince('comanda_items', businessId, lastSync),
+            ]);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (areasRes.data?.length) await safeBulkPut(db.restaurant_areas as never, areasRes.data.map((a: any) => ({ ...a, sync_status: 'synced' as const })));
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (tablesRes.data?.length) await safeBulkPut(db.restaurant_tables as never, tablesRes.data.map((t: any) => ({ ...t, sync_status: 'synced' as const })));
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (comandasRes.data?.length) await safeBulkPut(db.comandas as never, comandasRes.data.map((c: any) => ({ ...c, sync_status: 'synced' as const })));
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (itemsData.length) await safeBulkPut(db.comanda_items as never, itemsData.map((i: any) => ({ ...i, sync_status: 'synced' as const })));
         }
 
         // 7. Mejora 5: Verificar suscripción/trial con datos locales actualizados

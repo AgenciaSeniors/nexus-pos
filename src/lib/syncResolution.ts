@@ -136,6 +136,11 @@ export const QUEUE_TYPE_LABELS: Record<string, string> = {
   VOID_SALE: 'Anulación',
   PARTIAL_REFUND: 'Devolución',
   LOYALTY_CHANGE: 'Puntos de Lealtad',
+  AREA_SYNC: 'Área',
+  TABLE_SYNC: 'Mesa',
+  COMANDA_SYNC: 'Comanda',
+  COMANDA_ITEM_SYNC: 'Ítem de comanda',
+  COMANDA_CLOSE: 'Cierre de comanda',
 };
 
 export const RETRY_CONFIG = {
@@ -250,6 +255,13 @@ export const QUEUE_TYPE_PRIORITY: Record<string, number> = {
   VOID_SALE: 50,
   PARTIAL_REFUND: 50,
   LOYALTY_CHANGE: 50,
+  // Modo restaurante: entidades base primero (área → mesa → comanda → ítems),
+  // y el cierre al final (produce ventas y referencia la comanda ya sincronizada).
+  AREA_SYNC: 10,
+  TABLE_SYNC: 15,
+  COMANDA_SYNC: 25,
+  COMANDA_ITEM_SYNC: 30,
+  COMANDA_CLOSE: 50,
 };
 
 const DEFAULT_PRIORITY = 35; // tipos desconocidos: en medio, antes que mutaciones
