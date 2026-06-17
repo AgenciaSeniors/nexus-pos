@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import type { Product, ModifierGroup, Modifier, ComandaItemModifier } from '../lib/db';
 import { modifiersTotal as sumDeltas, validateGroupSelection } from '../lib/modifiers';
-import { X, Check } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { toast } from 'sonner';
+import { Modal, Button } from './ui';
 
 interface Props {
   product: Product;
@@ -57,47 +58,44 @@ export function ModifierPickerModal({ product, groups, modifiers, onCancel, onCo
   const total = sumDeltas(selectedModifiers());
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[85vh] flex flex-col">
-        <div className="flex items-center justify-between p-4 border-b border-gray-100">
-          <h2 className="font-black text-[#1F2937]">{product.name}</h2>
-          <button onClick={onCancel} className="p-1.5 rounded-full hover:bg-gray-100"><X size={20} /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-5">
-          {groups.map(g => (
-            <div key={g.id}>
-              <p className="font-bold text-[#1F2937] mb-2">
-                {g.name}
-                <span className="ml-2 text-[11px] font-normal text-[#6B7280]">
-                  {(g.max_select ?? 1) === 1 ? 'elige una' : 'varias'}{g.required ? ' · obligatorio' : ''}
-                </span>
-              </p>
-              <div className="space-y-1.5">
-                {modsOf(g.id).map(m => {
-                  const on = selected.has(m.id);
-                  return (
-                    <button key={m.id} onClick={() => toggle(g, m.id)}
-                      className={`w-full flex items-center justify-between p-3 rounded-xl border-2 text-left transition-all ${on ? 'border-[#7AC142] bg-[#7AC142]/5' : 'border-gray-200'}`}>
-                      <span className="font-medium text-[#1F2937]">{m.name}</span>
-                      <span className="flex items-center gap-2">
-                        {m.price_delta ? <span className="text-sm text-[#6B7280]">+${m.price_delta.toFixed(2)}</span> : null}
-                        {on && <Check size={16} className="text-[#7AC142]" />}
-                      </span>
-                    </button>
-                  );
-                })}
-                {modsOf(g.id).length === 0 && <p className="text-sm text-[#9CA3AF]">Sin opciones.</p>}
-              </div>
+    <Modal
+      title={product.name}
+      onClose={onCancel}
+      size="md"
+      footer={
+        <Button variant="navy" fullWidth size="lg" onClick={confirm}>
+          Agregar{total > 0 ? ` (+$${total.toFixed(2)})` : ''}
+        </Button>
+      }
+    >
+      <div className="p-4 space-y-5">
+        {groups.map(g => (
+          <div key={g.id}>
+            <p className="font-bold text-[#1F2937] mb-2">
+              {g.name}
+              <span className="ml-2 text-[11px] font-normal text-[#6B7280]">
+                {(g.max_select ?? 1) === 1 ? 'elige una' : 'varias'}{g.required ? ' · obligatorio' : ''}
+              </span>
+            </p>
+            <div className="space-y-1.5">
+              {modsOf(g.id).map(m => {
+                const on = selected.has(m.id);
+                return (
+                  <button key={m.id} onClick={() => toggle(g, m.id)} aria-pressed={on}
+                    className={`w-full flex items-center justify-between p-3 rounded-xl border-2 text-left transition-all active:scale-[0.99] ${on ? 'border-[#7AC142] bg-[#7AC142]/5' : 'border-gray-200 hover:border-gray-300'}`}>
+                    <span className="font-medium text-[#1F2937]">{m.name}</span>
+                    <span className="flex items-center gap-2">
+                      {m.price_delta ? <span className="text-sm text-[#6B7280]">+${m.price_delta.toFixed(2)}</span> : null}
+                      {on && <Check size={16} className="text-[#7AC142]" />}
+                    </span>
+                  </button>
+                );
+              })}
+              {modsOf(g.id).length === 0 && <p className="text-sm text-[#9CA3AF]">Sin opciones.</p>}
             </div>
-          ))}
-        </div>
-        <div className="p-4 border-t border-gray-100">
-          <button onClick={confirm}
-            className="w-full py-3 rounded-xl font-bold bg-[#0B3B68] text-white active:scale-95 transition-all">
-            Agregar{total > 0 ? ` (+$${total.toFixed(2)})` : ''}
-          </button>
-        </div>
+          </div>
+        ))}
       </div>
-    </div>
+    </Modal>
   );
 }

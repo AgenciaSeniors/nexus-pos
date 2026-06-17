@@ -2,6 +2,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type ComandaItem } from '../lib/db';
 import { addToQueue } from '../lib/sync';
 import { ChefHat, Clock, Check, Flame } from 'lucide-react';
+import { PageHeader, EmptyState, Skeleton } from '../components/ui';
 
 type KStatus = ComandaItem['kitchen_status'];
 
@@ -11,7 +12,7 @@ const ACTIVE: KStatus[] = ['sent', 'preparando'];
 export default function KdsPage() {
   const businessId = localStorage.getItem('nexus_business_id') || '';
 
-  const items = useLiveQuery(async () => {
+  const itemsQuery = useLiveQuery(async () => {
     if (!businessId) return [] as ComandaItem[];
     const rows = await db.comanda_items
       .where('[business_id+kitchen_status]')
@@ -20,7 +21,10 @@ export default function KdsPage() {
     return rows
       .filter(i => !i.voided)
       .sort((a, b) => (a.sent_at || a.created_at || '').localeCompare(b.sent_at || b.created_at || ''));
-  }, [businessId]) || [];
+  }, [businessId]);
+
+  const loading = itemsQuery === undefined;
+  const items = itemsQuery ?? [];
 
   // Nombres de mesa por comanda (para encabezar cada ticket).
   const tableByComanda = useLiveQuery(async () => {
@@ -60,14 +64,16 @@ export default function KdsPage() {
 
   return (
     <div className="p-4 md:p-6">
-      <h1 className="text-2xl font-black text-[#1F2937] flex items-center gap-2 mb-5">
-        <ChefHat className="text-[#0B3B68]" /> Cocina
-      </h1>
+      <PageHeader title="Cocina" icon={<ChefHat className="text-[#0B3B68]" />} className="mb-5" />
 
-      {comandaIds.length === 0 ? (
-        <div className="flex flex-col items-center justify-center min-h-[50vh] text-center">
-          <Clock className="text-[#9CA3AF] mb-3" size={40} />
-          <p className="text-[#6B7280] font-medium">No hay pedidos en cocina por ahora.</p>
+      {loading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-40" />)}
+        </div>
+      ) : comandaIds.length === 0 ? (
+        <div className="flex items-center justify-center min-h-[50vh]">
+          <EmptyState icon={<Clock size={32} />} title="Todo al día"
+            description="No hay pedidos en cocina por ahora. Las nuevas comandas aparecerán aquí." />
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

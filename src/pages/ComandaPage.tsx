@@ -10,8 +10,9 @@ import { logAuditAction } from '../lib/audit';
 import { PaymentModal } from '../components/PaymentModal';
 import { ModifierPickerModal } from '../components/ModifierPickerModal';
 import { SplitBillModal } from '../components/SplitBillModal';
-import { ArrowLeft, Search, Plus, Minus, Trash2, Package, CreditCard, ChefHat, Users } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Minus, Trash2, Package, CreditCard, ChefHat, Users, ClipboardList } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button, Input, EmptyState } from '../components/ui';
 
 export default function ComandaPage() {
   const { id: comandaId = '' } = useParams();
@@ -248,9 +249,13 @@ export default function ComandaPage() {
   }
   if (comanda === null) {
     return (
-      <div className="p-6 text-center">
-        <p className="text-[#6B7280] mb-3">Esta comanda no existe.</p>
-        <button onClick={() => navigate('/mesas')} className="text-[#0B3B68] font-bold">Volver a Mesas</button>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <EmptyState
+          icon={<ClipboardList size={32} />}
+          title="Esta comanda no existe"
+          description="Pudo haberse cobrado o cerrado desde otro dispositivo."
+          action={<Button variant="navy" icon={<ArrowLeft size={18} />} onClick={() => navigate('/mesas')}>Volver a Mesas</Button>}
+        />
       </div>
     );
   }
@@ -267,11 +272,8 @@ export default function ComandaPage() {
           </button>
           <h1 className="text-xl font-black text-[#1F2937]">{table?.name ?? 'Comanda'}</h1>
         </div>
-        <div className="relative mb-4">
-          <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9CA3AF]" />
-          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar producto…"
-            className="w-full pl-10 pr-3 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none" />
-        </div>
+        <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar producto…"
+          aria-label="Buscar producto" icon={<Search size={18} />} className="mb-4" />
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
           {filteredProducts.slice(0, 60).map(p => (
             <button key={p.id} onClick={() => addProduct(p)}
@@ -290,7 +292,10 @@ export default function ComandaPage() {
       <div className="lg:w-96 shrink-0 bg-white rounded-2xl border border-gray-200 p-4 flex flex-col">
         <h2 className="font-black text-[#1F2937] mb-3">Comanda</h2>
         <div className="flex-1 overflow-y-auto space-y-2 min-h-[120px]">
-          {liveItems.length === 0 && <p className="text-sm text-[#9CA3AF]">Agrega productos desde la izquierda.</p>}
+          {liveItems.length === 0 && (
+            <EmptyState size="sm" icon={<ClipboardList size={22} />} title="Comanda vacía"
+              description="Agrega productos desde la izquierda." />
+          )}
           {liveItems.map(it => (
             <div key={it.id} className="flex items-center gap-2 p-2 rounded-xl bg-gray-50">
               <div className="flex-1 min-w-0">
@@ -314,22 +319,21 @@ export default function ComandaPage() {
             <span className="text-2xl font-black text-[#0B3B68]">${total.toFixed(2)}</span>
           </div>
           {pendingToSend.length > 0 && (
-            <button onClick={sendToKitchen}
-              className="w-full mb-2 py-3 rounded-xl font-bold flex items-center justify-center gap-2 bg-[#0B3B68] text-white active:scale-95 transition-all">
-              <ChefHat size={20} /> Enviar a cocina ({pendingToSend.length})
-            </button>
+            <Button variant="navy" fullWidth size="lg" className="mb-2" onClick={sendToKitchen} icon={<ChefHat size={20} />}>
+              Enviar a cocina ({pendingToSend.length})
+            </Button>
           )}
           <div className="flex gap-2">
-            <button onClick={() => setShowSplit(true)}
+            <Button variant="secondary" size="lg" onClick={() => setShowSplit(true)}
               disabled={liveItems.length === 0 || isClosing || !activeShift}
-              className={`px-4 py-3 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all ${liveItems.length === 0 || !activeShift ? 'bg-gray-100 text-gray-400' : 'bg-white border-2 border-[#0B3B68] text-[#0B3B68] active:scale-95'}`}>
-              <Users size={18} /> Dividir
-            </button>
-            <button onClick={() => setShowPayment(true)}
+              className="border-2 border-[#0B3B68] text-[#0B3B68]" icon={<Users size={18} />}>
+              Dividir
+            </Button>
+            <Button variant="primary" size="lg" fullWidth onClick={() => setShowPayment(true)}
               disabled={liveItems.length === 0 || isClosing || !activeShift}
-              className={`flex-1 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${liveItems.length === 0 || !activeShift ? 'bg-gray-200 text-gray-400' : 'bg-[#7AC142] text-white active:scale-95'}`}>
-              <CreditCard size={20} /> {!activeShift ? 'Caja cerrada' : 'Cobrar'}
-            </button>
+              loading={isClosing} icon={<CreditCard size={20} />}>
+              {!activeShift ? 'Caja cerrada' : 'Cobrar'}
+            </Button>
           </div>
         </div>
       </div>

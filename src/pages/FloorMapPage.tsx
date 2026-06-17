@@ -5,6 +5,7 @@ import { addToQueue } from '../lib/sync';
 import { comandaTotal } from '../lib/comanda';
 import { UtensilsCrossed, Plus, Settings as SettingsIcon } from 'lucide-react';
 import { toast } from 'sonner';
+import { PageHeader, EmptyState, Button } from '../components/ui';
 
 const STATE_STYLES: Record<RestaurantTable['state'], { box: string; dot: string; label: string }> = {
   libre: { box: 'border-[#7AC142]/30 bg-[#7AC142]/5 hover:border-[#7AC142]', dot: 'bg-[#7AC142]', label: 'Libre' },
@@ -82,18 +83,17 @@ export default function FloorMapPage() {
 
   if (tables.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center px-6">
-        <div className="w-16 h-16 rounded-2xl bg-[#0B3B68]/5 flex items-center justify-center mb-4">
-          <UtensilsCrossed className="text-[#0B3B68]" size={32} />
-        </div>
-        <h1 className="text-xl font-bold text-[#1F2937] mb-1">Aún no hay mesas</h1>
-        <p className="text-sm text-[#6B7280] max-w-sm mb-4">
-          Crea tus áreas (salón, terraza…) y mesas desde Configuración para empezar a tomar comandas.
-        </p>
-        <button onClick={() => navigate('/configuracion?tab=restaurant')}
-          className="bg-[#0B3B68] text-white font-bold py-2.5 px-5 rounded-xl flex items-center gap-2">
-          <SettingsIcon size={18} /> Configurar mesas
-        </button>
+      <div className="flex items-center justify-center h-full min-h-[60vh]">
+        <EmptyState
+          icon={<UtensilsCrossed size={32} />}
+          title="Aún no hay mesas"
+          description="Crea tus áreas (salón, terraza…) y mesas desde Configuración para empezar a tomar comandas."
+          action={
+            <Button variant="navy" icon={<SettingsIcon size={18} />} onClick={() => navigate('/configuracion?tab=restaurant')}>
+              Configurar mesas
+            </Button>
+          }
+        />
       </div>
     );
   }
@@ -120,15 +120,16 @@ export default function FloorMapPage() {
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <h1 className="text-2xl font-black text-[#1F2937] flex items-center gap-2">
-          <UtensilsCrossed className="text-[#0B3B68]" /> Mesas
-        </h1>
-        <button onClick={() => navigate('/configuracion?tab=restaurant')}
-          className="text-sm font-bold text-[#0B3B68] flex items-center gap-1.5 hover:underline">
-          <Plus size={16} /> Áreas y mesas
-        </button>
-      </div>
+      <PageHeader
+        title="Mesas"
+        icon={<UtensilsCrossed className="text-[#0B3B68]" />}
+        className="mb-5"
+        action={
+          <Button variant="ghost" size="sm" icon={<Plus size={16} />} onClick={() => navigate('/configuracion?tab=restaurant')}>
+            Áreas y mesas
+          </Button>
+        }
+      />
 
       {areas.map(area => (
         <section key={area.id} className="mb-6">

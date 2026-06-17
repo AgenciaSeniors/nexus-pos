@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type ModifierGroup, type Modifier, type ProductModifierGroup } from '../lib/db';
 import { addToQueue, syncPush } from '../lib/sync';
-import { Plus, Trash2, SlidersHorizontal, ChevronDown } from 'lucide-react';
+import { Plus, Trash2, SlidersHorizontal, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { SectionCard, Card, Input, Select, Button, Badge, EmptyState, SkeletonList, ConfirmDialog, cn } from './ui';
 
 /**
  * Administración de modificadores del menú (Fase 3): grupos, sus opciones y la
@@ -18,30 +19,37 @@ export function MenuModifiersAdmin() {
   const [modName, setModName] = useState<Record<string, string>>({});
   const [modPrice, setModPrice] = useState<Record<string, string>>({});
   const [assignProductId, setAssignProductId] = useState('');
+  const [confirm, setConfirm] = useState<{ kind: 'group' | 'modifier'; row: ModifierGroup | Modifier } | null>(null);
 
   const groups = useLiveQuery(async () => {
     if (!businessId) return [];
     const rows = await db.modifier_groups.where('business_id').equals(businessId).toArray();
     return rows.filter(g => !g.deleted_at).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-  }, [businessId]) || [];
+  }, [businessId]);
 
   const modifiers = useLiveQuery(async () => {
     if (!businessId) return [];
     const rows = await db.modifiers.where('business_id').equals(businessId).toArray();
     return rows.filter(m => !m.deleted_at);
-  }, [businessId]) || [];
+  }, [businessId]);
 
   const products = useLiveQuery(async () => {
     if (!businessId) return [];
     const rows = await db.products.where('business_id').equals(businessId).toArray();
     return rows.filter(p => !p.deleted_at).sort((a, b) => a.name.localeCompare(b.name));
-  }, [businessId]) || [];
+  }, [businessId]);
 
   const links = useLiveQuery(async () => {
     if (!businessId) return [];
     const rows = await db.product_modifier_groups.where('business_id').equals(businessId).toArray();
     return rows.filter(l => !l.deleted_at);
-  }, [businessId]) || [];
+  }, [businessId]);
+
+  const loading = groups === undefined || modifiers === undefined || products === undefined || links === undefined;
+  const groupList = groups ?? [];
+  const modifierList = modifiers ?? [];
+  const productList = products ?? [];
+  const linkList = links ?? [];
 
   const enqueue = (type: 'MODIFIER_GROUP_SYNC' | 'MODIFIER_SYNC' | 'PRODUCT_MODIFIER_SYNC', payload: ModifierGroup | Modifier | ProductModifierGroup) =>
     addToQueue(type, payload);
@@ -52,7 +60,7 @@ export function MenuModifiersAdmin() {
     const group: ModifierGroup = {
       id: crypto.randomUUID(), business_id: businessId, name,
       max_select: groupMulti ? undefined : 1, required: groupRequired,
-      sort_order: groups.length, sync_status: 'pending_create',
+      sort_order: groupList.length, sync_status: 'pending_create',
     };
     await db.transaction('rw', [db.modifier_groups, db.action_queue], async () => {
       await db.modifier_groups.add(group);
@@ -97,9 +105,16 @@ export function MenuModifiersAdmin() {
     syncPush().catch(() => {});
   };
 
+  const confirmDelete = async () => {
+    if (!confirm) return;
+    if (confirm.kind === 'group') await removeGroup(confirm.row as ModifierGroup);
+    else await removeModifier(confirm.row as Modifier);
+    setConfirm(null);
+  };
+
   const toggleAssign = async (groupId: string, checked: boolean) => {
     if (!assignProductId) return;
-    const existing = links.find(l => l.product_id === assignProductId && l.group_id === groupId);
+    const existing = linkList.find(l => l.product_id === assignProductId && l.group_id === groupId);
     if (checked && !existing) {
       const link: ProductModifierGroup = {
         id: crypto.randomUUID(), business_id: businessId, product_id: assignProductId,
@@ -119,74 +134,112 @@ export function MenuModifiersAdmin() {
     syncPush().catch(() => {});
   };
 
-  const assignedGroupIds = new Set(links.filter(l => l.product_id === assignProductId).map(l => l.group_id));
+  const assignedGroupIds = new Set(linkList.filter(l => l.product_id === assignProductId).map(l => l.group_id));
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Crear grupo */}
-      <div>
-        <h3 className="font-black text-[#1F2937] flex items-center gap-2 mb-3"><SlidersHorizontal size={18} className="text-[#0B3B68]" /> Grupos de modificadores</h3>
+      <SectionCard title="Grupos de modificadores" icon={<SlidersHorizontal size={18} className="text-[#0B3B68]" />}
+        subtitle="Ej. “Término” (única opción) o “Extras” (varias). Cada opción puede sumar precio.">
         <div className="flex flex-col sm:flex-row gap-2 mb-2">
-          <input value={groupName} onChange={e => setGroupName(e.target.value)} placeholder="Ej. Término, Extras"
-            onKeyDown={e => e.key === 'Enter' && addGroup()}
-            className="flex-1 p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none" />
-          <button onClick={addGroup} className="bg-[#0B3B68] text-white px-4 py-3 rounded-xl font-bold flex items-center justify-center gap-1"><Plus size={18} /> Grupo</button>
+          <Input value={groupName} onChange={e => setGroupName(e.target.value)} placeholder="Nombre del grupo (ej. Término, Extras)"
+            onKeyDown={e => e.key === 'Enter' && addGroup()} aria-label="Nombre del grupo" className="flex-1" />
+          <Button onClick={addGroup} icon={<Plus size={18} />} disabled={!groupName.trim()}>Crear grupo</Button>
         </div>
-        <div className="flex gap-4 text-sm text-[#6B7280] mb-4">
-          <label className="flex items-center gap-1.5"><input type="checkbox" checked={groupMulti} onChange={e => setGroupMulti(e.target.checked)} /> Permitir varias opciones</label>
-          <label className="flex items-center gap-1.5"><input type="checkbox" checked={groupRequired} onChange={e => setGroupRequired(e.target.checked)} /> Obligatorio</label>
+        <div className="flex flex-wrap gap-4 text-sm text-[#6B7280] mb-5">
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={groupMulti} onChange={e => setGroupMulti(e.target.checked)} className="accent-[#0B3B68]" />
+            Permitir varias opciones
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={groupRequired} onChange={e => setGroupRequired(e.target.checked)} className="accent-[#0B3B68]" />
+            Obligatorio
+          </label>
         </div>
 
-        <div className="space-y-3">
-          {groups.map(g => (
-            <div key={g.id} className="border border-gray-200 rounded-xl p-3">
-              <div className="flex items-center justify-between mb-2">
-                <p className="font-bold text-[#1F2937]">{g.name}
-                  <span className="ml-2 text-[11px] font-normal text-[#6B7280]">{g.max_select === 1 ? 'única' : 'múltiple'}{g.required ? ' · obligatorio' : ''}</span>
-                </p>
-                <button onClick={() => removeGroup(g)} className="p-1 rounded-lg text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
-              </div>
-              <div className="flex flex-wrap gap-2 mb-2">
-                {modifiers.filter(m => m.group_id === g.id).map(m => (
-                  <span key={m.id} className="inline-flex items-center gap-1.5 bg-gray-100 rounded-full pl-3 pr-1.5 py-1 text-sm">
-                    {m.name}{m.price_delta ? ` +$${m.price_delta.toFixed(2)}` : ''}
-                    <button onClick={() => removeModifier(m)} className="p-0.5 rounded-full text-red-500 hover:bg-red-100"><Trash2 size={12} /></button>
-                  </span>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <input value={modName[g.id] || ''} onChange={e => setModName(s => ({ ...s, [g.id]: e.target.value }))} placeholder="Opción (ej. Bien cocido)"
-                  className="flex-1 p-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-[#0B3B68]" />
-                <input value={modPrice[g.id] || ''} onChange={e => setModPrice(s => ({ ...s, [g.id]: e.target.value }))} placeholder="+$" inputMode="decimal"
-                  className="w-20 p-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-[#0B3B68]" />
-                <button onClick={() => addModifier(g.id)} className="bg-gray-100 px-3 rounded-lg font-bold text-[#0B3B68]"><Plus size={16} /></button>
-              </div>
-            </div>
-          ))}
-          {groups.length === 0 && <p className="text-sm text-[#9CA3AF]">Aún no hay grupos de modificadores.</p>}
-        </div>
-      </div>
+        {loading ? (
+          <SkeletonList rows={2} rowClassName="h-24" />
+        ) : groupList.length === 0 ? (
+          <EmptyState size="sm" icon={<SlidersHorizontal size={22} />} title="Aún no hay grupos"
+            description="Crea tu primer grupo para ofrecer opciones al ordenar (término, extras, salsas…)." />
+        ) : (
+          <div className="space-y-3">
+            {groupList.map(g => (
+              <Card key={g.id} className="p-3">
+                <div className="flex items-center justify-between mb-2 gap-2">
+                  <p className="font-bold text-[#1F2937] min-w-0 truncate">
+                    {g.name}
+                    <span className="ml-2 text-[11px] font-normal text-[#6B7280]">
+                      {g.max_select === 1 ? 'única' : 'múltiple'}{g.required ? ' · obligatorio' : ''}
+                    </span>
+                  </p>
+                  <button onClick={() => setConfirm({ kind: 'group', row: g })} aria-label={`Eliminar grupo ${g.name}`}
+                    className="p-1 rounded-lg text-red-500 hover:bg-red-50 transition-colors shrink-0">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {modifierList.filter(m => m.group_id === g.id).map(m => (
+                    <Badge key={m.id} color="gray" className="pr-1.5 font-medium">
+                      {m.name}{m.price_delta ? ` +$${m.price_delta.toFixed(2)}` : ''}
+                      <button onClick={() => setConfirm({ kind: 'modifier', row: m })} aria-label={`Eliminar opción ${m.name}`}
+                        className="p-0.5 rounded-full text-red-500 hover:bg-red-100 transition-colors">
+                        <Trash2 size={12} />
+                      </button>
+                    </Badge>
+                  ))}
+                  {modifierList.filter(m => m.group_id === g.id).length === 0 && (
+                    <span className="text-xs text-[#9CA3AF]">Sin opciones todavía.</span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Input value={modName[g.id] || ''} onChange={e => setModName(s => ({ ...s, [g.id]: e.target.value }))}
+                    onKeyDown={e => e.key === 'Enter' && addModifier(g.id)}
+                    placeholder="Opción (ej. Bien cocido)" aria-label="Nombre de la opción" className="flex-1" />
+                  <Input value={modPrice[g.id] || ''} onChange={e => setModPrice(s => ({ ...s, [g.id]: e.target.value }))}
+                    placeholder="+$" inputMode="decimal" aria-label="Precio extra" className="w-24" />
+                  <Button variant="secondary" size="sm" onClick={() => addModifier(g.id)} icon={<Plus size={16} />}
+                    aria-label="Añadir opción" />
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </SectionCard>
 
       {/* Asignar a productos */}
-      {groups.length > 0 && (
-        <div>
-          <h3 className="font-black text-[#1F2937] flex items-center gap-2 mb-3"><ChevronDown size={18} className="text-[#0B3B68]" /> Asignar a un producto</h3>
-          <select value={assignProductId} onChange={e => setAssignProductId(e.target.value)}
-            className="w-full p-3 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-[#0B3B68] outline-none mb-3">
+      {groupList.length > 0 && (
+        <SectionCard title="Asignar a un producto" icon={<Link2 size={18} className="text-[#0B3B68]" />}
+          subtitle="Elige un producto y marca qué grupos de modificadores se ofrecen al pedirlo.">
+          <Select value={assignProductId} onChange={e => setAssignProductId(e.target.value)} aria-label="Producto" className="mb-3">
             <option value="">Elige un producto…</option>
-            {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+            {productList.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </Select>
           {assignProductId && (
             <div className="flex flex-wrap gap-2">
-              {groups.map(g => (
-                <label key={g.id} className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer text-sm font-bold ${assignedGroupIds.has(g.id) ? 'border-[#7AC142] bg-[#7AC142]/5 text-[#0B3B68]' : 'border-gray-200 text-[#6B7280]'}`}>
-                  <input type="checkbox" checked={assignedGroupIds.has(g.id)} onChange={e => toggleAssign(g.id, e.target.checked)} />
+              {groupList.map(g => (
+                <label key={g.id}
+                  className={cn(
+                    'inline-flex items-center gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer text-sm font-bold transition-colors',
+                    assignedGroupIds.has(g.id) ? 'border-[#7AC142] bg-[#7AC142]/5 text-[#0B3B68]' : 'border-gray-200 text-[#6B7280] hover:border-gray-300',
+                  )}>
+                  <input type="checkbox" checked={assignedGroupIds.has(g.id)} onChange={e => toggleAssign(g.id, e.target.checked)}
+                    className="accent-[#7AC142]" />
                   {g.name}
                 </label>
               ))}
             </div>
           )}
-        </div>
+        </SectionCard>
+      )}
+
+      {confirm && (
+        <ConfirmDialog
+          title={confirm.kind === 'group' ? 'Eliminar grupo' : 'Eliminar opción'}
+          message={<>¿Seguro que quieres eliminar <span className="font-bold text-[#1F2937]">{confirm.row.name}</span>?{confirm.kind === 'group' ? ' Se quitarán también sus opciones.' : ''}</>}
+          onConfirm={confirmDelete}
+          onCancel={() => setConfirm(null)}
+        />
       )}
     </div>
   );
