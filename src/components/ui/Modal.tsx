@@ -65,13 +65,22 @@ export function Modal({
     >
       <div
         className={cn(
-          'bg-white w-full rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] nx-sheet-up sm:nx-pop-in',
+          'relative bg-white w-full rounded-t-3xl sm:rounded-3xl shadow-modal overflow-hidden flex flex-col max-h-[92vh] nx-sheet-up sm:nx-pop-in',
           SIZES[size],
           className,
         )}
       >
+        {/* Grabber del bottom-sheet (solo móvil); blanco sobre header navy, gris sobre blanco. */}
+        <span
+          aria-hidden="true"
+          className={cn(
+            'sm:hidden absolute top-2 left-1/2 -translate-x-1/2 h-1.5 w-10 rounded-full z-10',
+            title !== undefined ? 'bg-white/40' : 'bg-gray-300',
+          )}
+        />
+
         {title !== undefined && (
-          <div className="bg-[#0B3B68] px-5 py-4 text-white flex items-center justify-between gap-3 shrink-0">
+          <div className="bg-grad-navy px-5 py-4 text-white flex items-center justify-between gap-3 shrink-0">
             <h2 className="text-lg font-black flex items-center gap-2 min-w-0">
               {icon}
               <span className="truncate">{title}</span>

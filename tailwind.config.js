@@ -32,9 +32,22 @@ export default {
       fontFamily: {
         // Montserrat para encabezados (Headings)
         heading: ['Montserrat', 'sans-serif'],
-        // Inter para cuerpo y números (Body)
+        // Inter para cuerpo y números (Body) — también el sans por defecto
         body: ['Inter', 'sans-serif'],
-      }
+        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+      },
+      boxShadow: {
+        // Sombras tintadas de marca (navy) para una sensación premium y suave.
+        card: '0 1px 2px rgba(11,59,104,0.04), 0 4px 12px rgba(11,59,104,0.06)',
+        'card-hover': '0 10px 28px rgba(11,59,104,0.12)',
+        modal: '0 24px 64px rgba(11,59,104,0.28)',
+        'glow-green': '0 6px 20px rgba(122,193,66,0.30)',
+        'glow-navy': '0 6px 20px rgba(11,59,104,0.25)',
+      },
+      backgroundImage: {
+        'grad-navy': 'linear-gradient(135deg, #0B3B68 0%, #092b4d 100%)',
+        'grad-green': 'linear-gradient(135deg, #7AC142 0%, #5a9d2e 100%)',
+      },
     },
   },
   plugins: [

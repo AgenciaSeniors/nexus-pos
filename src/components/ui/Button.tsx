@@ -6,10 +6,10 @@ export type ButtonVariant = 'primary' | 'navy' | 'secondary' | 'danger' | 'ghost
 export type ButtonSize = 'sm' | 'md' | 'lg';
 
 const VARIANTS: Record<ButtonVariant, string> = {
-  primary: 'bg-[#7AC142] text-white hover:bg-[#5a962e] focus-visible:ring-[#7AC142]',
-  navy: 'bg-[#0B3B68] text-white hover:bg-[#0a3257] focus-visible:ring-[#0B3B68]',
-  secondary: 'bg-white text-[#1F2937] border border-gray-200 hover:bg-gray-50 focus-visible:ring-[#0B3B68]',
-  danger: 'bg-[#EF4444] text-white hover:bg-red-600 focus-visible:ring-[#EF4444]',
+  primary: 'bg-grad-green text-white shadow-glow-green hover:shadow-[0_10px_26px_rgba(122,193,66,0.42)] hover:-translate-y-px focus-visible:ring-[#7AC142]',
+  navy: 'bg-grad-navy text-white shadow-glow-navy hover:shadow-[0_10px_26px_rgba(11,59,104,0.38)] hover:-translate-y-px focus-visible:ring-[#0B3B68]',
+  secondary: 'bg-white text-[#1F2937] border border-gray-200 shadow-sm hover:shadow-card hover:border-gray-300 focus-visible:ring-[#0B3B68]',
+  danger: 'bg-[#EF4444] text-white shadow-[0_6px_20px_rgba(239,68,68,0.28)] hover:bg-red-600 hover:-translate-y-px focus-visible:ring-[#EF4444]',
   ghost: 'bg-transparent text-[#0B3B68] hover:bg-[#0B3B68]/10 focus-visible:ring-[#0B3B68]',
 };
 
@@ -45,9 +45,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       className={cn(
-        'inline-flex items-center justify-center rounded-xl font-bold transition-all active:scale-95',
+        'inline-flex items-center justify-center rounded-xl font-bold transition-all duration-200 active:scale-95 active:translate-y-0',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
-        'disabled:opacity-50 disabled:pointer-events-none',
+        'disabled:opacity-50 disabled:pointer-events-none disabled:shadow-none disabled:translate-y-0',
         VARIANTS[variant],
         SIZES[size],
         fullWidth && 'w-full',

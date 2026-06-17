@@ -9,7 +9,7 @@ export interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
 }
 
 const base =
-  'w-full p-3 pr-9 border rounded-xl bg-white outline-none transition-colors focus:ring-2 appearance-none disabled:bg-gray-50 disabled:text-gray-400';
+  'w-full p-3 pr-9 border rounded-xl bg-white outline-none transition-all focus:ring-4 appearance-none disabled:bg-gray-50 disabled:text-gray-400';
 
 /** Select canónico de nexus (con chevron propio y label/error accesibles). */
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select(
@@ -35,7 +35,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
           aria-describedby={errorId}
           className={cn(
             base,
-            error ? 'border-[#EF4444] focus:ring-[#EF4444]' : 'border-gray-200 focus:ring-[#0B3B68]',
+            error ? 'border-[#EF4444] focus:ring-[#EF4444]/15' : 'border-gray-200 focus:border-[#0B3B68] focus:ring-[#0B3B68]/10',
             label ? className : undefined,
           )}
           {...rest}

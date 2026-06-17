@@ -10,7 +10,7 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 }
 
 const base =
-  'w-full p-3 border rounded-xl outline-none transition-colors focus:ring-2 disabled:bg-gray-50 disabled:text-gray-400';
+  'w-full p-3 border rounded-xl outline-none transition-all focus:ring-4 disabled:bg-gray-50 disabled:text-gray-400';
 
 /** Input de texto canónico de nexus, con label y estado de error accesibles. */
 export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
@@ -41,8 +41,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
             base,
             icon && 'pl-8',
             error
-              ? 'border-[#EF4444] focus:ring-[#EF4444]'
-              : 'border-gray-200 focus:ring-[#0B3B68]',
+              ? 'border-[#EF4444] focus:ring-[#EF4444]/15'
+              : 'border-gray-200 focus:border-[#0B3B68] focus:ring-[#0B3B68]/10',
             label ? className : undefined,
           )}
           {...rest}
