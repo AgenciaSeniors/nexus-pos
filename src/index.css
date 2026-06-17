@@ -62,3 +62,29 @@
     @apply font-bold text-[#6B7280] text-xs uppercase mr-4 md:hidden;
   }
 }
+
+/* Animaciones reales del kit de UI (src/components/ui). Se definen aquí porque la
+   app no incluye tailwindcss-animate; respetan prefers-reduced-motion. */
+@layer utilities {
+  @keyframes nx-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  @keyframes nx-pop-in {
+    from { opacity: 0; transform: translateY(12px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes nx-sheet-up {
+    from { opacity: 0; transform: translateY(100%); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .nx-fade-in  { animation: nx-fade-in 0.2s ease-out; }
+  .nx-pop-in   { animation: nx-pop-in 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
+  .nx-sheet-up { animation: nx-sheet-up 0.28s cubic-bezier(0.16, 1, 0.3, 1); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .nx-fade-in,
+    .nx-pop-in,
+    .nx-sheet-up { animation: none; }
+  }
+}
