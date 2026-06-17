@@ -165,7 +165,7 @@ export function MenuModifiersAdmin() {
         ) : (
           <div className="space-y-3">
             {groupList.map(g => (
-              <Card key={g.id} className="p-3">
+              <Card key={g.id} hover className="p-3">
                 <div className="flex items-center justify-between mb-2 gap-2">
                   <p className="font-bold text-[#1F2937] min-w-0 truncate">
                     {g.name}

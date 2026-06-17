@@ -4,7 +4,7 @@ import { splitEqual, splitByItems, allItemsAssigned } from '../lib/splitBill';
 import { comandaItemTotal } from '../lib/comanda';
 import { PaymentModal } from './PaymentModal';
 import { Users, ListChecks, Check, CreditCard } from 'lucide-react';
-import { Modal, Button } from './ui';
+import { Modal, Button, SegmentedControl, Stepper } from './ui';
 
 interface Props {
   liveItems: ComandaItem[];
@@ -79,27 +79,23 @@ export function SplitBillModal({
       <Modal title={`Dividir cuenta · $${grandTotal.toFixed(2)}`} onClose={onCancel} size="lg" zIndex={40}>
         <div className="p-4 space-y-4">
           {/* Modo */}
-          <div className="grid grid-cols-2 gap-2">
-            <button onClick={() => setMode('equal')} aria-pressed={mode === 'equal'}
-              className={`p-3 rounded-xl border-2 flex items-center justify-center gap-2 font-bold transition-colors ${mode === 'equal' ? 'border-[#0B3B68] bg-[#0B3B68]/5 text-[#0B3B68]' : 'border-gray-200 text-[#6B7280] hover:border-gray-300'}`}>
-              <Users size={18} /> Partes iguales
-            </button>
-            <button onClick={() => setMode('item')} aria-pressed={mode === 'item'}
-              className={`p-3 rounded-xl border-2 flex items-center justify-center gap-2 font-bold transition-colors ${mode === 'item' ? 'border-[#0B3B68] bg-[#0B3B68]/5 text-[#0B3B68]' : 'border-gray-200 text-[#6B7280] hover:border-gray-300'}`}>
-              <ListChecks size={18} /> Por ítem
-            </button>
-          </div>
+          <SegmentedControl
+            fullWidth
+            aria-label="Modo de división"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: 'equal', label: 'Partes iguales', icon: <Users size={18} /> },
+              { value: 'item', label: 'Por ítem', icon: <ListChecks size={18} /> },
+            ]}
+          />
 
           {/* Número de cuentas */}
-          <div className="flex items-center gap-3">
-            <span className="text-sm font-bold text-[#6B7280]">Cuentas:</span>
-            <div className="flex items-center gap-2">
-              <button onClick={() => setParts(p => Math.max(2, p - 1))} aria-label="Menos cuentas"
-                className="w-9 h-9 rounded-lg bg-gray-100 font-bold hover:bg-gray-200 transition-colors">−</button>
-              <span className="w-8 text-center font-black" aria-live="polite">{parts}</span>
-              <button onClick={() => setParts(p => Math.min(10, p + 1))} aria-label="Más cuentas"
-                className="w-9 h-9 rounded-lg bg-gray-100 font-bold hover:bg-gray-200 transition-colors">+</button>
-            </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-bold text-[#6B7280]">Cuentas</span>
+            <Stepper value={parts} min={2} max={10} label="Número de cuentas"
+              onDecrement={() => setParts(p => Math.max(2, p - 1))}
+              onIncrement={() => setParts(p => Math.min(10, p + 1))} />
           </div>
 
           {/* Asignación por ítem */}
@@ -123,16 +119,25 @@ export function SplitBillModal({
 
           {/* Cuentas */}
           <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs font-bold text-[#6B7280]">
+              <span className="uppercase tracking-wide">Cuentas</span>
+              <span>{Object.keys(paid).length} de {parts} pagadas</span>
+            </div>
+            <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-full bg-grad-green rounded-full transition-all duration-300"
+                style={{ width: `${(Object.keys(paid).length / parts) * 100}%` }} />
+            </div>
             {Array.from({ length: parts }).map((_, i) => {
               const disabled = !canPayItemMode || (partTotals[i] ?? 0) <= 0;
+              const isPaid = !!paid[i];
               return (
-                <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-gray-200">
+                <div key={i} className={`flex items-center justify-between p-3 rounded-xl border transition-colors ${isPaid ? 'border-[#7AC142]/40 bg-[#7AC142]/5' : 'border-gray-200'}`}>
                   <div>
                     <p className="font-bold text-[#1F2937]">Cuenta {i + 1}</p>
                     <p className="text-sm text-[#0B3B68] font-black">${(partTotals[i] ?? 0).toFixed(2)}</p>
                   </div>
-                  {paid[i] ? (
-                    <span className="flex items-center gap-1 text-[#7AC142] font-bold text-sm"><Check size={16} /> Pagada</span>
+                  {isPaid ? (
+                    <span className="flex items-center gap-1 text-[#4f7d24] font-bold text-sm"><Check size={16} /> Pagada</span>
                   ) : (
                     <Button size="sm" disabled={disabled} onClick={() => setPayingPart(i)} icon={<CreditCard size={16} />}>
                       Cobrar
@@ -143,7 +148,7 @@ export function SplitBillModal({
             })}
           </div>
 
-          {allPaid && <p className="text-center text-[#7AC142] font-bold">Todas las cuentas pagadas…</p>}
+          {allPaid && <p className="text-center text-[#4f7d24] font-bold">Todas las cuentas pagadas ✓</p>}
         </div>
       </Modal>
 

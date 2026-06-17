@@ -92,7 +92,7 @@ export function RecipeAdmin() {
   return (
     <div className="space-y-6">
       {/* Marcar ingredientes */}
-      <SectionCard title="Ingredientes" icon={<Carrot size={18} className="text-[#7AC142]" />}
+      <SectionCard title="Ingredientes" icon={<Carrot size={18} className="text-[#5a9d2e]" />} accent="green"
         subtitle="Marca los productos que son insumos: no se venden en el menú; se descuentan por receta.">
         {loading ? (
           <SkeletonList rows={2} rowClassName="h-9 w-32" className="flex flex-wrap gap-2 space-y-0" />
