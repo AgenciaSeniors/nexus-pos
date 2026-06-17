@@ -97,6 +97,23 @@ export async function addToQueue(type: QueueItem['type'], payload: QueuePayload)
   }
 }
 
+/**
+ * Lanza el error salvo que sea un 23505 (clave duplicada). Un 23505 significa que
+ * el registro YA existía en el servidor: es la idempotencia funcionando (típicamente
+ * un reintento tras corte de red entre el INSERT y la respuesta). No es un fallo, pero
+ * lo logueamos para tener visibilidad de cuán seguido ocurre en producción y poder
+ * diagnosticar quejas tipo "registré algo y no aparece".
+ */
+function throwUnlessDuplicate(
+  error: { code?: string; message?: string } | null | undefined,
+  label: string,
+  recordId: string,
+) {
+  if (!error) return;
+  if (error.code !== '23505') throw new Error(`${label}: ${error.message}`);
+  console.info(`ℹ️ [sync] ${label} ya existía en servidor (23505, idempotente): ${recordId}`);
+}
+
 async function processItem(item: QueueItem) {
   const { type, payload } = item;
 
@@ -110,7 +127,7 @@ async function processItem(item: QueueItem) {
         p_sale: saleClean, p_items: items || []
       });
 
-      if (error && error.code !== '23505') throw new Error(`Fallo venta: ${error.message}`);
+      throwUnlessDuplicate(error, 'Fallo venta', sale.id);
 
       if (rpcData?.conflict) {
         await db.sales.update(sale.id, { status: 'stock_conflict', sync_status: 'synced' });
@@ -129,7 +146,7 @@ async function processItem(item: QueueItem) {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanMov } = movement;
       const { error } = await supabase.from('inventory_movements').insert(cleanMov);
-      if (error && error.code !== '23505') throw new Error(`Error movimiento: ${error.message}`);
+      throwUnlessDuplicate(error, 'Error movimiento', movement.id);
       if (db.movements) await db.movements.update(movement.id, { sync_status: 'synced' });
       break;
     }
@@ -138,7 +155,7 @@ async function processItem(item: QueueItem) {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanLog } = log;
       const { error } = await supabase.from('audit_logs').insert(cleanLog);
-      if (error && error.code !== '23505') throw new Error(`Error audit: ${error.message}`);
+      throwUnlessDuplicate(error, 'Error audit', log.id);
       await db.audit_logs.update(log.id, { sync_status: 'synced' });
       break;
     }
@@ -149,7 +166,7 @@ async function processItem(item: QueueItem) {
       // SKU vacío → null para no violar UNIQUE(business_id, sku) en Supabase
       if (cleanProduct.sku === '') (cleanProduct as Record<string, unknown>).sku = null;
       const { error } = await supabase.from('products').upsert(cleanProduct);
-      if (error && error.code !== '23505') throw new Error(`Error producto: ${error.message}`);
+      throwUnlessDuplicate(error, 'Error producto', product.id);
       await db.products.update(product.id, { sync_status: 'synced' });
       break;
     }
@@ -158,7 +175,7 @@ async function processItem(item: QueueItem) {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanCustomer } = customer;
       const { error } = await supabase.from('customers').upsert(cleanCustomer);
-      if (error && error.code !== '23505') throw new Error(`Error cliente: ${error.message}`);
+      throwUnlessDuplicate(error, 'Error cliente', customer.id);
       await db.customers.update(customer.id, { sync_status: 'synced' });
       break;
     }
@@ -190,7 +207,7 @@ async function processItem(item: QueueItem) {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { sync_status, ...cleanMov } = mov;
         const { error } = await supabase.from('cash_movements').insert(cleanMov);
-        if (error && error.code !== '23505') throw new Error(`Error mov caja: ${error.message}`);
+        throwUnlessDuplicate(error, 'Error mov caja', mov.id);
         await db.cash_movements.update(mov.id, { sync_status: 'synced' });
         break;
     }

@@ -19,7 +19,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // operación, y leen `mockState.calls` para verificar qué se llamó.
 interface MockResult { data?: unknown; error?: unknown }
 const mockState = {
-  responses: {} as Record<string, MockResult>,
+  // Una respuesta puede ser un objeto único (se devuelve siempre) o un array que se
+  // consume EN ORDEN (útil cuando syncLiveData consulta la misma tabla dos veces, p.ej.
+  // cash_shifts: primero el select de turno abierto, luego el .single() del turno cerrado).
+  responses: {} as Record<string, MockResult | MockResult[]>,
   calls: [] as Array<{ op: string; key: string; payload?: unknown }>,
 };
 
@@ -29,8 +32,12 @@ function resetMock() {
 }
 
 vi.mock('./supabase', () => {
-  const result = (key: string): Promise<MockResult> =>
-    Promise.resolve(mockState.responses[key] ?? { data: null, error: null });
+  const result = (key: string): Promise<MockResult> => {
+    const r = mockState.responses[key];
+    // Array → se consume en orden; el último valor persiste para llamadas extra.
+    if (Array.isArray(r)) return Promise.resolve(r.length > 1 ? r.shift()! : (r[0] ?? { data: null, error: null }));
+    return Promise.resolve(r ?? { data: null, error: null });
+  };
 
   // Objeto chainable para .update().eq().eq() y .select().eq()...
   const chainable = (key: string) => {
@@ -82,7 +89,7 @@ vi.mock('./supabase', () => {
 
 // Importar DESPUÉS del mock para que sync.ts use el supabase mockeado
 const { db } = await import('./db');
-const { addToQueue, processQueue } = await import('./sync');
+const { addToQueue, processQueue, syncLiveData } = await import('./sync');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 async function clearDb() {
@@ -91,6 +98,9 @@ async function clearDb() {
   await db.products.clear();
   await db.customers.clear();
   await db.cash_shifts.clear();
+  await db.cash_movements.clear();
+  await db.staff.clear();
+  await db.settings.clear();
 }
 
 /** Inserta un item directo en la cola con control total de sus campos. */
@@ -287,5 +297,208 @@ describe('Motor de cola — addToQueue', () => {
     // dar tiempo al processQueue disparado internamente
     await new Promise(r => setTimeout(r, 50));
     expect(await db.action_queue.count()).toBe(0);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+describe('Motor de cola — idempotencia 23505 (clave duplicada)', () => {
+  it('un upsert que devuelve 23505 NO falla, marca synced y loguea', async () => {
+    // 23505 = el registro ya existía en el servidor (reintento tras corte de red).
+    // Es la idempotencia funcionando: el item debe completarse (salir de la cola)
+    // y dejarse rastro en consola para visibilidad en producción.
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    await db.products.add({
+      id: 'p-dup', business_id: 'b1', name: 'Dup', price: 1, stock: 1,
+      sku: null, sync_status: 'pending_create',
+    } as never);
+    mockState.responses['products:upsert'] = { error: { code: '23505', message: 'duplicate key' } };
+    await seedQueueItem({ type: 'PRODUCT_SYNC',
+      payload: { id: 'p-dup', business_id: 'b1', name: 'Dup' } });
+
+    await processQueue();
+
+    expect(await db.action_queue.count()).toBe(0); // tratado como éxito idempotente
+    expect((await db.products.get('p-dup'))?.sync_status).toBe('synced');
+    expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('23505'));
+    infoSpy.mockRestore();
+  });
+
+  it('un error que NO es 23505 sí manda el item a retry', async () => {
+    mockState.responses['products:upsert'] = { error: { code: '42P01', message: 'relation missing' } };
+    const id = await seedQueueItem({ type: 'PRODUCT_SYNC',
+      payload: { id: 'p-err', business_id: 'b1', name: 'Err' } });
+
+    await processQueue();
+
+    const item = await db.action_queue.get(id);
+    expect(item?.status).toBe('pending'); // no se completó
+    expect((item?.retries ?? 0)).toBeGreaterThan(0);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+describe('syncLiveData — pull de fondo multi-dispositivo', () => {
+  // Settings es prerequisito de syncLiveData (de ahí saca el business_id).
+  async function seedSettings(overrides: Record<string, unknown> = {}) {
+    await db.settings.put({
+      id: 'b1', name: 'Negocio', status: 'active', sync_status: 'synced', ...overrides,
+    } as never);
+  }
+
+  /** Espera un CustomEvent global durante la ejecución de `fn`. */
+  async function captureEvent(name: string, fn: () => Promise<void>): Promise<CustomEvent | null> {
+    let captured: CustomEvent | null = null;
+    const handler = (e: Event) => { captured = e as CustomEvent; };
+    window.addEventListener(name, handler);
+    try { await fn(); } finally { window.removeEventListener(name, handler); }
+    return captured;
+  }
+
+  beforeEach(() => {
+    // Controlar el reloj de sync: incremental (no fetchAll) y sin disparar heavy sync.
+    localStorage.setItem('nexus_last_sync_at', Date.now().toString());
+    localStorage.setItem('nexus_last_heavy_sync_at', Date.now().toString());
+  });
+
+  it('baja a local el turno abierto remoto', async () => {
+    await seedSettings();
+    mockState.responses['cash_shifts:select'] = {
+      data: [{ id: 'sh1', business_id: 'b1', staff_id: 'v1', start_amount: 100,
+        opened_at: '', status: 'open' }],
+    };
+
+    await syncLiveData();
+
+    const local = await db.cash_shifts.get('sh1');
+    expect(local).toBeDefined();
+    expect(local?.sync_status).toBe('synced');
+  });
+
+  it('mergea ventas hechas en otros dispositivos', async () => {
+    await seedSettings();
+    mockState.responses['cash_shifts:select'] = {
+      data: [{ id: 'sh1', business_id: 'b1', staff_id: 'v1', start_amount: 0,
+        opened_at: '', status: 'open' }],
+    };
+    mockState.responses['sales:select'] = {
+      data: [
+        { id: 'r1', business_id: 'b1', shift_id: 'sh1', date: '', total: 10, items: [], payment_method: 'efectivo' },
+        { id: 'r2', business_id: 'b1', shift_id: 'sh1', date: '', total: 20, items: [], payment_method: 'efectivo' },
+      ],
+    };
+
+    await syncLiveData();
+
+    expect(await db.sales.get('r1')).toBeDefined();
+    expect(await db.sales.get('r2')).toBeDefined();
+  });
+
+  it('NO pisa una venta local con cambios pendientes', async () => {
+    await seedSettings();
+    // Venta local editada localmente (dirty), aún sin subir.
+    await db.sales.add({
+      id: 'sLocal', business_id: 'b1', shift_id: 'sh1', date: '', total: 50,
+      items: [], payment_method: 'efectivo', sync_status: 'pending_create',
+    } as never);
+    mockState.responses['cash_shifts:select'] = {
+      data: [{ id: 'sh1', business_id: 'b1', staff_id: 'v1', start_amount: 0,
+        opened_at: '', status: 'open' }],
+    };
+    // El remoto trae la MISMA venta con otro total — no debe sobrescribir el local pending.
+    mockState.responses['sales:select'] = {
+      data: [{ id: 'sLocal', business_id: 'b1', shift_id: 'sh1', date: '', total: 999, items: [], payment_method: 'efectivo' }],
+    };
+
+    await syncLiveData();
+
+    expect((await db.sales.get('sLocal'))?.total).toBe(50); // preservado
+  });
+
+  it('baja productos por pull incremental', async () => {
+    await seedSettings();
+    mockState.responses['products:select'] = {
+      data: [{ id: 'pNew', business_id: 'b1', name: 'Nuevo', price: 5, stock: 3, sku: null }],
+    };
+
+    await syncLiveData();
+
+    const p = await db.products.get('pNew');
+    expect(p).toBeDefined();
+    expect(p?.sync_status).toBe('synced');
+  });
+
+  it('emite nexus-stock-alert ante stock negativo', async () => {
+    await seedSettings();
+    mockState.responses['products:select'] = {
+      data: [{ id: 'pNeg', business_id: 'b1', name: 'Negativo', price: 5, stock: -2, sku: null }],
+    };
+
+    const ev = await captureEvent('nexus-stock-alert', () => syncLiveData());
+
+    expect(ev).not.toBeNull();
+    expect((ev?.detail as { products: Array<{ id: string }> }).products[0].id).toBe('pNeg');
+  });
+
+  it('emite nexus-trial-expired si el trial venció', async () => {
+    await seedSettings({ status: 'trial', subscription_expires_at: '2020-01-01T00:00:00.000Z' });
+
+    const ev = await captureEvent('nexus-trial-expired', () => syncLiveData());
+
+    expect(ev).not.toBeNull();
+  });
+
+  it('sincroniza staff excluyendo al admin autenticado', async () => {
+    await seedSettings();
+    // auth.getUser del mock devuelve { id: 'admin-test-id' }
+    mockState.responses['staff:select'] = {
+      data: [
+        { id: 'admin-test-id', business_id: 'b1', name: 'Jefe', role: 'admin', pin: 'x', active: true },
+        { id: 'vend1', business_id: 'b1', name: 'Vendedor', role: 'vendedor', pin: 'y', active: true },
+      ],
+    };
+
+    await syncLiveData();
+
+    expect(await db.staff.get('vend1')).toBeDefined();
+    expect(await db.staff.get('admin-test-id')).toBeUndefined(); // admin gestionado aparte
+  });
+
+  it('cierra el turno local cuando fue cerrado desde otro dispositivo', async () => {
+    await seedSettings();
+    // Turno local abierto y ya sincronizado.
+    await db.cash_shifts.add({
+      id: 'sh1', business_id: 'b1', staff_id: 'v1', start_amount: 0,
+      opened_at: '', status: 'open', sync_status: 'synced',
+    } as never);
+    // 1er select (turno abierto remoto) → vacío; 2º (.single por id) → turno cerrado.
+    mockState.responses['cash_shifts:select'] = [
+      { data: [] },
+      { data: { id: 'sh1', business_id: 'b1', staff_id: 'v1', start_amount: 0,
+        opened_at: '', closed_at: '', status: 'closed' } },
+    ];
+    // Las ventas del turno se bajan ANTES de cerrarlo localmente.
+    mockState.responses['sales:select'] = {
+      data: [{ id: 'rClose', business_id: 'b1', shift_id: 'sh1', date: '', total: 7, items: [], payment_method: 'efectivo' }],
+    };
+
+    await syncLiveData();
+
+    expect((await db.cash_shifts.get('sh1'))?.status).toBe('closed');
+    expect(await db.sales.get('rClose')).toBeDefined();
+  });
+
+  it('no llama a Supabase si está offline', async () => {
+    await seedSettings();
+    setOnline(false);
+
+    await syncLiveData();
+
+    expect(mockState.calls.length).toBe(0);
+  });
+
+  it('no hace nada si no hay settings locales', async () => {
+    // clearDb (beforeEach global) ya dejó settings vacío.
+    await syncLiveData();
+    expect(mockState.calls.length).toBe(0);
   });
 });
