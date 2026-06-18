@@ -2,7 +2,8 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Package, PieChart, Settings,
   Cloud, AlertCircle, RefreshCw, LogOut, Menu, X, Users as UsersIcon, CheckCircle2, Loader2,
-  ArrowLeftRight, WifiOff, Wifi, Clock, HelpCircle, MessageCircle, Calculator, UtensilsCrossed, ChefHat
+  ArrowLeftRight, WifiOff, Wifi, Clock, HelpCircle, MessageCircle, Calculator, UtensilsCrossed, ChefHat,
+  LayoutDashboard, ShoppingBag
 } from 'lucide-react';
 import { ADMIN_WHATSAPP_PHONE } from '../lib/config';
 import { BillCounter } from './BillCounter';
@@ -280,8 +281,9 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   const isRestaurant = isRestaurantMode(settingsRows);
 
   const menuItems = [
-    // ✅ Usamos la variable {logo} generada por Vite
-    { path: '/', icon: <img src={logo} alt="POS" className="w-6 h-6 object-contain opacity-90 group-hover:opacity-100 transition-opacity" />, label: 'Punto de Venta', show: !isRestaurant },
+    // Panel de Inicio: resumen del negocio. Solo el dueño (admin) lo ve.
+    { path: '/inicio', icon: <LayoutDashboard size={22} />, label: 'Inicio', show: isAdmin },
+    { path: '/venta', icon: <ShoppingBag size={22} />, label: 'Punto de Venta', show: !isRestaurant },
     { path: '/mesas', icon: <UtensilsCrossed size={22} />, label: 'Mesas', show: isRestaurant },
     { path: '/cocina', icon: <ChefHat size={22} />, label: 'Cocina', show: isRestaurant },
     { path: '/clientes', icon: <UsersIcon size={22} />, label: 'Clientes', show: true },

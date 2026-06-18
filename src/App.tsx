@@ -23,6 +23,7 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ defa
 const SuperAdminPage = lazy(() => import('./pages/SuperAdminPage').then(m => ({ default: m.SuperAdminPage })));
 const SuperAdminLogin = lazy(() => import('./pages/SuperAdminLogin').then(m => ({ default: m.SuperAdminLogin })));
 const CustomersPage = lazy(() => import('./components/CustomersPage').then(m => ({ default: m.CustomersPage })));
+const HomePage = lazy(() => import('./pages/HomePage'));
 const FloorMapPage = lazy(() => import('./pages/FloorMapPage'));
 const ComandaPage = lazy(() => import('./pages/ComandaPage'));
 const KdsPage = lazy(() => import('./pages/KdsPage'));
@@ -855,6 +856,10 @@ function BusinessApp() {
 
   if (!currentStaff) return null;
 
+  // Destino de `/` según el rol: el dueño (admin) aterriza en el Panel de Inicio;
+  // el vendedor entra directo a la pantalla operativa (mesas en restaurante, venta en retail).
+  const homeTarget = currentStaff.role === 'admin' ? '/inicio' : (isRestaurant ? '/mesas' : '/venta');
+
   return (
     <>
       {/* Selector opcional (cambio de vendedor desde Layout) */}
@@ -871,7 +876,20 @@ function BusinessApp() {
       <Suspense fallback={<div className="flex items-center justify-center h-screen"><Loader2 className="animate-spin text-[#0B3B68]" size={32} /></div>}>
         <Routes>
           <Route element={<Layout currentStaff={currentStaff} onChangeStaff={() => setShowStaffSelector(true)} />}>
-            <Route path="/" element={isRestaurant ? <FloorMapPage /> : <PosPage />} />
+            {/* `/` solo redirige al "hogar" según el rol: el dueño (admin) ve el Panel
+                de Inicio; el vendedor cae directo en la pantalla operativa. Para el
+                vendedor esperamos a que carguen las settings (mesas vs venta) y así
+                evitar redirigir a la pantalla equivocada en el primer render. */}
+            <Route
+              path="/"
+              element={
+                currentStaff.role !== 'admin' && settingsRows === undefined
+                  ? <div className="flex items-center justify-center h-full"><Loader2 className="animate-spin text-[#0B3B68]" size={28} /></div>
+                  : <Navigate to={homeTarget} replace />
+              }
+            />
+            <Route path="/inicio" element={<HomePage />} />
+            <Route path="/venta" element={<PosPage />} />
             <Route path="/mesas" element={<FloorMapPage />} />
             <Route path="/comanda/:id" element={<ComandaPage />} />
             <Route path="/cocina" element={<KdsPage />} />
