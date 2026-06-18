@@ -1,11 +1,16 @@
 // src/lib/supabase.ts
 import { createClient } from '@supabase/supabase-js';
+import { readSupabaseEnv } from './env';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const { url: supabaseUrl, key: supabaseKey, isValid, missing } = readSupabaseEnv();
 
-if (!supabaseUrl || !supabaseKey) {
-  throw new Error('Faltan las variables de entorno de Supabase (.env.local)');
+// Red de seguridad: en la práctica main.tsx valida la config antes de importar
+// la app, así que este throw casi nunca se alcanza. El mensaje es descriptivo
+// para que, si se llega aquí, quede claro qué variable falta.
+if (!isValid) {
+  throw new Error(
+    `Faltan variables de entorno de Supabase: ${missing.join(', ')} — revisa tu .env.local`
+  );
 }
 
 export const supabase = createClient(supabaseUrl, supabaseKey, {

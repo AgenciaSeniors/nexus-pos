@@ -8,6 +8,11 @@ const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  // Acepta variables con prefijo VITE_ (estándar) y NEXT_PUBLIC_ como respaldo,
+  // para que un .env.local heredado de un proyecto Next.js siga funcionando.
+  // Solo se exponen al cliente las variables con estos prefijos; los secretos
+  // de servidor (SERVICE_ROLE, STRIPE_SECRET, etc.) no los llevan y no se filtran.
+  envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
   define: {
     // Inyecta la versión de package.json en tiempo de compilación
     __APP_VERSION__: JSON.stringify(pkg.version),
