@@ -402,6 +402,12 @@ export function FinancePage() {
       : list; // ya viene ordenada por ganancia
   }, [dailyStats.sales, products, profitSort]);
 
+  // Productos mostrados y base de escala de las barras. La escala se calcula SOLO
+  // sobre lo visible para que el producto de referencia esté en pantalla (si se
+  // usara toda la lista, una pérdida grande fuera del top-15 aplastaría las barras).
+  const shownProfit = productProfit.slice(0, 15);
+  const maxAbsProfit = Math.max(...shownProfit.map(x => Math.abs(x.profit)), 1);
+
   const closingStats = useMemo(() => {
     let cashTotal = 0, transferTotal = 0, cardTotal = 0;
     const productSummary: Record<string, { quantity: number, total: number }> = {};
@@ -1743,11 +1749,10 @@ export function FinancePage() {
             ) : (
               <>
                 <div className="space-y-2">
-                  {productProfit.slice(0, 15).map((p, i) => {
-                    const maxProfit = Math.max(...productProfit.map(x => Math.abs(x.profit)), 1);
+                  {shownProfit.map((p, i) => {
                     const pct = profitSort === 'margin'
                       ? Math.max(0, Math.min(100, p.margin))
-                      : (Math.abs(p.profit) / maxProfit) * 100;
+                      : (Math.abs(p.profit) / maxAbsProfit) * 100;
                     const negative = p.profit < 0;
                     return (
                       <div key={p.product_id || p.name} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">

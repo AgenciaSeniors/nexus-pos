@@ -40,7 +40,7 @@ export function buildTicketText(
   if (dateStr) lines.push(`${dateStr} ${timeStr}`.trim());
   if (isPreBill && order?.note) lines.push(`Mesa / Ref: ${order.note.toUpperCase()}`);
   if (doc.customer_name) lines.push(`Cliente: ${doc.customer_name}`);
-  if (sale?.staff_name) lines.push(`Vendedor: ${sale.staff_name.split(' ')[0]}`);
+  if (sale?.staff_name) lines.push(`Vendedor: ${sale.staff_name.split(' ')[0] || 'Cajero'}`);
   lines.push(SEP);
 
   // --- Ítems ---

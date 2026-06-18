@@ -7,7 +7,8 @@
  * Política:
  * - Si hay un modal abierto (overlay con z-50/60/70), cierra el modal
  * - Si estamos en una ruta secundaria (/inventario, /finanzas, ...), navega a "/"
- * - Si estamos en "/" (POS), pide confirmación antes de cerrar:
+ * - Si estamos en una pantalla "hogar" (la de aterrizaje según el rol: /inicio,
+ *   /venta o /mesas), pide confirmación antes de cerrar:
  *   - Primer back: muestra toast "Toca atrás otra vez para salir"
  *   - Segundo back en 2s: cierra la app
  *
@@ -20,6 +21,11 @@ import { toast } from 'sonner';
 let cleanupFn: (() => void) | null = null;
 let lastBackTs = 0;
 const DOUBLE_TAP_MS = 2000;
+
+// Pantallas de aterrizaje (según el rol/modo): desde cualquiera de ellas el back
+// confirma la salida en vez de navegar. `/` se incluye por compatibilidad, pero
+// en la práctica redirige de inmediato a una de las otras.
+const HOME_ROUTES = new Set(['/', '/inicio', '/venta', '/mesas']);
 
 interface NavigateFn {
   (to: string): void;
@@ -110,14 +116,15 @@ export async function registerBackHandler(
       const modal = findOpenModal();
       if (modal && tryCloseModal(modal)) return;
 
-      // b) ¿Estamos en ruta secundaria?
+      // b) ¿Estamos en ruta secundaria? (cualquiera que no sea una pantalla de
+      //    aterrizaje). navigate('/') redirige a la pantalla hogar según el rol.
       const hash = window.location.hash.replace(/^#/, '') || '/';
-      if (hash !== '/' && hash !== '') {
+      if (!HOME_ROUTES.has(hash)) {
         navigate('/');
         return;
       }
 
-      // c) Estamos en POS — confirmar salida con doble-tap
+      // c) Estamos en una pantalla hogar — confirmar salida con doble-tap
       const now = Date.now();
       if (now - lastBackTs < DOUBLE_TAP_MS) {
         App.exitApp();

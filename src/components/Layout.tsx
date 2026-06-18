@@ -577,7 +577,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
           className="md:hidden bg-white border-t border-gray-200 flex justify-around items-center px-2 pt-2 z-30 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] sticky bottom-0"
           style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
         >
-            {menuItems.filter(i => i.show).slice(0, 4).map((item) => {
+            {menuItems.filter(i => i.show).slice(0, 5).map((item) => {
               const isActive = location.pathname === item.path;
               const showInventoryBadge = item.path === '/inventario' && inventoryAlertCount > 0;
               return (

@@ -11,7 +11,7 @@ import {
   type Delta,
 } from '../lib/salesStats';
 import { StatCard, SectionCard, Badge } from '../components/ui';
-import { CHART_TOOLTIP_STYLE } from '../lib/chartTheme';
+import { CHART_TOOLTIP_STYLE, GREEN } from '../lib/chartTheme';
 import {
   AreaChart, Area, XAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -21,8 +21,6 @@ import {
   UtensilsCrossed, ChefHat, Users as UsersIcon, PieChart as PieChartIcon,
 } from 'lucide-react';
 
-const NAVY = '#0B3B68';
-const GREEN = '#7AC142';
 const LOW_STOCK_DEFAULT = 5;
 
 const formatMoney = (val: number): string => {

@@ -888,7 +888,9 @@ function BusinessApp() {
                   : <Navigate to={homeTarget} replace />
               }
             />
-            <Route path="/inicio" element={<HomePage />} />
+            {/* El Panel de Inicio expone ventas/ganancia/margen → solo el dueño.
+                Un vendedor que llegue por URL directa se redirige a su pantalla. */}
+            <Route path="/inicio" element={currentStaff.role === 'admin' ? <HomePage /> : <Navigate to={homeTarget} replace />} />
             <Route path="/venta" element={<PosPage />} />
             <Route path="/mesas" element={<FloorMapPage />} />
             <Route path="/comanda/:id" element={<ComandaPage />} />

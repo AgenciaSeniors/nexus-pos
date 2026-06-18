@@ -35,17 +35,8 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
     [doc?.customer_id],
   );
 
-  // Detectar si estamos imprimiendo una Pre-cuenta o un Recibo Final
-  if (!doc) return null;
-  const isPreBill = !!order;
-
-  // 2. Calcular Puntos Ganados (Solo si es venta final, sobre el total final pagado)
-  const pointsEarned = (!isPreBill && doc.customer_id) ? Math.floor(doc.total / 10) : 0;
-
-  // Subtotal antes de descuento (suma de ítems)
-  const itemsSubtotal = doc.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-
-  // Escuchar resultado de impresión en Electron y notificar al usuario
+  // Escuchar resultado de impresión en Electron y notificar al usuario.
+  // Va ANTES de cualquier return condicional para no romper el orden de hooks.
   useEffect(() => {
     if (!window.electronAPI?.onPrintResult) return;
     window.electronAPI.onPrintResult((success: boolean, errorType: string | null) => {
@@ -56,6 +47,16 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
       }
     });
   }, []);
+
+  // Detectar si estamos imprimiendo una Pre-cuenta o un Recibo Final
+  if (!doc) return null;
+  const isPreBill = !!order;
+
+  // 2. Calcular Puntos Ganados (Solo si es venta final, sobre el total final pagado)
+  const pointsEarned = (!isPreBill && doc.customer_id) ? Math.floor(doc.total / 10) : 0;
+
+  // Subtotal antes de descuento (suma de ítems)
+  const itemsSubtotal = doc.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
   const handlePrint = () => {
     if (window.electronAPI) {
