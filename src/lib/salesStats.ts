@@ -193,6 +193,54 @@ export function computeDayKpis(allSales: Sale[], products: Product[], localDay: 
   return computeKpis(salesForLocalDay(allSales, localDay), products);
 }
 
+export interface ProductProfit {
+  product_id: string;
+  name: string;
+  qty: number;
+  revenue: number;
+  cost: number;
+  profit: number;
+  /** Margen en porcentaje (0–100). */
+  margin: number;
+}
+
+/**
+ * Rentabilidad por producto a partir de un conjunto de ventas ya filtrado al
+ * período. Agrega ingreso, costo y ganancia por producto y los ordena de mayor
+ * a menor ganancia. Responde "¿qué producto me deja más dinero?".
+ *
+ * Usa el costo histórico del ítem (`item.cost`) y cae al costo actual del
+ * producto solo si el ítem no lo trae — consistente con `computeKpis`.
+ */
+export function computeProductProfitability(sales: Sale[], products: Product[]): ProductProfit[] {
+  const { costs } = buildProductMeta(products);
+  const agg = new Map<string, ProductProfit>();
+
+  for (const sale of sales) {
+    for (const item of sale.items || []) {
+      const key = item.product_id || item.name;
+      const qty = safeFloat(item.quantity);
+      const price = safeFloat(item.price);
+      const histCost = item.cost !== undefined ? safeFloat(item.cost) : costs.get(item.product_id) || 0;
+      const cur =
+        agg.get(key) ||
+        { product_id: item.product_id || '', name: item.name, qty: 0, revenue: 0, cost: 0, profit: 0, margin: 0 };
+      cur.qty += qty;
+      cur.revenue += price * qty;
+      cur.cost += histCost * qty;
+      agg.set(key, cur);
+    }
+  }
+
+  return [...agg.values()]
+    .map((p) => {
+      const profit = p.revenue - p.cost;
+      const margin = p.revenue > 0 ? (profit / p.revenue) * 100 : 0;
+      return { ...p, profit, margin };
+    })
+    .sort((a, b) => b.profit - a.profit);
+}
+
 export interface Delta {
   /** Diferencia absoluta (actual − anterior). */
   abs: number;

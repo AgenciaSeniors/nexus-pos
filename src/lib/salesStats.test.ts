@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   computeKpis,
   computeDayKpis,
+  computeProductProfitability,
   compareValues,
   localDateStr,
 } from './salesStats';
@@ -183,6 +184,47 @@ describe('computeDayKpis — filtra por día local y respeta anulaciones', () =>
     expect(k.revenue).toBe(42);
     // sanity: el helper de fecha local devuelve YYYY-MM-DD
     expect(localDateStr()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+// =============================================================================
+// computeProductProfitability — rentabilidad por producto
+// =============================================================================
+describe('computeProductProfitability', () => {
+  it('agrega ingreso, costo y ganancia por producto y ordena por ganancia', () => {
+    const sales = [
+      makeSale({
+        items: [
+          makeItem({ product_id: 'p1', name: 'Pizza', price: 100, quantity: 2, cost: 40 }),
+          makeItem({ product_id: 'p2', name: 'Refresco', price: 20, quantity: 1, cost: 5 }),
+        ],
+      }),
+      makeSale({
+        items: [makeItem({ product_id: 'p1', name: 'Pizza', price: 100, quantity: 1, cost: 40 })],
+      }),
+    ];
+    const list = computeProductProfitability(sales, []);
+    expect(list).toHaveLength(2);
+    // Pizza: 3 u, ingreso 300, costo 120, ganancia 180 → primero
+    expect(list[0]).toMatchObject({ name: 'Pizza', qty: 3, revenue: 300, cost: 120, profit: 180 });
+    expect(list[0].margin).toBeCloseTo(60);
+    // Refresco: ganancia 15
+    expect(list[1]).toMatchObject({ name: 'Refresco', profit: 15 });
+  });
+
+  it('cae al costo actual del producto cuando el ítem no trae costo', () => {
+    const sales = [makeSale({ items: [makeItem({ product_id: 'p1', name: 'Pan', price: 50, quantity: 2 })] })];
+    const products = [makeProduct({ id: 'p1', cost: 20 })];
+    const list = computeProductProfitability(sales, products);
+    expect(list[0].cost).toBe(40); // 20 * 2
+    expect(list[0].profit).toBe(60); // 100 - 40
+  });
+
+  it('margen 0 sin dividir por cero cuando el ingreso es 0', () => {
+    const sales = [makeSale({ items: [makeItem({ product_id: 'p1', name: 'Regalo', price: 0, quantity: 1, cost: 10 })] })];
+    const list = computeProductProfitability(sales, []);
+    expect(list[0].margin).toBe(0);
+    expect(list[0].profit).toBe(-10);
   });
 });
 
