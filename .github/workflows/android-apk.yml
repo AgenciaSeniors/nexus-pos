@@ -52,9 +52,11 @@ jobs:
       - name: Build web assets
         run: npm run build
         env:
-          # Variables públicas (anon) embebidas al compilar — mismo patrón que ci.yml.
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          # Credenciales públicas (anon) de Supabase, embebidas al compilar.
+          # Son públicas por diseño (protegidas por RLS) y ya viajan dentro del
+          # APK/web. Si defines los secrets del repo, estos tienen prioridad.
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://xtcrokixydzlqbyudagd.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh0Y3Jva2l4eWR6bHFieXVkYWdkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAzMjk3MzMsImV4cCI6MjA4NTkwNTczM30.bhE_PygvmSN5LTnTYx4-YDNs7b9Z0m9tFVOgX71G_Z8' }}
 
       - name: Sync Capacitor (Android)
         run: npx cap sync android
