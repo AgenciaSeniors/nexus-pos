@@ -24,6 +24,7 @@ import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
 import { computeVoidDelta } from '../lib/saleRefund';
 import { isSaleValidAtTime, endOfLocalDay } from '../lib/shiftStats';
 import { computeProductProfitability } from '../lib/salesStats';
+import { BRAND_CHART_COLORS, CHART_TOOLTIP_STYLE } from '../lib/chartTheme';
 
 const EMPTY_ARRAY: never[] = [];
 
@@ -1027,7 +1028,7 @@ export function FinancePage() {
       window.print();
     }
   };
-  const COLORS = ['#0B3B68', '#7AC142', '#F59E0B', '#EF4444', '#6B7280'];
+  const COLORS = BRAND_CHART_COLORS;
 
   if (activeShift === undefined || isInitialLoad) {
     return (
@@ -1243,7 +1244,7 @@ export function FinancePage() {
                     <XAxis dataKey="h" fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }}/>
                     <YAxis fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} tickFormatter={v => v === 0 ? '' : `$${v}`} width={36}/>
                     <Tooltip
-                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }}
+                      contentStyle={CHART_TOOLTIP_STYLE}
                       formatter={(v: number) => [formatMoney(v), 'Ventas']}
                     />
                     <Area type="monotone" dataKey="v" stroke="#0B3B68" strokeWidth={2} fill="url(#shiftGrad)" dot={false} activeDot={{ r: 4, fill: '#0B3B68' }}/>
@@ -1624,7 +1625,7 @@ export function FinancePage() {
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
                         <XAxis dataKey="date" fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }}/>
                         <YAxis fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} tickFormatter={v => v === 0 ? '' : `$${v}`} width={36}/>
-                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }} formatter={(v: number) => [formatMoney(v), 'Ventas']}/>
+                        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: number) => [formatMoney(v), 'Ventas']}/>
                         <Area type="monotone" dataKey="total" stroke="#0B3B68" strokeWidth={2} fill="url(#rangeGrad)" dot={{ r: 3, fill: '#0B3B68', strokeWidth: 0 }} activeDot={{ r: 5, fill: '#0B3B68' }}/>
                       </AreaChart>
                     ) : (
@@ -1632,7 +1633,7 @@ export function FinancePage() {
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
                         <XAxis dataKey="time" fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} interval={1}/>
                         <YAxis fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} tickFormatter={v => v === 0 ? '' : `$${v}`} width={36}/>
-                        <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }} formatter={(v: number) => [formatMoney(v), 'Ventas']}/>
+                        <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: number) => [formatMoney(v), 'Ventas']}/>
                         <Bar dataKey="total" fill="#0B3B68" radius={[4,4,0,0]}/>
                       </BarChart>
                     )}
@@ -1679,7 +1680,7 @@ export function FinancePage() {
                   <Pie data={dailyStats.pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={4} dataKey="value" stroke="none">
                     {dailyStats.pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
                   </Pie>
-                  <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }} formatter={(v: number) => [formatMoney(v), 'Ingresos']}/>
+                  <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: number) => [formatMoney(v), 'Ingresos']}/>
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: '11px' }}/>
                 </PieChart>
               </ResponsiveContainer>
@@ -1832,7 +1833,7 @@ export function FinancePage() {
                   <XAxis dataKey="date" fontSize={10} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }}/>
                   <YAxis fontSize={10} axisLine={false} tickLine={false} tickFormatter={v => v === 0 ? '' : `$${v}`} tick={{ fill: '#94a3b8' }} width={40}/>
                   <Tooltip
-                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }}
+                    contentStyle={CHART_TOOLTIP_STYLE}
                     formatter={(v: number) => [formatMoney(v), 'Ingresos']}
                   />
                   <Area type="monotone" dataKey="total" stroke="#7AC142" strokeWidth={2.5} fill="url(#trendGrad)" dot={{ r: 3, fill: '#7AC142', strokeWidth: 0 }} activeDot={{ r: 5, fill: '#7AC142' }}/>

@@ -11,6 +11,7 @@ import {
   type Delta,
 } from '../lib/salesStats';
 import { StatCard, SectionCard, Badge } from '../components/ui';
+import { CHART_TOOLTIP_STYLE } from '../lib/chartTheme';
 import {
   AreaChart, Area, XAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -261,7 +262,7 @@ export function HomePage() {
                 <XAxis dataKey="time" tick={{ fontSize: 10, fill: '#6B7280' }} axisLine={false} tickLine={false} />
                 <Tooltip
                   formatter={(v: number) => [formatMoney(v), 'Ventas']}
-                  contentStyle={{ borderRadius: 12, border: '1px solid #e5e7eb', fontSize: 12 }}
+                  contentStyle={CHART_TOOLTIP_STYLE}
                 />
                 <Area type="monotone" dataKey="total" stroke={GREEN} strokeWidth={2.5} fill="url(#homeHourly)" />
               </AreaChart>
