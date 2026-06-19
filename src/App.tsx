@@ -10,7 +10,7 @@ import { Toaster, toast } from 'sonner';
 import { syncCriticalData, syncHeavyData, stopSyncListeners } from './lib/sync';
 import { startAutoBackup, stopAutoBackup } from './lib/backup';
 
-import { ADMIN_WHATSAPP_PHONE, WEB_APP_URL } from './lib/config';
+import { ADMIN_WHATSAPP_PHONE } from './lib/config';
 import { checkLockout, recordFailure, recordSuccess, formatLockoutTime, RATE_LIMIT_CONFIG, registerRateLimit } from './lib/loginRateLimit';
 import { Layout } from './components/Layout';
 import { StaffSelectorModal } from './components/StaffSelectorModal';
@@ -94,7 +94,7 @@ interface LoginScreenProps {
 }
 
 function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: LoginScreenProps) {
-  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot' | 'otp'>('login');
   const navigate = useNavigate();
 
   // Acceso oculto al panel maestro: mantener pulsado el logo ~1s lleva a
@@ -112,6 +112,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [otpCode, setOtpCode] = useState('');
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [businessName, setBusinessName] = useState('');
@@ -246,25 +247,49 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
     }
   };
 
-  const handleForgotPassword = async (e: React.FormEvent) => {
-      e.preventDefault();
+  const handleForgotPassword = async (e?: React.FormEvent) => {
+      e?.preventDefault();
       if (!email) return toast.error("Por favor, ingresa tu correo electrónico");
       setLoading(true);
       try {
-          // Envía el correo de recuperación. Supabase detecta el token al volver
-          // (detectSessionInUrl) y dispara PASSWORD_RECOVERY, que muestra la
-          // pantalla para fijar la nueva contraseña — todo self-service, sin WhatsApp.
-          const { error } = await supabase.auth.resetPasswordForEmail(
-              email.trim(),
-              WEB_APP_URL ? { redirectTo: WEB_APP_URL } : undefined
-          );
+          // Envía un código de 6 dígitos al correo. La plantilla "Reset Password"
+          // de Supabase debe incluir {{ .Token }}. No usamos enlace porque la app
+          // es solo-APK y no hay sitio web a donde abrir el enlace.
+          const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
           if (error) throw error;
-          // Mensaje neutro: no revela si el correo tiene cuenta (anti-enumeración).
-          toast.success("Si ese correo tiene cuenta, te enviamos un enlace para restablecer tu contraseña. Revisa tu bandeja y la carpeta de spam.");
-          setMode('login');
+          setOtpCode('');
+          toast.success("Te enviamos un código de 6 dígitos a tu correo. Revisa tu bandeja y la carpeta de spam.");
+          setMode('otp');
       } catch (err) {
-          toast.error(err instanceof Error ? err.message : "No se pudo enviar el correo. Intenta de nuevo.");
+          toast.error(err instanceof Error ? err.message : "No se pudo enviar el código. Intenta de nuevo.");
       } finally {
+          setLoading(false);
+      }
+  };
+
+  // Verifica el código y fija la nueva contraseña. Reutiliza la guarda de
+  // registro (onRegistrationStart/End) para que el SIGNED_IN que dispara
+  // verifyOtp no haga que la app entre sola antes de cambiar la clave.
+  const handleVerifyOtp = async (e?: React.FormEvent) => {
+      e?.preventDefault();
+      if (otpCode.trim().length < 6) return toast.error("Ingresa el código de 6 dígitos que te llegó al correo");
+      if (password.length < 8) return toast.error("La nueva contraseña debe tener al menos 8 caracteres");
+      setLoading(true);
+      onRegistrationStart();
+      try {
+          const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token: otpCode.trim(), type: 'recovery' });
+          if (error) throw error;
+          const { error: updErr } = await supabase.auth.updateUser({ password });
+          if (updErr) throw updErr;
+          await supabase.auth.signOut();
+          setOtpCode('');
+          setPassword('');
+          setMode('login');
+          toast.success("¡Contraseña actualizada! Ya puedes iniciar sesión con tu nueva contraseña.");
+      } catch (err) {
+          toast.error(err instanceof Error ? err.message : "Código inválido o expirado. Pide uno nuevo.");
+      } finally {
+          onRegistrationEnd();
           setLoading(false);
       }
   };
@@ -300,10 +325,10 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
             
             {/* ✅ TITULARES MEJORADOS Y EN VERDE PARA QUE RESALTEN */}
             <h1 className="text-5xl font-black mb-5 leading-tight drop-shadow-xl text-[#7AC142]">
-              {mode === 'login' ? 'Bienvenido' : mode === 'forgot' ? 'Recupera tu acceso' : 'Comienza tu negocio'}
+              {mode === 'login' ? 'Bienvenido' : (mode === 'forgot' || mode === 'otp') ? 'Recupera tu acceso' : 'Comienza tu negocio'}
             </h1>
             <p className="text-slate-300 text-lg font-medium leading-relaxed drop-shadow-md">
-              {mode === 'login' ? 'Gestiona tus ventas, inventario y clientes desde un solo lugar.' : mode === 'forgot' ? 'Escribe tu correo y te enviaremos un enlace para restablecer tu contraseña.' : 'Únete a los negocios que confían en nuestro sistema.'}
+              {mode === 'login' ? 'Gestiona tus ventas, inventario y clientes desde un solo lugar.' : (mode === 'forgot' || mode === 'otp') ? 'Te enviaremos un código a tu correo para restablecer tu contraseña.' : 'Únete a los negocios que confían en nuestro sistema.'}
             </p>
           </div>
 
@@ -338,13 +363,13 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
             </div>
 
             <h2 className="text-2xl font-black text-[#1F2937] mb-2 hidden md:block">
-                {mode === 'login' ? 'Iniciar Sesión' : mode === 'forgot' ? 'Recuperar Contraseña' : 'Crear Cuenta'}
+                {mode === 'login' ? 'Iniciar Sesión' : (mode === 'forgot' || mode === 'otp') ? 'Recuperar Contraseña' : 'Crear Cuenta'}
             </h2>
             <p className="text-[#6B7280] mb-8 text-sm hidden md:block">
-                {mode === 'login' ? 'Ingresa tus credenciales para acceder' : mode === 'forgot' ? 'Escribe tu correo y te enviaremos un enlace para restablecerla.' : 'Completa los datos de tu negocio'}
+                {mode === 'login' ? 'Ingresa tus credenciales para acceder' : mode === 'forgot' ? 'Escribe tu correo y te enviaremos un código para restablecerla.' : mode === 'otp' ? 'Escribe el código que te enviamos y tu nueva contraseña.' : 'Completa los datos de tu negocio'}
             </p>
 
-            <form onSubmit={mode === 'login' ? handleLogin : mode === 'register' ? handleRegister : handleForgotPassword} className="space-y-4">
+            <form onSubmit={mode === 'login' ? handleLogin : mode === 'register' ? handleRegister : mode === 'otp' ? handleVerifyOtp : handleForgotPassword} className="space-y-4">
               
               {mode === 'register' && (
                 <div className="animate-in slide-in-from-right-4 duration-300 space-y-4">
@@ -383,13 +408,29 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Correo Electrónico</label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
-                  <input type="email" required className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="correo@ejemplo.com" value={email} onChange={e => setEmail(e.target.value)} />
+                  <input type="email" required readOnly={mode === 'otp'} className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937] read-only:opacity-70" placeholder="correo@ejemplo.com" value={email} onChange={e => setEmail(e.target.value)} />
                 </div>
               </div>
 
+              {mode === 'otp' && (
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Código de 6 dígitos</label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
+                    <input
+                      type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} required
+                      className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-mono tracking-[0.5em] text-center text-lg text-[#1F2937]"
+                      placeholder="••••••"
+                      value={otpCode}
+                      onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    />
+                  </div>
+                </div>
+              )}
+
               {mode !== 'forgot' && (
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Contraseña</label>
+                    <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">{mode === 'otp' ? 'Nueva contraseña' : 'Contraseña'}</label>
                     <div className="relative">
                       <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
                       <input type={showPassword ? 'text' : 'password'} required className="w-full pl-10 pr-11 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
@@ -416,7 +457,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 {loading && <Loader2 className="animate-spin w-5 h-5" />}
                 {mode === 'login' && lockoutStatus.isLocked
                   ? `Bloqueado · ${formatLockoutTime(lockoutStatus.secondsLeft)}`
-                  : mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? 'Enviar enlace de recuperación' : 'Registrar Negocio'}
+                  : mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? 'Enviar código' : mode === 'otp' ? 'Cambiar contraseña' : 'Registrar Negocio'}
                 {!loading && mode !== 'forgot' && !(mode === 'login' && lockoutStatus.isLocked) && <ArrowRight className="w-5 h-5" />}
               </button>
             </form>
@@ -427,15 +468,23 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                     ¿Olvidaste tu contraseña?
                   </button>
               )}
-              
+
+              {mode === 'otp' && (
+                  <button type="button" onClick={() => handleForgotPassword()} disabled={loading} className="block w-full text-sm font-bold text-[#6B7280] hover:text-[#0B3B68] transition-colors disabled:opacity-50">
+                    Reenviar código
+                  </button>
+              )}
+
               <div className="text-[#6B7280] text-sm">
-                {mode === 'login' ? '¿No tienes cuenta?' : mode === 'register' ? '¿Ya tienes cuenta?' : ''}
-                {mode !== 'forgot' ? (
+                {(mode === 'login' || mode === 'register') ? (
+                  <>
+                    {mode === 'login' ? '¿No tienes cuenta?' : '¿Ya tienes cuenta?'}
                     <button onClick={() => setMode(mode === 'login' ? 'register' : 'login')} className="ml-2 font-black text-[#7AC142] hover:text-[#5e9631] transition-colors">
                       {mode === 'login' ? 'Regístrate Aquí' : 'Inicia Sesión'}
                     </button>
+                  </>
                 ) : (
-                    <button onClick={() => setMode('login')} className="font-black text-[#0B3B68] hover:text-[#092b4d] transition-colors">
+                    <button onClick={() => { setMode('login'); setOtpCode(''); }} className="font-black text-[#0B3B68] hover:text-[#092b4d] transition-colors">
                       Volver a Iniciar Sesión
                     </button>
                 )}
