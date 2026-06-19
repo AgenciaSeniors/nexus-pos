@@ -10,7 +10,7 @@ import { Toaster, toast } from 'sonner';
 import { syncCriticalData, syncHeavyData, stopSyncListeners } from './lib/sync';
 import { startAutoBackup, stopAutoBackup } from './lib/backup';
 
-import { ADMIN_WHATSAPP_PHONE } from './lib/config';
+import { ADMIN_WHATSAPP_PHONE, WEB_APP_URL } from './lib/config';
 import { checkLockout, recordFailure, recordSuccess, formatLockoutTime, RATE_LIMIT_CONFIG, registerRateLimit } from './lib/loginRateLimit';
 import { Layout } from './components/Layout';
 import { StaffSelectorModal } from './components/StaffSelectorModal';
@@ -233,11 +233,27 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
     }
   };
 
-  const handleForgotPassword = (e: React.FormEvent) => {
+  const handleForgotPassword = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!email) return toast.error("Por favor, ingresa tu correo electrónico");
-      const msg = `Hola, olvidé mi contraseña de Bisne con Talla.\nMi correo es: ${email}\nNecesito que me la restablezcan. Gracias.`;
-      window.open(`https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=${encodeURIComponent(msg)}`, '_blank');
+      setLoading(true);
+      try {
+          // Envía el correo de recuperación. Supabase detecta el token al volver
+          // (detectSessionInUrl) y dispara PASSWORD_RECOVERY, que muestra la
+          // pantalla para fijar la nueva contraseña — todo self-service, sin WhatsApp.
+          const { error } = await supabase.auth.resetPasswordForEmail(
+              email.trim(),
+              WEB_APP_URL ? { redirectTo: WEB_APP_URL } : undefined
+          );
+          if (error) throw error;
+          // Mensaje neutro: no revela si el correo tiene cuenta (anti-enumeración).
+          toast.success("Si ese correo tiene cuenta, te enviamos un enlace para restablecer tu contraseña. Revisa tu bandeja y la carpeta de spam.");
+          setMode('login');
+      } catch (err) {
+          toast.error(err instanceof Error ? err.message : "No se pudo enviar el correo. Intenta de nuevo.");
+      } finally {
+          setLoading(false);
+      }
   };
 
   // ✅ MENSAJE DINÁMICO DE WHATSAPP
@@ -268,7 +284,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
               {mode === 'login' ? 'Bienvenido' : mode === 'forgot' ? 'Recupera tu acceso' : 'Comienza tu negocio'}
             </h1>
             <p className="text-slate-300 text-lg font-medium leading-relaxed drop-shadow-md">
-              {mode === 'login' ? 'Gestiona tus ventas, inventario y clientes desde un solo lugar.' : mode === 'forgot' ? 'Escribe tu correo y el administrador te ayudará por WhatsApp.' : 'Únete a los negocios que confían en nuestro sistema.'}
+              {mode === 'login' ? 'Gestiona tus ventas, inventario y clientes desde un solo lugar.' : mode === 'forgot' ? 'Escribe tu correo y te enviaremos un enlace para restablecer tu contraseña.' : 'Únete a los negocios que confían en nuestro sistema.'}
             </p>
           </div>
 
@@ -300,7 +316,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 {mode === 'login' ? 'Iniciar Sesión' : mode === 'forgot' ? 'Recuperar Contraseña' : 'Crear Cuenta'}
             </h2>
             <p className="text-[#6B7280] mb-8 text-sm hidden md:block">
-                {mode === 'login' ? 'Ingresa tus credenciales para acceder' : mode === 'forgot' ? 'Escribe tu correo y te contactamos por WhatsApp para restablecerla.' : 'Completa los datos de tu negocio'}
+                {mode === 'login' ? 'Ingresa tus credenciales para acceder' : mode === 'forgot' ? 'Escribe tu correo y te enviaremos un enlace para restablecerla.' : 'Completa los datos de tu negocio'}
             </p>
 
             <form onSubmit={mode === 'login' ? handleLogin : mode === 'register' ? handleRegister : handleForgotPassword} className="space-y-4">
@@ -375,7 +391,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 {loading && <Loader2 className="animate-spin w-5 h-5" />}
                 {mode === 'login' && lockoutStatus.isLocked
                   ? `Bloqueado · ${formatLockoutTime(lockoutStatus.secondsLeft)}`
-                  : mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? 'Contactar por WhatsApp' : 'Registrar Negocio'}
+                  : mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? 'Enviar enlace de recuperación' : 'Registrar Negocio'}
                 {!loading && mode !== 'forgot' && !(mode === 'login' && lockoutStatus.isLocked) && <ArrowRight className="w-5 h-5" />}
               </button>
             </form>
