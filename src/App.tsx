@@ -97,6 +97,19 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const navigate = useNavigate();
 
+  // Acceso oculto al panel maestro: mantener pulsado el logo ~1s lleva a
+  // /admin-login. Necesario en el APK, que no tiene barra de direcciones.
+  const secretPressTimer = useRef<number | null>(null);
+  const startSecretPress = () => {
+    secretPressTimer.current = window.setTimeout(() => navigate('/admin-login'), 900);
+  };
+  const cancelSecretPress = () => {
+    if (secretPressTimer.current) {
+      clearTimeout(secretPressTimer.current);
+      secretPressTimer.current = null;
+    }
+  };
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -275,7 +288,13 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
           
           <div className="relative z-10">
             <div className="flex items-center gap-3 mb-10">
-              <div className="bg-[#7AC142] p-2.5 rounded-xl shadow-lg shadow-[#7AC142]/20"><Store className="w-7 h-7 text-[#0B3B68]" /></div>
+              <div
+                className="bg-[#7AC142] p-2.5 rounded-xl shadow-lg shadow-[#7AC142]/20 select-none"
+                onPointerDown={startSecretPress}
+                onPointerUp={cancelSecretPress}
+                onPointerLeave={cancelSecretPress}
+                onPointerCancel={cancelSecretPress}
+              ><Store className="w-7 h-7 text-[#0B3B68]" /></div>
               <span className="text-2xl font-black tracking-tight drop-shadow-md">Bisne con Talla</span>
             </div>
             
@@ -303,7 +322,13 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
             
             {/* ✅ ENCABEZADO MÓVIL */}
             <div className="md:hidden flex flex-col items-center mb-8 text-center animate-in fade-in slide-in-from-top-4 duration-500">
-                <div className="bg-[#0B3B68] p-3.5 rounded-2xl mb-4 shadow-xl shadow-[#0B3B68]/20">
+                <div
+                    className="bg-[#0B3B68] p-3.5 rounded-2xl mb-4 shadow-xl shadow-[#0B3B68]/20 select-none"
+                    onPointerDown={startSecretPress}
+                    onPointerUp={cancelSecretPress}
+                    onPointerLeave={cancelSecretPress}
+                    onPointerCancel={cancelSecretPress}
+                >
                     <Store className="w-8 h-8 text-[#7AC142]" />
                 </div>
                 <h1 className="text-3xl font-black text-[#0B3B68] tracking-tight">Bisne con Talla</h1>
