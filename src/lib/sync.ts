@@ -26,6 +26,7 @@ import {
   type RecipeIngredient
 } from './db';
 import { supabase } from './supabase';
+import { fetchServerTime, getTrustedNow } from './licenseClock';
 import type { Table } from 'dexie';
 import {
   filterRemoteItemsForBulkPut,
@@ -1072,13 +1073,16 @@ export async function syncLiveData() {
             if (recipesRes.data?.length) await safeBulkPut(db.recipe_ingredients as never, recipesRes.data.map((r: any) => ({ ...r, sync_status: 'synced' as const })));
         }
 
-        // 7. Mejora 5: Verificar suscripción/trial con datos locales actualizados
-        // Si el trial venció mientras la app estaba abierta, notificar a Layout
+        // 7. Anclar la hora del servidor (anti-truco-del-reloj) y verificar trial.
+        // fetchServerTime fija el HWM a la hora real del servidor y marca la
+        // última validación (resuelve el candado de revalidación offline).
+        try { await fetchServerTime(); } catch { /* offline: se usa el HWM local */ }
         const freshSettings = await db.settings.toArray();
         if (freshSettings.length > 0) {
             const cfg = freshSettings[0];
             if (cfg.status === 'trial' && cfg.subscription_expires_at) {
-                if (new Date() > new Date(cfg.subscription_expires_at)) {
+                // Tiempo confiable (no el reloj del teléfono) para el aviso de Layout.
+                if (getTrustedNow() > new Date(cfg.subscription_expires_at).getTime()) {
                     window.dispatchEvent(new CustomEvent('nexus-trial-expired'));
                 }
             }

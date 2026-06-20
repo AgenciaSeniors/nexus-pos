@@ -7,8 +7,10 @@ import { isRestaurantMode } from './lib/businessType';
 import { startKdsRealtime, stopKdsRealtime } from './lib/realtime';
 import { type Session } from '@supabase/supabase-js';
 import { Toaster, toast } from 'sonner';
-import { syncCriticalData, syncHeavyData, stopSyncListeners } from './lib/sync';
+import { syncCriticalData, syncHeavyData, syncLiveData, stopSyncListeners } from './lib/sync';
 import { startAutoBackup, stopAutoBackup } from './lib/backup';
+import { initLicenseClock, fetchServerTime, computeLicenseLock } from './lib/licenseClock';
+import { LicenseLock } from './components/LicenseLock';
 
 import { ADMIN_WHATSAPP_PHONE } from './lib/config';
 import { checkLockout, recordFailure, recordSuccess, formatLockoutTime, RATE_LIMIT_CONFIG, registerRateLimit } from './lib/loginRateLimit';
@@ -525,6 +527,11 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
 function BusinessApp() {
   const navigate = useNavigate();
   const [session, setSession] = useState<Session | null>(null);
+  // --- Licencia / trial (bloqueo y anti-truco-del-reloj) ---
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [licenseTick, setLicenseTick] = useState(0);
+  const [retryingLicense, setRetryingLicense] = useState(false);
+  const licenseSettings = useLiveQuery(() => db.settings.toArray(), []);
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
   const [loading, setLoading] = useState(true);
   const [recoveryMode, setRecoveryMode] = useState(false);
@@ -590,6 +597,8 @@ function BusinessApp() {
           await supabase.auth.signOut();
           return;
         }
+
+        setIsSuperAdmin(!!data.is_super_admin);
 
         // Defensa multi-tenant: si el business_id local NO coincide con el de la
         // sesión actual, el usuario cambió de cuenta (o alguien manipuló localStorage).
@@ -884,6 +893,26 @@ function BusinessApp() {
     };
   }, []); // Sin dependencias: el efecto corre solo al montar. Los refs evitan race conditions.
 
+  // Reloj de licencia: inicializa el HWM/monotónico y re-evalúa el candado cada minuto.
+  useEffect(() => {
+    initLicenseClock();
+    const i = setInterval(() => setLicenseTick(t => t + 1), 60_000);
+    return () => clearInterval(i);
+  }, []);
+
+  // "Ya pagué / Reintentar": re-ancla la hora del servidor y baja la licencia fresca.
+  const handleLicenseRetry = async () => {
+    setRetryingLicense(true);
+    try {
+      await fetchServerTime();
+      await syncLiveData();
+    } catch { /* sin conexión: queda en el candado de revalidación */ }
+    finally {
+      setRetryingLicense(false);
+      setLicenseTick(t => t + 1);
+    }
+  };
+
   if (recoveryMode) {
       return <UpdatePasswordScreen onComplete={() => {
           setRecoveryMode(false);
@@ -945,6 +974,20 @@ function BusinessApp() {
   }
 
   if (!currentStaff) return null;
+
+  // --- Candado de licencia / trial (bloqueo total al vencer; super admin pasa) ---
+  void licenseTick; // referencia para re-evaluar en cada tick del minuto
+  const licenseLock = computeLicenseLock(licenseSettings?.[0], isSuperAdmin);
+  if (licenseLock) {
+    return (
+      <LicenseLock
+        state={licenseLock}
+        retrying={retryingLicense}
+        onRetry={handleLicenseRetry}
+        onLogout={handleForceLogout}
+      />
+    );
+  }
 
   // Destino de `/` según el rol: el dueño (admin) aterriza en el Panel de Inicio;
   // el vendedor entra directo a la pantalla operativa (mesas en restaurante, venta en retail).
