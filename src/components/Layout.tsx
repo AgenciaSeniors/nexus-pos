@@ -2,13 +2,15 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Package, PieChart, Settings,
   Cloud, AlertCircle, RefreshCw, LogOut, Menu, X, Users as UsersIcon, CheckCircle2, Loader2,
-  ArrowLeftRight, WifiOff, Wifi, Clock, HelpCircle, MessageCircle, Calculator
+  ArrowLeftRight, WifiOff, Wifi, Clock, HelpCircle, MessageCircle, Calculator, UtensilsCrossed, ChefHat,
+  LayoutDashboard, ShoppingBag
 } from 'lucide-react';
 import { ADMIN_WHATSAPP_PHONE } from '../lib/config';
 import { BillCounter } from './BillCounter';
 import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff } from '../lib/db';
+import { isRestaurantMode } from '../lib/businessType';
 import { syncManualFull, getLastSyncTimestamp } from '../lib/sync';
 import { checkForUpdate } from '../lib/version';
 import { supabase } from '../lib/supabase';
@@ -219,7 +221,11 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
       SALE: 'venta', PRODUCT_SYNC: 'producto', CUSTOMER_SYNC: 'cliente',
       MOVEMENT: 'movimiento', AUDIT: 'auditoría', SETTINGS_SYNC: 'configuración',
       SHIFT: 'turno', CASH_MOVEMENT: 'mov. caja', STAFF_SYNC: 'empleado',
-      VOID_SALE: 'anulación', PARTIAL_REFUND: 'devolución', LOYALTY_CHANGE: 'puntos'
+      VOID_SALE: 'anulación', PARTIAL_REFUND: 'devolución', LOYALTY_CHANGE: 'puntos',
+      AREA_SYNC: 'área', TABLE_SYNC: 'mesa', COMANDA_SYNC: 'comanda',
+      COMANDA_ITEM_SYNC: 'ítem', COMANDA_CLOSE: 'cierre', KITCHEN_STATUS: 'cocina',
+      MODIFIER_GROUP_SYNC: 'grupo', MODIFIER_SYNC: 'modificador', PRODUCT_MODIFIER_SYNC: 'modificador',
+      RECIPE_SYNC: 'receta'
     };
     const counts: Record<string, number> = {};
     items.forEach(i => {
@@ -269,10 +275,18 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   const isAdmin = currentStaff?.role === 'admin';
   const isCashier = currentStaff?.role === 'vendedor';
 
+  // Modo del negocio: en restaurante la pantalla principal es el plano de mesas
+  // y se oculta la entrada "Punto de Venta".
+  const settingsRows = useLiveQuery(() => db.settings.toArray());
+  const isRestaurant = isRestaurantMode(settingsRows);
+
   const menuItems = [
-    // ✅ Usamos la variable {logo} generada por Vite
-    { path: '/', icon: <img src={logo} alt="POS" className="w-6 h-6 object-contain opacity-90 group-hover:opacity-100 transition-opacity" />, label: 'Punto de Venta', show: true }, 
-    { path: '/clientes', icon: <UsersIcon size={22} />, label: 'Clientes', show: true }, 
+    // Panel de Inicio: resumen del negocio. Solo el dueño (admin) lo ve.
+    { path: '/inicio', icon: <LayoutDashboard size={22} />, label: 'Inicio', show: isAdmin },
+    { path: '/venta', icon: <ShoppingBag size={22} />, label: 'Punto de Venta', show: !isRestaurant },
+    { path: '/mesas', icon: <UtensilsCrossed size={22} />, label: 'Mesas', show: isRestaurant },
+    { path: '/cocina', icon: <ChefHat size={22} />, label: 'Cocina', show: isRestaurant },
+    { path: '/clientes', icon: <UsersIcon size={22} />, label: 'Clientes', show: true },
     { path: '/inventario', icon: <Package size={22} />, label: 'Inventario', show: isAdmin },
     { path: '/finanzas', icon: <PieChart size={22} />, label: 'Finanzas', show: true },
     { path: '/configuracion', icon: <Settings size={22} />, label: 'Configuración', show: isAdmin }
@@ -563,7 +577,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
           className="md:hidden bg-white border-t border-gray-200 flex justify-around items-center px-2 pt-2 z-30 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] sticky bottom-0"
           style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
         >
-            {menuItems.filter(i => i.show).slice(0, 4).map((item) => {
+            {menuItems.filter(i => i.show).slice(0, 5).map((item) => {
               const isActive = location.pathname === item.path;
               const showInventoryBadge = item.path === '/inventario' && inventoryAlertCount > 0;
               return (

@@ -2,8 +2,10 @@ import { useRef, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../lib/db';
 import type { Sale, SaleItem, ParkedOrder } from '../lib/db';
-import { Printer, X, User, Star } from 'lucide-react';
+import { Printer, X, User, Star, MessageCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { buildTicketText } from '../lib/ticketText';
+import logo from '../assets/logo.png';
 
 interface TicketModalProps {
   sale?: Sale | null;
@@ -14,6 +16,10 @@ interface TicketModalProps {
 export function TicketModal({ sale, order, onClose }: TicketModalProps) {
   const contentRef = useRef<HTMLDivElement>(null);
 
+  // Documento a mostrar (venta final o pre-cuenta). Se calcula antes de los hooks
+  // para poder usarlo en sus dependencias sin romper las reglas de hooks.
+  const doc = sale || order;
+
   // 1. Cargar Configuración del Negocio
   const config = useLiveQuery(async () => {
     const businessId = localStorage.getItem('nexus_business_id');
@@ -22,19 +28,15 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
     }
     return undefined;
   });
-  
-  // Detectar si estamos imprimiendo una Pre-cuenta o un Recibo Final
-  const doc = sale || order;
-  if (!doc) return null;
-  const isPreBill = !!order;
 
-  // 2. Calcular Puntos Ganados (Solo si es venta final, sobre el total final pagado)
-  const pointsEarned = (!isPreBill && doc.customer_id) ? Math.floor(doc.total / 10) : 0;
+  // Teléfono del cliente (si la venta lo tiene) para precargar el chat de WhatsApp.
+  const customer = useLiveQuery(
+    async () => (doc?.customer_id ? await db.customers.get(doc.customer_id) : undefined),
+    [doc?.customer_id],
+  );
 
-  // Subtotal antes de descuento (suma de ítems)
-  const itemsSubtotal = doc.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-
-  // Escuchar resultado de impresión en Electron y notificar al usuario
+  // Escuchar resultado de impresión en Electron y notificar al usuario.
+  // Va ANTES de cualquier return condicional para no romper el orden de hooks.
   useEffect(() => {
     if (!window.electronAPI?.onPrintResult) return;
     window.electronAPI.onPrintResult((success: boolean, errorType: string | null) => {
@@ -46,12 +48,31 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
     });
   }, []);
 
+  // Detectar si estamos imprimiendo una Pre-cuenta o un Recibo Final
+  if (!doc) return null;
+  const isPreBill = !!order;
+
+  // 2. Calcular Puntos Ganados (Solo si es venta final, sobre el total final pagado)
+  const pointsEarned = (!isPreBill && doc.customer_id) ? Math.floor(doc.total / 10) : 0;
+
+  // Subtotal antes de descuento (suma de ítems)
+  const itemsSubtotal = doc.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+
   const handlePrint = () => {
     if (window.electronAPI) {
       window.electronAPI.printTicket();
     } else {
       window.print();
     }
+  };
+
+  // Compartir el recibo por WhatsApp. Si el cliente tiene teléfono, abre su chat;
+  // si no, abre WhatsApp para que el usuario elija el contacto.
+  const handleWhatsApp = () => {
+    const text = buildTicketText(doc, config, isPreBill);
+    const phone = (customer?.phone || '').replace(/[^0-9]/g, '');
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
   };
 
   return (
@@ -70,6 +91,7 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
         >
           {/* 1. ENCABEZADO */}
           <div className="text-center mb-4">
+            <img src={logo} alt="" className="w-14 h-14 mx-auto mb-2 object-contain" />
             <h2 className="text-xl font-black uppercase tracking-wider mb-1">
                {config?.name || 'BISNE CON TALLA'}
             </h2>
@@ -139,6 +161,9 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
                     <td className="py-2 align-top font-bold">{item.quantity}</td>
                     <td className="py-2 align-top pr-2">
                         <div className="uppercase">{item.name}</div>
+                        {item.modifiers && item.modifiers.length > 0 && (
+                            <div className="text-[10px] text-slate-600 mt-0.5">↳ {item.modifiers.map(m => m.modifier_name).join(', ')}</div>
+                        )}
                         {item.note && (
                             <div className="text-[10px] text-slate-600 italic mt-0.5">↳ {item.note}</div>
                         )}
@@ -258,20 +283,29 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
         </div>
 
         {/* --- BOTONES DE ACCIÓN (Clase no-print para que no salgan en el PDF) --- */}
-        <div className="bg-slate-50 p-4 flex gap-3 border-t border-slate-200 no-print">
-          <button 
-            onClick={onClose}
-            className="flex-1 bg-white border border-slate-300 text-slate-700 font-bold py-3 rounded-xl hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 shadow-sm"
+        <div className="bg-slate-50 p-4 space-y-3 border-t border-slate-200 no-print">
+          {/* Compartir por WhatsApp (botón principal) */}
+          <button
+            onClick={handleWhatsApp}
+            className="w-full bg-[#25D366] hover:bg-[#1ebe5b] text-white font-bold py-3 rounded-xl transition-colors flex justify-center items-center gap-2 shadow-lg active:scale-95"
           >
-            <X size={18} /> Cerrar
+            <MessageCircle size={18} /> Enviar por WhatsApp
           </button>
-          <button 
-            onClick={handlePrint} 
-            autoFocus
-            className={`flex-1 text-white font-bold py-3 rounded-xl transition-colors flex justify-center items-center gap-2 shadow-lg ${isPreBill ? 'bg-orange-500 hover:bg-orange-600' : 'bg-[#0B3B68] hover:bg-[#0B3B68]/90'}`}
-          >
-            <Printer size={18} /> Imprimir / PDF
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              className="flex-1 bg-white border border-slate-300 text-slate-700 font-bold py-3 rounded-xl hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 shadow-sm"
+            >
+              <X size={18} /> Cerrar
+            </button>
+            <button
+              onClick={handlePrint}
+              autoFocus
+              className={`flex-1 text-white font-bold py-3 rounded-xl transition-colors flex justify-center items-center gap-2 shadow-lg ${isPreBill ? 'bg-orange-500 hover:bg-orange-600' : 'bg-[#0B3B68] hover:bg-[#0B3B68]/90'}`}
+            >
+              <Printer size={18} /> Imprimir / PDF
+            </button>
+          </div>
         </div>
 
       </div>

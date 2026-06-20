@@ -18,14 +18,22 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { checkForUpdate, type AppVersionInfo } from '../lib/version';
+import { RestaurantAdmin } from '../components/RestaurantAdmin';
+import { MenuModifiersAdmin } from '../components/MenuModifiersAdmin';
+import { RecipeAdmin } from '../components/RecipeAdmin';
 
 export function SettingsPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
   const businessId = localStorage.getItem('nexus_business_id');
   
   const [searchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState<'general' | 'devices' | 'data' | 'team' | 'help' | 'legal'>(
-    searchParams.get('tab') === 'help' ? 'help' : searchParams.get('tab') === 'legal' ? 'legal' : 'general'
+  const [activeTab, setActiveTab] = useState<'general' | 'devices' | 'data' | 'team' | 'help' | 'legal' | 'restaurant' | 'menu' | 'recipes'>(
+    searchParams.get('tab') === 'help' ? 'help'
+      : searchParams.get('tab') === 'legal' ? 'legal'
+      : searchParams.get('tab') === 'restaurant' ? 'restaurant'
+      : searchParams.get('tab') === 'menu' ? 'menu'
+      : searchParams.get('tab') === 'recipes' ? 'recipes'
+      : 'general'
   );
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -48,7 +56,11 @@ export function SettingsPage() {
       SALE: 'ventas', PRODUCT_SYNC: 'productos', CUSTOMER_SYNC: 'clientes',
       MOVEMENT: 'movimientos', AUDIT: 'auditorías', SETTINGS_SYNC: 'config.',
       SHIFT: 'turnos', CASH_MOVEMENT: 'mov. caja', STAFF_SYNC: 'empleados',
-      VOID_SALE: 'anulaciones', PARTIAL_REFUND: 'devoluciones', LOYALTY_CHANGE: 'puntos'
+      VOID_SALE: 'anulaciones', PARTIAL_REFUND: 'devoluciones', LOYALTY_CHANGE: 'puntos',
+      AREA_SYNC: 'áreas', TABLE_SYNC: 'mesas', COMANDA_SYNC: 'comandas',
+      COMANDA_ITEM_SYNC: 'ítems', COMANDA_CLOSE: 'cierres', KITCHEN_STATUS: 'cocina',
+      MODIFIER_GROUP_SYNC: 'grupos', MODIFIER_SYNC: 'modificadores', PRODUCT_MODIFIER_SYNC: 'modificadores',
+      RECIPE_SYNC: 'recetas'
     };
     const breakdown: Record<string, number> = {};
     pendingItems.forEach(i => {
@@ -87,7 +99,8 @@ export function SettingsPage() {
     address: '',
     phone: '',
     receipt_message: '¡Gracias por su compra!',
-    master_pin: ''
+    master_pin: '',
+    business_type: 'retail' as 'retail' | 'restaurant'
   });
 
   const [showResetDbConfirm, setShowResetDbConfirm] = useState(false);
@@ -237,7 +250,8 @@ export function SettingsPage() {
         receipt_message: settings.receipt_message || '¡Gracias por su compra!',
         // Si el PIN almacenado ya es un hash, no lo cargamos en el campo:
         // el admin ingresa un nuevo PIN solo si quiere cambiarlo.
-        master_pin: isPinHashed(settings.master_pin || '') ? '' : (settings.master_pin || '')
+        master_pin: isPinHashed(settings.master_pin || '') ? '' : (settings.master_pin || ''),
+        business_type: settings.business_type === 'restaurant' ? 'restaurant' : 'retail'
       });
     }
   }, [settings]);
@@ -265,6 +279,7 @@ export function SettingsPage() {
             phone: businessForm.phone,
             receipt_message: businessForm.receipt_message,
             master_pin: pinFinal,
+            business_type: businessForm.business_type,
             status: 'active',
             sync_status: 'pending_update'
         };
@@ -431,6 +446,15 @@ export function SettingsPage() {
                 )}
               </button>
             )}
+            {currentStaff?.role === 'admin' && settings?.business_type === 'restaurant' && (
+              <button onClick={() => setActiveTab('restaurant')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'restaurant' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Store size={20}/> Mesas y Áreas</button>
+            )}
+            {currentStaff?.role === 'admin' && settings?.business_type === 'restaurant' && (
+              <button onClick={() => setActiveTab('menu')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'menu' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><ShoppingCart size={20}/> Menú</button>
+            )}
+            {currentStaff?.role === 'admin' && settings?.business_type === 'restaurant' && (
+              <button onClick={() => setActiveTab('recipes')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'recipes' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Package size={20}/> Recetas</button>
+            )}
             <button onClick={() => setActiveTab('devices')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'devices' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Printer size={20}/> Hardware</button>
             <button onClick={() => setActiveTab('data')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'data' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><Shield size={20}/> Datos y Respaldo</button>
             <button onClick={() => setActiveTab('help')} className={`flex items-center gap-3 p-4 rounded-2xl text-left transition-all font-bold ${activeTab === 'help' ? 'bg-[#0B3B68] text-white shadow-lg shadow-[#0B3B68]/20' : 'bg-white text-[#6B7280] hover:bg-white/80 hover:text-[#0B3B68]'}`}><HelpCircle size={20}/> Guía Rápida</button>
@@ -461,6 +485,30 @@ export function SettingsPage() {
                             <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Dirección Física</label>
                             <input type="text" value={businessForm.address} onChange={e => setBusinessForm({...businessForm, address: e.target.value})}
                                 className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none transition-all" placeholder="Calle Principal #123" />
+                        </div>
+
+                        {/* ── MODO DEL NEGOCIO (retail / restaurante) ───────── */}
+                        <div className="pt-4">
+                            <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Tipo de Negocio</label>
+                            <div className="grid grid-cols-2 gap-3">
+                                {([
+                                    { key: 'retail' as const, title: 'Tienda', desc: 'Punto de venta de productos' },
+                                    { key: 'restaurant' as const, title: 'Restaurante', desc: 'Mesas, comandas y cocina' },
+                                ]).map(opt => {
+                                    const active = businessForm.business_type === opt.key;
+                                    return (
+                                        <button type="button" key={opt.key}
+                                            onClick={() => setBusinessForm({ ...businessForm, business_type: opt.key })}
+                                            className={`text-left p-4 rounded-xl border-2 transition-all ${active ? 'border-[#7AC142] bg-[#7AC142]/5' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                                            <p className={`font-bold ${active ? 'text-[#0B3B68]' : 'text-[#6B7280]'}`}>{opt.title}</p>
+                                            <p className="text-[11px] text-[#6B7280] mt-0.5">{opt.desc}</p>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <p className="text-[10px] text-[#6B7280] mt-2">
+                                El modo restaurante cambia la pantalla principal por el plano de mesas. Cambiarlo no afecta tus datos de productos ni ventas.
+                            </p>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-4">
@@ -558,6 +606,33 @@ export function SettingsPage() {
                         </div>
                       );
                     })()}
+                </div>
+            )}
+
+            {activeTab === 'restaurant' && (
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 animate-in fade-in slide-in-from-right-4 duration-300">
+                    <h2 className="text-xl font-bold text-[#1F2937] flex items-center gap-2 mb-6">
+                        <Store className="text-[#7AC142]"/> Mesas y Áreas
+                    </h2>
+                    <RestaurantAdmin />
+                </div>
+            )}
+
+            {activeTab === 'menu' && (
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 animate-in fade-in slide-in-from-right-4 duration-300">
+                    <h2 className="text-xl font-bold text-[#1F2937] flex items-center gap-2 mb-6">
+                        <ShoppingCart className="text-[#7AC142]"/> Menú y Modificadores
+                    </h2>
+                    <MenuModifiersAdmin />
+                </div>
+            )}
+
+            {activeTab === 'recipes' && (
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 animate-in fade-in slide-in-from-right-4 duration-300">
+                    <h2 className="text-xl font-bold text-[#1F2937] flex items-center gap-2 mb-6">
+                        <Package className="text-[#7AC142]"/> Recetas e Insumos
+                    </h2>
+                    <RecipeAdmin />
                 </div>
             )}
 

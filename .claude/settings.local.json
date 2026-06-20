@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(curl:*)",
-      "Bash(python -m json.tool:*)"
+      "Bash(python -m json.tool:*)",
+      "Bash(git add *)",
+      "Bash(git commit -q -m 'fix\\(env\\): pantalla clara en vez de página en blanco si faltan variables de Supabase *)"
     ]
   }
 }

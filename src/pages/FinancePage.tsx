@@ -23,6 +23,8 @@ import { BillCounter } from '../components/BillCounter';
 import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
 import { computeVoidDelta } from '../lib/saleRefund';
 import { isSaleValidAtTime, endOfLocalDay } from '../lib/shiftStats';
+import { computeProductProfitability } from '../lib/salesStats';
+import { BRAND_CHART_COLORS, CHART_TOOLTIP_STYLE } from '../lib/chartTheme';
 
 const EMPTY_ARRAY: never[] = [];
 
@@ -103,6 +105,8 @@ export function FinancePage() {
   const [selectedDate, setSelectedDate] = useState(today);
   const [selectedTicket, setSelectedTicket] = useState<Sale | null>(null);
   const [trendFilter, setTrendFilter] = useState<'week' | 'month'>('week');
+  // Orden de la tabla de rentabilidad por producto (vista "diario").
+  const [profitSort, setProfitSort] = useState<'profit' | 'margin'>('profit');
 
   // Reportes por rango de fechas
   const [reportMode, setReportMode] = useState<'day' | 'range'>('day');
@@ -388,6 +392,21 @@ export function FinancePage() {
 
     return { sales: salesForDay, revenue, profit, cost, margin, chartData, rangeChartData, pieData, bestSeller, topProducts, paymentBreakdown, dailyAvg, daysInRange, staffList };
   }, [allSales, selectedDate, productMeta, reportMode, dateFrom, dateTo]);
+
+  // Rentabilidad por producto del período seleccionado (ganancia y margen reales,
+  // no solo cantidad). Reusa las ventas ya filtradas por `dailyStats`.
+  const productProfit = useMemo(() => {
+    const list = computeProductProfitability(dailyStats.sales, products);
+    return profitSort === 'margin'
+      ? [...list].sort((a, b) => b.margin - a.margin)
+      : list; // ya viene ordenada por ganancia
+  }, [dailyStats.sales, products, profitSort]);
+
+  // Productos mostrados y base de escala de las barras. La escala se calcula SOLO
+  // sobre lo visible para que el producto de referencia esté en pantalla (si se
+  // usara toda la lista, una pérdida grande fuera del top-15 aplastaría las barras).
+  const shownProfit = productProfit.slice(0, 15);
+  const maxAbsProfit = Math.max(...shownProfit.map(x => Math.abs(x.profit)), 1);
 
   const closingStats = useMemo(() => {
     let cashTotal = 0, transferTotal = 0, cardTotal = 0;
@@ -1015,7 +1034,7 @@ export function FinancePage() {
       window.print();
     }
   };
-  const COLORS = ['#0B3B68', '#7AC142', '#F59E0B', '#EF4444', '#6B7280'];
+  const COLORS = BRAND_CHART_COLORS;
 
   if (activeShift === undefined || isInitialLoad) {
     return (
@@ -1231,7 +1250,7 @@ export function FinancePage() {
                     <XAxis dataKey="h" fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }}/>
                     <YAxis fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} tickFormatter={v => v === 0 ? '' : `$${v}`} width={36}/>
                     <Tooltip
-                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }}
+                      contentStyle={CHART_TOOLTIP_STYLE}
                       formatter={(v: number) => [formatMoney(v), 'Ventas']}
                     />
                     <Area type="monotone" dataKey="v" stroke="#0B3B68" strokeWidth={2} fill="url(#shiftGrad)" dot={false} activeDot={{ r: 4, fill: '#0B3B68' }}/>
@@ -1612,7 +1631,7 @@ export function FinancePage() {
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
                         <XAxis dataKey="date" fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }}/>
                         <YAxis fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} tickFormatter={v => v === 0 ? '' : `$${v}`} width={36}/>
-                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }} formatter={(v: number) => [formatMoney(v), 'Ventas']}/>
+                        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: number) => [formatMoney(v), 'Ventas']}/>
                         <Area type="monotone" dataKey="total" stroke="#0B3B68" strokeWidth={2} fill="url(#rangeGrad)" dot={{ r: 3, fill: '#0B3B68', strokeWidth: 0 }} activeDot={{ r: 5, fill: '#0B3B68' }}/>
                       </AreaChart>
                     ) : (
@@ -1620,7 +1639,7 @@ export function FinancePage() {
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
                         <XAxis dataKey="time" fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} interval={1}/>
                         <YAxis fontSize={9} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} tickFormatter={v => v === 0 ? '' : `$${v}`} width={36}/>
-                        <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }} formatter={(v: number) => [formatMoney(v), 'Ventas']}/>
+                        <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: number) => [formatMoney(v), 'Ventas']}/>
                         <Bar dataKey="total" fill="#0B3B68" radius={[4,4,0,0]}/>
                       </BarChart>
                     )}
@@ -1667,7 +1686,7 @@ export function FinancePage() {
                   <Pie data={dailyStats.pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={4} dataKey="value" stroke="none">
                     {dailyStats.pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
                   </Pie>
-                  <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }} formatter={(v: number) => [formatMoney(v), 'Ingresos']}/>
+                  <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: number) => [formatMoney(v), 'Ingresos']}/>
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: '11px' }}/>
                 </PieChart>
               </ResponsiveContainer>
@@ -1702,6 +1721,69 @@ export function FinancePage() {
               </div>
             </div>
           )}
+
+          {/* RENTABILIDAD POR PRODUCTO — qué deja más dinero, no solo qué se vende más */}
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 mb-6">
+            <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+              <h4 className="font-bold text-[#1F2937] text-sm flex items-center gap-2">
+                <DollarSign size={16} className="text-[#7AC142]" /> Rentabilidad por producto
+              </h4>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => setProfitSort('profit')}
+                  className={`px-3 py-1.5 rounded-full text-[11px] font-bold transition-all ${profitSort === 'profit' ? 'bg-[#0B3B68] text-white shadow-sm' : 'bg-gray-100 text-[#6B7280] hover:bg-gray-200'}`}
+                >
+                  Por ganancia
+                </button>
+                <button
+                  onClick={() => setProfitSort('margin')}
+                  className={`px-3 py-1.5 rounded-full text-[11px] font-bold transition-all ${profitSort === 'margin' ? 'bg-[#0B3B68] text-white shadow-sm' : 'bg-gray-100 text-[#6B7280] hover:bg-gray-200'}`}
+                >
+                  Por margen
+                </button>
+              </div>
+            </div>
+
+            {productProfit.length === 0 ? (
+              <p className="text-xs text-[#6B7280] text-center py-8">Sin ventas en el período seleccionado.</p>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  {shownProfit.map((p, i) => {
+                    const pct = profitSort === 'margin'
+                      ? Math.max(0, Math.min(100, p.margin))
+                      : (Math.abs(p.profit) / maxAbsProfit) * 100;
+                    const negative = p.profit < 0;
+                    return (
+                      <div key={p.product_id || p.name} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                        <div className="w-7 h-7 rounded-lg bg-[#7AC142]/10 text-[#4f7d24] flex items-center justify-center text-[10px] font-black flex-shrink-0">
+                          {i + 1}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between items-center mb-1 gap-2">
+                            <p className="text-xs font-bold text-[#1F2937] truncate">{p.name}</p>
+                            <span className={`font-black text-xs flex-shrink-0 ${negative ? 'text-[#EF4444]' : 'text-[#7AC142]'}`}>
+                              {formatMoney(p.profit)}
+                            </span>
+                          </div>
+                          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full transition-all ${negative ? 'bg-[#EF4444]' : 'bg-[#7AC142]'}`} style={{ width: `${pct}%` }} />
+                          </div>
+                          <p className="text-[9px] text-[#6B7280] mt-0.5">
+                            {p.qty} un. · ingreso {formatMoney(p.revenue)} · costo {formatMoney(p.cost)} · margen {p.margin.toFixed(0)}%
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-[#6B7280] mt-3 flex items-center gap-1.5">
+                  <AlertTriangle size={11} className="text-amber-500 flex-shrink-0" />
+                  La ganancia usa el costo registrado de cada producto. Mantén los costos al día en Inventario para que sea exacta.
+                </p>
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -1756,7 +1838,7 @@ export function FinancePage() {
                   <XAxis dataKey="date" fontSize={10} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }}/>
                   <YAxis fontSize={10} axisLine={false} tickLine={false} tickFormatter={v => v === 0 ? '' : `$${v}`} tick={{ fill: '#94a3b8' }} width={40}/>
                   <Tooltip
-                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '11px' }}
+                    contentStyle={CHART_TOOLTIP_STYLE}
                     formatter={(v: number) => [formatMoney(v), 'Ingresos']}
                   />
                   <Area type="monotone" dataKey="total" stroke="#7AC142" strokeWidth={2.5} fill="url(#trendGrad)" dot={{ r: 3, fill: '#7AC142', strokeWidth: 0 }} activeDot={{ r: 5, fill: '#7AC142' }}/>

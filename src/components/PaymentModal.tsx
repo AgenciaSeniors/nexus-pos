@@ -13,13 +13,24 @@ interface PaymentModalProps {
     change: number,
     cashAmount?: number,
     transferAmount?: number,
-    redeemedPoints?: number
+    redeemedPoints?: number,
+    // Modo restaurante (opcionales, ignorados por PosPage):
+    tipAmount?: number,
+    tipStaffId?: string,
   ) => void;
   onCancel: () => void;
+  // Modo restaurante: habilita la captura de propina + mesero.
+  tipEnabled?: boolean;
+  staffList?: { id: string; name: string }[];
 }
 
-export function PaymentModal({ total, customer, onConfirm, onCancel }: PaymentModalProps) {
+export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled, staffList }: PaymentModalProps) {
   const [method, setMethod] = useState<PaymentMethod>('efectivo');
+
+  // Propina (solo restaurante). No se suma al total ni a la caja: se registra aparte.
+  const [tipInput, setTipInput] = useState<string>('');
+  const [tipStaffId, setTipStaffId] = useState<string>(staffList?.[0]?.id || '');
+  const tipAmount = Math.max(0, Math.round((parseFloat(tipInput) || 0) * 100) / 100);
 
   // Efectivo
   const [tendered, setTendered] = useState<string>('');
@@ -75,14 +86,16 @@ export function PaymentModal({ total, customer, onConfirm, onCancel }: PaymentMo
     if (!isValid) return;
     // Quitar foco del input activo en móvil (cierra el teclado virtual)
     (document.activeElement as HTMLElement)?.blur();
+    const tip = tipEnabled && tipAmount > 0 ? tipAmount : undefined;
+    const tipStaff = tip ? (tipStaffId || undefined) : undefined;
     if (method === 'efectivo') {
-      onConfirm('efectivo', tenderedValue, Math.max(0, change), undefined, undefined, redeemedPoints || undefined);
+      onConfirm('efectivo', tenderedValue, Math.max(0, change), undefined, undefined, redeemedPoints || undefined, tip, tipStaff);
     } else if (method === 'transferencia') {
-      onConfirm('transferencia', effectiveTotal, 0, undefined, undefined, redeemedPoints || undefined);
+      onConfirm('transferencia', effectiveTotal, 0, undefined, undefined, redeemedPoints || undefined, tip, tipStaff);
     } else {
-      onConfirm('mixto', cashValue, 0, cashValue, transferValue, redeemedPoints || undefined);
+      onConfirm('mixto', cashValue, 0, cashValue, transferValue, redeemedPoints || undefined, tip, tipStaff);
     }
-  }, [isValid, method, tenderedValue, change, effectiveTotal, cashValue, transferValue, redeemedPoints, onConfirm]);
+  }, [isValid, method, tenderedValue, change, effectiveTotal, cashValue, transferValue, redeemedPoints, onConfirm, tipEnabled, tipAmount, tipStaffId]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -172,6 +185,43 @@ export function PaymentModal({ total, customer, onConfirm, onCancel }: PaymentMo
           )}
 
           <div className="p-5">
+            {/* Propina (solo restaurante) */}
+            {tipEnabled && (
+              <div className="mb-5 bg-amber-50 border border-amber-100 rounded-2xl p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-amber-700 uppercase">Propina</span>
+                  <div className="flex gap-1.5">
+                    {[10, 15].map(pct => (
+                      <button key={pct} type="button"
+                        onClick={() => setTipInput((Math.round(total * pct) / 100).toFixed(2))}
+                        className="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-700 text-xs font-bold hover:bg-amber-200">
+                        {pct}%
+                      </button>
+                    ))}
+                    {tipAmount > 0 && (
+                      <button type="button" onClick={() => setTipInput('')}
+                        className="px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-amber-600 text-xs font-bold">×</button>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-amber-400 font-bold">$</span>
+                    <input type="number" inputMode="decimal" placeholder="0.00" value={tipInput}
+                      onChange={e => setTipInput(e.target.value)}
+                      className="w-full pl-7 pr-3 py-2.5 border-2 border-amber-100 rounded-xl outline-none focus:border-amber-300 font-bold" />
+                  </div>
+                  {staffList && staffList.length > 0 && (
+                    <select value={tipStaffId} onChange={e => setTipStaffId(e.target.value)}
+                      className="px-3 py-2.5 border-2 border-amber-100 rounded-xl bg-white outline-none focus:border-amber-300 text-sm font-bold text-amber-800">
+                      <option value="">Mesero…</option>
+                      {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Selector de método */}
             <div className="grid grid-cols-3 gap-2 mb-5">
               {([

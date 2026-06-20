@@ -19,7 +19,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // operación, y leen `mockState.calls` para verificar qué se llamó.
 interface MockResult { data?: unknown; error?: unknown }
 const mockState = {
-  responses: {} as Record<string, MockResult>,
+  // Una respuesta puede ser un objeto único (se devuelve siempre) o un array que se
+  // consume EN ORDEN (útil cuando syncLiveData consulta la misma tabla dos veces, p.ej.
+  // cash_shifts: primero el select de turno abierto, luego el .single() del turno cerrado).
+  responses: {} as Record<string, MockResult | MockResult[]>,
   calls: [] as Array<{ op: string; key: string; payload?: unknown }>,
 };
 
@@ -29,8 +32,12 @@ function resetMock() {
 }
 
 vi.mock('./supabase', () => {
-  const result = (key: string): Promise<MockResult> =>
-    Promise.resolve(mockState.responses[key] ?? { data: null, error: null });
+  const result = (key: string): Promise<MockResult> => {
+    const r = mockState.responses[key];
+    // Array → se consume en orden; el último valor persiste para llamadas extra.
+    if (Array.isArray(r)) return Promise.resolve(r.length > 1 ? r.shift()! : (r[0] ?? { data: null, error: null }));
+    return Promise.resolve(r ?? { data: null, error: null });
+  };
 
   // Objeto chainable para .update().eq().eq() y .select().eq()...
   const chainable = (key: string) => {
@@ -82,7 +89,7 @@ vi.mock('./supabase', () => {
 
 // Importar DESPUÉS del mock para que sync.ts use el supabase mockeado
 const { db } = await import('./db');
-const { addToQueue, processQueue } = await import('./sync');
+const { addToQueue, processQueue, syncLiveData } = await import('./sync');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 async function clearDb() {
@@ -91,6 +98,17 @@ async function clearDb() {
   await db.products.clear();
   await db.customers.clear();
   await db.cash_shifts.clear();
+  await db.cash_movements.clear();
+  await db.staff.clear();
+  await db.settings.clear();
+  await db.restaurant_areas.clear();
+  await db.restaurant_tables.clear();
+  await db.comandas.clear();
+  await db.comanda_items.clear();
+  await db.modifier_groups.clear();
+  await db.modifiers.clear();
+  await db.product_modifier_groups.clear();
+  await db.recipe_ingredients.clear();
 }
 
 /** Inserta un item directo en la cola con control total de sus campos. */
@@ -287,5 +305,361 @@ describe('Motor de cola — addToQueue', () => {
     // dar tiempo al processQueue disparado internamente
     await new Promise(r => setTimeout(r, 50));
     expect(await db.action_queue.count()).toBe(0);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+describe('Motor de cola — idempotencia 23505 (clave duplicada)', () => {
+  it('un upsert que devuelve 23505 NO falla, marca synced y loguea', async () => {
+    // 23505 = el registro ya existía en el servidor (reintento tras corte de red).
+    // Es la idempotencia funcionando: el item debe completarse (salir de la cola)
+    // y dejarse rastro en consola para visibilidad en producción.
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    await db.products.add({
+      id: 'p-dup', business_id: 'b1', name: 'Dup', price: 1, stock: 1,
+      sku: null, sync_status: 'pending_create',
+    } as never);
+    mockState.responses['products:upsert'] = { error: { code: '23505', message: 'duplicate key' } };
+    await seedQueueItem({ type: 'PRODUCT_SYNC',
+      payload: { id: 'p-dup', business_id: 'b1', name: 'Dup' } });
+
+    await processQueue();
+
+    expect(await db.action_queue.count()).toBe(0); // tratado como éxito idempotente
+    expect((await db.products.get('p-dup'))?.sync_status).toBe('synced');
+    expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('23505'));
+    infoSpy.mockRestore();
+  });
+
+  it('un error que NO es 23505 sí manda el item a retry', async () => {
+    mockState.responses['products:upsert'] = { error: { code: '42P01', message: 'relation missing' } };
+    const id = await seedQueueItem({ type: 'PRODUCT_SYNC',
+      payload: { id: 'p-err', business_id: 'b1', name: 'Err' } });
+
+    await processQueue();
+
+    const item = await db.action_queue.get(id);
+    expect(item?.status).toBe('pending'); // no se completó
+    expect((item?.retries ?? 0)).toBeGreaterThan(0);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+describe('syncLiveData — pull de fondo multi-dispositivo', () => {
+  // Settings es prerequisito de syncLiveData (de ahí saca el business_id).
+  async function seedSettings(overrides: Record<string, unknown> = {}) {
+    await db.settings.put({
+      id: 'b1', name: 'Negocio', status: 'active', sync_status: 'synced', ...overrides,
+    } as never);
+  }
+
+  /** Espera un CustomEvent global durante la ejecución de `fn`. */
+  async function captureEvent(name: string, fn: () => Promise<void>): Promise<CustomEvent | null> {
+    let captured: CustomEvent | null = null;
+    const handler = (e: Event) => { captured = e as CustomEvent; };
+    window.addEventListener(name, handler);
+    try { await fn(); } finally { window.removeEventListener(name, handler); }
+    return captured;
+  }
+
+  beforeEach(() => {
+    // Controlar el reloj de sync: incremental (no fetchAll) y sin disparar heavy sync.
+    localStorage.setItem('nexus_last_sync_at', Date.now().toString());
+    localStorage.setItem('nexus_last_heavy_sync_at', Date.now().toString());
+  });
+
+  it('baja a local el turno abierto remoto', async () => {
+    await seedSettings();
+    mockState.responses['cash_shifts:select'] = {
+      data: [{ id: 'sh1', business_id: 'b1', staff_id: 'v1', start_amount: 100,
+        opened_at: '', status: 'open' }],
+    };
+
+    await syncLiveData();
+
+    const local = await db.cash_shifts.get('sh1');
+    expect(local).toBeDefined();
+    expect(local?.sync_status).toBe('synced');
+  });
+
+  it('mergea ventas hechas en otros dispositivos', async () => {
+    await seedSettings();
+    mockState.responses['cash_shifts:select'] = {
+      data: [{ id: 'sh1', business_id: 'b1', staff_id: 'v1', start_amount: 0,
+        opened_at: '', status: 'open' }],
+    };
+    mockState.responses['sales:select'] = {
+      data: [
+        { id: 'r1', business_id: 'b1', shift_id: 'sh1', date: '', total: 10, items: [], payment_method: 'efectivo' },
+        { id: 'r2', business_id: 'b1', shift_id: 'sh1', date: '', total: 20, items: [], payment_method: 'efectivo' },
+      ],
+    };
+
+    await syncLiveData();
+
+    expect(await db.sales.get('r1')).toBeDefined();
+    expect(await db.sales.get('r2')).toBeDefined();
+  });
+
+  it('NO pisa una venta local con cambios pendientes', async () => {
+    await seedSettings();
+    // Venta local editada localmente (dirty), aún sin subir.
+    await db.sales.add({
+      id: 'sLocal', business_id: 'b1', shift_id: 'sh1', date: '', total: 50,
+      items: [], payment_method: 'efectivo', sync_status: 'pending_create',
+    } as never);
+    mockState.responses['cash_shifts:select'] = {
+      data: [{ id: 'sh1', business_id: 'b1', staff_id: 'v1', start_amount: 0,
+        opened_at: '', status: 'open' }],
+    };
+    // El remoto trae la MISMA venta con otro total — no debe sobrescribir el local pending.
+    mockState.responses['sales:select'] = {
+      data: [{ id: 'sLocal', business_id: 'b1', shift_id: 'sh1', date: '', total: 999, items: [], payment_method: 'efectivo' }],
+    };
+
+    await syncLiveData();
+
+    expect((await db.sales.get('sLocal'))?.total).toBe(50); // preservado
+  });
+
+  it('baja productos por pull incremental', async () => {
+    await seedSettings();
+    mockState.responses['products:select'] = {
+      data: [{ id: 'pNew', business_id: 'b1', name: 'Nuevo', price: 5, stock: 3, sku: null }],
+    };
+
+    await syncLiveData();
+
+    const p = await db.products.get('pNew');
+    expect(p).toBeDefined();
+    expect(p?.sync_status).toBe('synced');
+  });
+
+  it('emite nexus-stock-alert ante stock negativo', async () => {
+    await seedSettings();
+    mockState.responses['products:select'] = {
+      data: [{ id: 'pNeg', business_id: 'b1', name: 'Negativo', price: 5, stock: -2, sku: null }],
+    };
+
+    const ev = await captureEvent('nexus-stock-alert', () => syncLiveData());
+
+    expect(ev).not.toBeNull();
+    expect((ev?.detail as { products: Array<{ id: string }> }).products[0].id).toBe('pNeg');
+  });
+
+  it('emite nexus-trial-expired si el trial venció', async () => {
+    await seedSettings({ status: 'trial', subscription_expires_at: '2020-01-01T00:00:00.000Z' });
+
+    const ev = await captureEvent('nexus-trial-expired', () => syncLiveData());
+
+    expect(ev).not.toBeNull();
+  });
+
+  it('sincroniza staff excluyendo al admin autenticado', async () => {
+    await seedSettings();
+    // auth.getUser del mock devuelve { id: 'admin-test-id' }
+    mockState.responses['staff:select'] = {
+      data: [
+        { id: 'admin-test-id', business_id: 'b1', name: 'Jefe', role: 'admin', pin: 'x', active: true },
+        { id: 'vend1', business_id: 'b1', name: 'Vendedor', role: 'vendedor', pin: 'y', active: true },
+      ],
+    };
+
+    await syncLiveData();
+
+    expect(await db.staff.get('vend1')).toBeDefined();
+    expect(await db.staff.get('admin-test-id')).toBeUndefined(); // admin gestionado aparte
+  });
+
+  it('cierra el turno local cuando fue cerrado desde otro dispositivo', async () => {
+    await seedSettings();
+    // Turno local abierto y ya sincronizado.
+    await db.cash_shifts.add({
+      id: 'sh1', business_id: 'b1', staff_id: 'v1', start_amount: 0,
+      opened_at: '', status: 'open', sync_status: 'synced',
+    } as never);
+    // 1er select (turno abierto remoto) → vacío; 2º (.single por id) → turno cerrado.
+    mockState.responses['cash_shifts:select'] = [
+      { data: [] },
+      { data: { id: 'sh1', business_id: 'b1', staff_id: 'v1', start_amount: 0,
+        opened_at: '', closed_at: '', status: 'closed' } },
+    ];
+    // Las ventas del turno se bajan ANTES de cerrarlo localmente.
+    mockState.responses['sales:select'] = {
+      data: [{ id: 'rClose', business_id: 'b1', shift_id: 'sh1', date: '', total: 7, items: [], payment_method: 'efectivo' }],
+    };
+
+    await syncLiveData();
+
+    expect((await db.cash_shifts.get('sh1'))?.status).toBe('closed');
+    expect(await db.sales.get('rClose')).toBeDefined();
+  });
+
+  it('no llama a Supabase si está offline', async () => {
+    await seedSettings();
+    setOnline(false);
+
+    await syncLiveData();
+
+    expect(mockState.calls.length).toBe(0);
+  });
+
+  it('no hace nada si no hay settings locales', async () => {
+    // clearDb (beforeEach global) ya dejó settings vacío.
+    await syncLiveData();
+    expect(mockState.calls.length).toBe(0);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+describe('Modo restaurante — sync de mesas/comandas', () => {
+  it('AREA_SYNC y TABLE_SYNC hacen upsert y marcan synced', async () => {
+    await db.restaurant_areas.add({ id: 'a1', business_id: 'b1', name: 'Salón', sync_status: 'pending_create' } as never);
+    await db.restaurant_tables.add({ id: 't1', business_id: 'b1', area_id: 'a1', name: 'Mesa 1', state: 'libre', sync_status: 'pending_create' } as never);
+    await seedQueueItem({ type: 'AREA_SYNC', payload: { id: 'a1', business_id: 'b1', name: 'Salón' } });
+    await seedQueueItem({ type: 'TABLE_SYNC', payload: { id: 't1', business_id: 'b1', area_id: 'a1', name: 'Mesa 1', state: 'libre' } });
+
+    await processQueue();
+
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.restaurant_areas.get('a1'))?.sync_status).toBe('synced');
+    expect((await db.restaurant_tables.get('t1'))?.sync_status).toBe('synced');
+  });
+
+  it('COMANDA_CLOSE cierra la comanda y marca la venta synced', async () => {
+    await db.comandas.add({ id: 'c1', business_id: 'b1', table_id: 't1', opened_at: '', status: 'open', sync_status: 'pending_update' } as never);
+    await db.sales.add({ id: 'sale1', business_id: 'b1', date: '', shift_id: 'sh1', total: 30, items: [], payment_method: 'efectivo', comanda_id: 'c1', sync_status: 'pending_create' } as never);
+    mockState.responses['rpc:close_comanda'] = { data: { ok: true } };
+    await seedQueueItem({ type: 'COMANDA_CLOSE',
+      payload: { comanda_id: 'c1', business_id: 'b1', idempotency_key: 'k1',
+        sales: [{ id: 'sale1', business_id: 'b1', total: 30 }] } });
+
+    await processQueue();
+
+    expect(mockState.calls.some(c => c.op === 'rpc' && c.key === 'close_comanda')).toBe(true);
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.comandas.get('c1'))?.status).toBe('closed');
+    expect((await db.sales.get('sale1'))?.sync_status).toBe('synced');
+  });
+
+  it('COMANDA_CLOSE con conflicto de stock marca la venta en stock_conflict', async () => {
+    await db.comandas.add({ id: 'c2', business_id: 'b1', table_id: 't1', opened_at: '', status: 'open', sync_status: 'pending_update' } as never);
+    await db.sales.add({ id: 'sale2', business_id: 'b1', date: '', shift_id: 'sh1', total: 10, items: [], payment_method: 'efectivo', comanda_id: 'c2', sync_status: 'pending_create' } as never);
+    mockState.responses['rpc:close_comanda'] = { data: { conflict: true, conflict_items: ['Mojito'] } };
+    await seedQueueItem({ type: 'COMANDA_CLOSE',
+      payload: { comanda_id: 'c2', business_id: 'b1', idempotency_key: 'k2',
+        sales: [{ id: 'sale2', business_id: 'b1', total: 10 }] } });
+
+    await processQueue();
+
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.sales.get('sale2'))?.status).toBe('stock_conflict');
+    // La comanda NO se cierra cuando hubo conflicto.
+    expect((await db.comandas.get('c2'))?.status).toBe('open');
+  });
+
+  it('syncLiveData baja comandas y mesas solo en modo restaurante', async () => {
+    await db.settings.put({ id: 'b1', name: 'Resto', status: 'active', business_type: 'restaurant', sync_status: 'synced' } as never);
+    localStorage.setItem('nexus_last_sync_at', Date.now().toString());
+    localStorage.setItem('nexus_last_heavy_sync_at', Date.now().toString());
+    mockState.responses['restaurant_tables:select'] = { data: [{ id: 't1', business_id: 'b1', area_id: 'a1', name: 'Mesa 1', state: 'ocupada' }] };
+    mockState.responses['comandas:select'] = { data: [{ id: 'c1', business_id: 'b1', table_id: 't1', opened_at: '', status: 'open' }] };
+    mockState.responses['comanda_items:select'] = { data: [{ id: 'i1', comanda_id: 'c1', business_id: 'b1', product_id: 'p1', name: 'Café', quantity: 2, price: 5, kitchen_status: 'pending' }] };
+
+    await syncLiveData();
+
+    expect((await db.restaurant_tables.get('t1'))?.state).toBe('ocupada');
+    expect(await db.comandas.get('c1')).toBeDefined();
+    expect((await db.comanda_items.get('i1'))?.name).toBe('Café');
+  });
+
+  it('syncLiveData NO consulta tablas de restaurante en modo retail', async () => {
+    await db.settings.put({ id: 'b1', name: 'Tienda', status: 'active', business_type: 'retail', sync_status: 'synced' } as never);
+    localStorage.setItem('nexus_last_sync_at', Date.now().toString());
+    localStorage.setItem('nexus_last_heavy_sync_at', Date.now().toString());
+
+    await syncLiveData();
+
+    expect(mockState.calls.some(c => c.key === 'comandas')).toBe(false);
+    expect(mockState.calls.some(c => c.key === 'restaurant_tables')).toBe(false);
+  });
+
+  it('COMANDA_ITEM_SYNC usa el RPC upsert_comanda_item (columnas del mesero)', async () => {
+    await db.comanda_items.add({ id: 'i2', comanda_id: 'c1', business_id: 'b1', product_id: 'p1', name: 'X', quantity: 1, price: 5, kitchen_status: 'pending', sync_status: 'pending_create' } as never);
+    mockState.responses['rpc:upsert_comanda_item'] = { data: null };
+    await seedQueueItem({ type: 'COMANDA_ITEM_SYNC',
+      payload: { id: 'i2', comanda_id: 'c1', business_id: 'b1', product_id: 'p1', name: 'X', quantity: 1, price: 5, kitchen_status: 'pending' } });
+
+    await processQueue();
+
+    expect(mockState.calls.some(c => c.op === 'rpc' && c.key === 'upsert_comanda_item')).toBe(true);
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.comanda_items.get('i2'))?.sync_status).toBe('synced');
+  });
+
+  it('KITCHEN_STATUS llama set_kitchen_status y marca el ítem synced', async () => {
+    await db.comanda_items.add({ id: 'i3', comanda_id: 'c1', business_id: 'b1', product_id: 'p1', name: 'Y', quantity: 1, price: 5, kitchen_status: 'sent', sync_status: 'pending_update' } as never);
+    mockState.responses['rpc:set_kitchen_status'] = { data: null };
+    await seedQueueItem({ type: 'KITCHEN_STATUS',
+      payload: { item_id: 'i3', comanda_id: 'c1', business_id: 'b1', kitchen_status: 'preparando', item_updated_at: new Date().toISOString() } });
+
+    await processQueue();
+
+    const call = mockState.calls.find(c => c.op === 'rpc' && c.key === 'set_kitchen_status');
+    expect(call).toBeTruthy();
+    expect((call?.payload as { p_status: string }).p_status).toBe('preparando');
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.comanda_items.get('i3'))?.sync_status).toBe('synced');
+  });
+
+  it('MODIFIER_GROUP_SYNC y MODIFIER_SYNC hacen upsert y marcan synced', async () => {
+    await db.modifier_groups.add({ id: 'g1', business_id: 'b1', name: 'Término', sync_status: 'pending_create' } as never);
+    await db.modifiers.add({ id: 'm1', business_id: 'b1', group_id: 'g1', name: 'Medio', price_delta: 0, sync_status: 'pending_create' } as never);
+    await seedQueueItem({ type: 'MODIFIER_GROUP_SYNC', payload: { id: 'g1', business_id: 'b1', name: 'Término' } });
+    await seedQueueItem({ type: 'MODIFIER_SYNC', payload: { id: 'm1', business_id: 'b1', group_id: 'g1', name: 'Medio', price_delta: 0 } });
+
+    await processQueue();
+
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.modifier_groups.get('g1'))?.sync_status).toBe('synced');
+    expect((await db.modifiers.get('m1'))?.sync_status).toBe('synced');
+  });
+
+  it('COMANDA_CLOSE con split: marca synced las N ventas y cierra la comanda', async () => {
+    await db.comandas.add({ id: 'cs', business_id: 'b1', table_id: 't1', opened_at: '', status: 'open', sync_status: 'pending_update' } as never);
+    const gid = 'split-grp-1';
+    for (const [id, idx] of [['s1', 1], ['s2', 2], ['s3', 3]] as const) {
+      await db.sales.add({ id, business_id: 'b1', date: '', shift_id: 'sh1', total: 10, items: [], payment_method: 'efectivo', comanda_id: 'cs', split_group_id: gid, split_index: idx, sync_status: 'pending_create' } as never);
+    }
+    mockState.responses['rpc:close_comanda'] = { data: { ok: true } };
+    await seedQueueItem({ type: 'COMANDA_CLOSE',
+      payload: { comanda_id: 'cs', business_id: 'b1', idempotency_key: 'kc',
+        sales: [
+          { id: 's1', business_id: 'b1', total: 10, split_group_id: gid, split_index: 1 },
+          { id: 's2', business_id: 'b1', total: 10, split_group_id: gid, split_index: 2 },
+          { id: 's3', business_id: 'b1', total: 10, split_group_id: gid, split_index: 3 },
+        ] } });
+
+    await processQueue();
+
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.comandas.get('cs'))?.status).toBe('closed');
+    for (const id of ['s1', 's2', 's3']) {
+      expect((await db.sales.get(id))?.sync_status).toBe('synced');
+    }
+    // Las 3 ventas comparten el mismo split_group_id
+    const groups = new Set([await db.sales.get('s1'), await db.sales.get('s2'), await db.sales.get('s3')].map(s => s?.split_group_id));
+    expect(groups).toEqual(new Set([gid]));
+  });
+
+  it('RECIPE_SYNC hace upsert y marca synced', async () => {
+    await db.recipe_ingredients.add({ id: 'r1', business_id: 'b1', dish_product_id: 'd1', ingredient_product_id: 'ing1', quantity: 0.15, sync_status: 'pending_create' } as never);
+    mockState.responses['recipe_ingredients:upsert'] = { data: null };
+    await seedQueueItem({ type: 'RECIPE_SYNC', payload: { id: 'r1', business_id: 'b1', dish_product_id: 'd1', ingredient_product_id: 'ing1', quantity: 0.15 } });
+
+    await processQueue();
+
+    expect(await db.action_queue.count()).toBe(0);
+    expect((await db.recipe_ingredients.get('r1'))?.sync_status).toBe('synced');
   });
 });

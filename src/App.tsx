@@ -2,10 +2,15 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import { type Staff, db } from './lib/db';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { isRestaurantMode } from './lib/businessType';
+import { startKdsRealtime, stopKdsRealtime } from './lib/realtime';
 import { type Session } from '@supabase/supabase-js';
 import { Toaster, toast } from 'sonner';
-import { syncCriticalData, syncHeavyData, stopSyncListeners } from './lib/sync';
+import { syncCriticalData, syncHeavyData, syncLiveData, stopSyncListeners } from './lib/sync';
 import { startAutoBackup, stopAutoBackup } from './lib/backup';
+import { initLicenseClock, fetchServerTime, computeLicenseLock } from './lib/licenseClock';
+import { LicenseLock } from './components/LicenseLock';
 
 import { ADMIN_WHATSAPP_PHONE } from './lib/config';
 import { checkLockout, recordFailure, recordSuccess, formatLockoutTime, RATE_LIMIT_CONFIG, registerRateLimit } from './lib/loginRateLimit';
@@ -20,6 +25,10 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ defa
 const SuperAdminPage = lazy(() => import('./pages/SuperAdminPage').then(m => ({ default: m.SuperAdminPage })));
 const SuperAdminLogin = lazy(() => import('./pages/SuperAdminLogin').then(m => ({ default: m.SuperAdminLogin })));
 const CustomersPage = lazy(() => import('./components/CustomersPage').then(m => ({ default: m.CustomersPage })));
+const HomePage = lazy(() => import('./pages/HomePage'));
+const FloorMapPage = lazy(() => import('./pages/FloorMapPage'));
+const ComandaPage = lazy(() => import('./pages/ComandaPage'));
+const KdsPage = lazy(() => import('./pages/KdsPage'));
 
 import { Loader2, Store, User, Lock, Mail, Phone, ArrowRight, CheckCircle, Shield, Eye, EyeOff } from 'lucide-react';
 
@@ -87,11 +96,25 @@ interface LoginScreenProps {
 }
 
 function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: LoginScreenProps) {
-  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot' | 'otp'>('login');
   const navigate = useNavigate();
+
+  // Acceso oculto al panel maestro: mantener pulsado el logo ~1s lleva a
+  // /admin-login. Necesario en el APK, que no tiene barra de direcciones.
+  const secretPressTimer = useRef<number | null>(null);
+  const startSecretPress = () => {
+    secretPressTimer.current = window.setTimeout(() => navigate('/admin-login'), 900);
+  };
+  const cancelSecretPress = () => {
+    if (secretPressTimer.current) {
+      clearTimeout(secretPressTimer.current);
+      secretPressTimer.current = null;
+    }
+  };
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [otpCode, setOtpCode] = useState('');
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [businessName, setBusinessName] = useState('');
@@ -226,11 +249,51 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
     }
   };
 
-  const handleForgotPassword = (e: React.FormEvent) => {
-      e.preventDefault();
+  const handleForgotPassword = async (e?: React.FormEvent) => {
+      e?.preventDefault();
       if (!email) return toast.error("Por favor, ingresa tu correo electrónico");
-      const msg = `Hola, olvidé mi contraseña de Bisne con Talla.\nMi correo es: ${email}\nNecesito que me la restablezcan. Gracias.`;
-      window.open(`https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=${encodeURIComponent(msg)}`, '_blank');
+      setLoading(true);
+      try {
+          // Envía un código de 6 dígitos al correo. La plantilla "Reset Password"
+          // de Supabase debe incluir {{ .Token }}. No usamos enlace porque la app
+          // es solo-APK y no hay sitio web a donde abrir el enlace.
+          const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+          if (error) throw error;
+          setOtpCode('');
+          toast.success("Te enviamos un código de 6 dígitos a tu correo. Revisa tu bandeja y la carpeta de spam.");
+          setMode('otp');
+      } catch (err) {
+          toast.error(err instanceof Error ? err.message : "No se pudo enviar el código. Intenta de nuevo.");
+      } finally {
+          setLoading(false);
+      }
+  };
+
+  // Verifica el código y fija la nueva contraseña. Reutiliza la guarda de
+  // registro (onRegistrationStart/End) para que el SIGNED_IN que dispara
+  // verifyOtp no haga que la app entre sola antes de cambiar la clave.
+  const handleVerifyOtp = async (e?: React.FormEvent) => {
+      e?.preventDefault();
+      if (otpCode.trim().length < 6) return toast.error("Ingresa el código de 6 dígitos que te llegó al correo");
+      if (password.length < 8) return toast.error("La nueva contraseña debe tener al menos 8 caracteres");
+      setLoading(true);
+      onRegistrationStart();
+      try {
+          const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token: otpCode.trim(), type: 'recovery' });
+          if (error) throw error;
+          const { error: updErr } = await supabase.auth.updateUser({ password });
+          if (updErr) throw updErr;
+          await supabase.auth.signOut();
+          setOtpCode('');
+          setPassword('');
+          setMode('login');
+          toast.success("¡Contraseña actualizada! Ya puedes iniciar sesión con tu nueva contraseña.");
+      } catch (err) {
+          toast.error(err instanceof Error ? err.message : "Código inválido o expirado. Pide uno nuevo.");
+      } finally {
+          onRegistrationEnd();
+          setLoading(false);
+      }
   };
 
   // ✅ MENSAJE DINÁMICO DE WHATSAPP
@@ -252,16 +315,22 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
           
           <div className="relative z-10">
             <div className="flex items-center gap-3 mb-10">
-              <div className="bg-[#7AC142] p-2.5 rounded-xl shadow-lg shadow-[#7AC142]/20"><Store className="w-7 h-7 text-[#0B3B68]" /></div>
+              <div
+                className="bg-[#7AC142] p-2.5 rounded-xl shadow-lg shadow-[#7AC142]/20 select-none"
+                onPointerDown={startSecretPress}
+                onPointerUp={cancelSecretPress}
+                onPointerLeave={cancelSecretPress}
+                onPointerCancel={cancelSecretPress}
+              ><Store className="w-7 h-7 text-[#0B3B68]" /></div>
               <span className="text-2xl font-black tracking-tight drop-shadow-md">Bisne con Talla</span>
             </div>
             
             {/* ✅ TITULARES MEJORADOS Y EN VERDE PARA QUE RESALTEN */}
             <h1 className="text-5xl font-black mb-5 leading-tight drop-shadow-xl text-[#7AC142]">
-              {mode === 'login' ? 'Bienvenido' : mode === 'forgot' ? 'Recupera tu acceso' : 'Comienza tu negocio'}
+              {mode === 'login' ? 'Bienvenido' : (mode === 'forgot' || mode === 'otp') ? 'Recupera tu acceso' : 'Comienza tu negocio'}
             </h1>
             <p className="text-slate-300 text-lg font-medium leading-relaxed drop-shadow-md">
-              {mode === 'login' ? 'Gestiona tus ventas, inventario y clientes desde un solo lugar.' : mode === 'forgot' ? 'Escribe tu correo y el administrador te ayudará por WhatsApp.' : 'Únete a los negocios que confían en nuestro sistema.'}
+              {mode === 'login' ? 'Gestiona tus ventas, inventario y clientes desde un solo lugar.' : (mode === 'forgot' || mode === 'otp') ? 'Te enviaremos un código a tu correo para restablecer tu contraseña.' : 'Únete a los negocios que confían en nuestro sistema.'}
             </p>
           </div>
 
@@ -280,7 +349,13 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
             
             {/* ✅ ENCABEZADO MÓVIL */}
             <div className="md:hidden flex flex-col items-center mb-8 text-center animate-in fade-in slide-in-from-top-4 duration-500">
-                <div className="bg-[#0B3B68] p-3.5 rounded-2xl mb-4 shadow-xl shadow-[#0B3B68]/20">
+                <div
+                    className="bg-[#0B3B68] p-3.5 rounded-2xl mb-4 shadow-xl shadow-[#0B3B68]/20 select-none"
+                    onPointerDown={startSecretPress}
+                    onPointerUp={cancelSecretPress}
+                    onPointerLeave={cancelSecretPress}
+                    onPointerCancel={cancelSecretPress}
+                >
                     <Store className="w-8 h-8 text-[#7AC142]" />
                 </div>
                 <h1 className="text-3xl font-black text-[#0B3B68] tracking-tight">Bisne con Talla</h1>
@@ -290,13 +365,13 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
             </div>
 
             <h2 className="text-2xl font-black text-[#1F2937] mb-2 hidden md:block">
-                {mode === 'login' ? 'Iniciar Sesión' : mode === 'forgot' ? 'Recuperar Contraseña' : 'Crear Cuenta'}
+                {mode === 'login' ? 'Iniciar Sesión' : (mode === 'forgot' || mode === 'otp') ? 'Recuperar Contraseña' : 'Crear Cuenta'}
             </h2>
             <p className="text-[#6B7280] mb-8 text-sm hidden md:block">
-                {mode === 'login' ? 'Ingresa tus credenciales para acceder' : mode === 'forgot' ? 'Escribe tu correo y te contactamos por WhatsApp para restablecerla.' : 'Completa los datos de tu negocio'}
+                {mode === 'login' ? 'Ingresa tus credenciales para acceder' : mode === 'forgot' ? 'Escribe tu correo y te enviaremos un código para restablecerla.' : mode === 'otp' ? 'Escribe el código que te enviamos y tu nueva contraseña.' : 'Completa los datos de tu negocio'}
             </p>
 
-            <form onSubmit={mode === 'login' ? handleLogin : mode === 'register' ? handleRegister : handleForgotPassword} className="space-y-4">
+            <form onSubmit={mode === 'login' ? handleLogin : mode === 'register' ? handleRegister : mode === 'otp' ? handleVerifyOtp : handleForgotPassword} className="space-y-4">
               
               {mode === 'register' && (
                 <div className="animate-in slide-in-from-right-4 duration-300 space-y-4">
@@ -335,13 +410,29 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Correo Electrónico</label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
-                  <input type="email" required className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="correo@ejemplo.com" value={email} onChange={e => setEmail(e.target.value)} />
+                  <input type="email" required readOnly={mode === 'otp'} className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937] read-only:opacity-70" placeholder="correo@ejemplo.com" value={email} onChange={e => setEmail(e.target.value)} />
                 </div>
               </div>
 
+              {mode === 'otp' && (
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Código de 6 dígitos</label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
+                    <input
+                      type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} required
+                      className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-mono tracking-[0.5em] text-center text-lg text-[#1F2937]"
+                      placeholder="••••••"
+                      value={otpCode}
+                      onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    />
+                  </div>
+                </div>
+              )}
+
               {mode !== 'forgot' && (
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Contraseña</label>
+                    <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">{mode === 'otp' ? 'Nueva contraseña' : 'Contraseña'}</label>
                     <div className="relative">
                       <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
                       <input type={showPassword ? 'text' : 'password'} required className="w-full pl-10 pr-11 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
@@ -368,7 +459,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 {loading && <Loader2 className="animate-spin w-5 h-5" />}
                 {mode === 'login' && lockoutStatus.isLocked
                   ? `Bloqueado · ${formatLockoutTime(lockoutStatus.secondsLeft)}`
-                  : mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? 'Contactar por WhatsApp' : 'Registrar Negocio'}
+                  : mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? 'Enviar código' : mode === 'otp' ? 'Cambiar contraseña' : 'Registrar Negocio'}
                 {!loading && mode !== 'forgot' && !(mode === 'login' && lockoutStatus.isLocked) && <ArrowRight className="w-5 h-5" />}
               </button>
             </form>
@@ -379,15 +470,23 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                     ¿Olvidaste tu contraseña?
                   </button>
               )}
-              
+
+              {mode === 'otp' && (
+                  <button type="button" onClick={() => handleForgotPassword()} disabled={loading} className="block w-full text-sm font-bold text-[#6B7280] hover:text-[#0B3B68] transition-colors disabled:opacity-50">
+                    Reenviar código
+                  </button>
+              )}
+
               <div className="text-[#6B7280] text-sm">
-                {mode === 'login' ? '¿No tienes cuenta?' : mode === 'register' ? '¿Ya tienes cuenta?' : ''}
-                {mode !== 'forgot' ? (
+                {(mode === 'login' || mode === 'register') ? (
+                  <>
+                    {mode === 'login' ? '¿No tienes cuenta?' : '¿Ya tienes cuenta?'}
                     <button onClick={() => setMode(mode === 'login' ? 'register' : 'login')} className="ml-2 font-black text-[#7AC142] hover:text-[#5e9631] transition-colors">
                       {mode === 'login' ? 'Regístrate Aquí' : 'Inicia Sesión'}
                     </button>
+                  </>
                 ) : (
-                    <button onClick={() => setMode('login')} className="font-black text-[#0B3B68] hover:text-[#092b4d] transition-colors">
+                    <button onClick={() => { setMode('login'); setOtpCode(''); }} className="font-black text-[#0B3B68] hover:text-[#092b4d] transition-colors">
                       Volver a Iniciar Sesión
                     </button>
                 )}
@@ -428,10 +527,27 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
 function BusinessApp() {
   const navigate = useNavigate();
   const [session, setSession] = useState<Session | null>(null);
+  // --- Licencia / trial (bloqueo y anti-truco-del-reloj) ---
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [licenseTick, setLicenseTick] = useState(0);
+  const [retryingLicense, setRetryingLicense] = useState(false);
+  const licenseSettings = useLiveQuery(() => db.settings.toArray(), []);
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
   const [loading, setLoading] = useState(true);
   const [recoveryMode, setRecoveryMode] = useState(false);
   const [showStaffSelector, setShowStaffSelector] = useState(false);
+  // Modo del negocio: en restaurante la pantalla principal es el plano de mesas.
+  const settingsRows = useLiveQuery(() => db.settings.toArray());
+  const isRestaurant = isRestaurantMode(settingsRows);
+
+  // Realtime del KDS: solo activo en modo restaurante y con sesión de staff.
+  useEffect(() => {
+    const bid = localStorage.getItem('nexus_business_id') || '';
+    if (isRestaurant && bid && currentStaff) {
+      startKdsRealtime(bid);
+      return () => stopKdsRealtime();
+    }
+  }, [isRestaurant, currentStaff]);
   // Bandera para evitar que onAuthStateChange procese SIGNED_IN durante el registro
   const isRegisteringRef = useRef(false);
   // Bandera para saber si el staff ya fue cargado (evita doble-carga y loop de efectos)
@@ -481,6 +597,8 @@ function BusinessApp() {
           await supabase.auth.signOut();
           return;
         }
+
+        setIsSuperAdmin(!!data.is_super_admin);
 
         // Defensa multi-tenant: si el business_id local NO coincide con el de la
         // sesión actual, el usuario cambió de cuenta (o alguien manipuló localStorage).
@@ -775,6 +893,26 @@ function BusinessApp() {
     };
   }, []); // Sin dependencias: el efecto corre solo al montar. Los refs evitan race conditions.
 
+  // Reloj de licencia: inicializa el HWM/monotónico y re-evalúa el candado cada minuto.
+  useEffect(() => {
+    initLicenseClock();
+    const i = setInterval(() => setLicenseTick(t => t + 1), 60_000);
+    return () => clearInterval(i);
+  }, []);
+
+  // "Ya pagué / Reintentar": re-ancla la hora del servidor y baja la licencia fresca.
+  const handleLicenseRetry = async () => {
+    setRetryingLicense(true);
+    try {
+      await fetchServerTime();
+      await syncLiveData();
+    } catch { /* sin conexión: queda en el candado de revalidación */ }
+    finally {
+      setRetryingLicense(false);
+      setLicenseTick(t => t + 1);
+    }
+  };
+
   if (recoveryMode) {
       return <UpdatePasswordScreen onComplete={() => {
           setRecoveryMode(false);
@@ -837,6 +975,24 @@ function BusinessApp() {
 
   if (!currentStaff) return null;
 
+  // --- Candado de licencia / trial (bloqueo total al vencer; super admin pasa) ---
+  void licenseTick; // referencia para re-evaluar en cada tick del minuto
+  const licenseLock = computeLicenseLock(licenseSettings?.[0], isSuperAdmin);
+  if (licenseLock) {
+    return (
+      <LicenseLock
+        state={licenseLock}
+        retrying={retryingLicense}
+        onRetry={handleLicenseRetry}
+        onLogout={handleForceLogout}
+      />
+    );
+  }
+
+  // Destino de `/` según el rol: el dueño (admin) aterriza en el Panel de Inicio;
+  // el vendedor entra directo a la pantalla operativa (mesas en restaurante, venta en retail).
+  const homeTarget = currentStaff.role === 'admin' ? '/inicio' : (isRestaurant ? '/mesas' : '/venta');
+
   return (
     <>
       {/* Selector opcional (cambio de vendedor desde Layout) */}
@@ -853,7 +1009,25 @@ function BusinessApp() {
       <Suspense fallback={<div className="flex items-center justify-center h-screen"><Loader2 className="animate-spin text-[#0B3B68]" size={32} /></div>}>
         <Routes>
           <Route element={<Layout currentStaff={currentStaff} onChangeStaff={() => setShowStaffSelector(true)} />}>
-            <Route path="/" element={<PosPage />} />
+            {/* `/` solo redirige al "hogar" según el rol: el dueño (admin) ve el Panel
+                de Inicio; el vendedor cae directo en la pantalla operativa. Para el
+                vendedor esperamos a que carguen las settings (mesas vs venta) y así
+                evitar redirigir a la pantalla equivocada en el primer render. */}
+            <Route
+              path="/"
+              element={
+                currentStaff.role !== 'admin' && settingsRows === undefined
+                  ? <div className="flex items-center justify-center h-full"><Loader2 className="animate-spin text-[#0B3B68]" size={28} /></div>
+                  : <Navigate to={homeTarget} replace />
+              }
+            />
+            {/* El Panel de Inicio expone ventas/ganancia/margen → solo el dueño.
+                Un vendedor que llegue por URL directa se redirige a su pantalla. */}
+            <Route path="/inicio" element={currentStaff.role === 'admin' ? <HomePage /> : <Navigate to={homeTarget} replace />} />
+            <Route path="/venta" element={<PosPage />} />
+            <Route path="/mesas" element={<FloorMapPage />} />
+            <Route path="/comanda/:id" element={<ComandaPage />} />
+            <Route path="/cocina" element={<KdsPage />} />
             <Route path="/clientes" element={<CustomersPage />} />
             <Route path="/inventario" element={<InventoryPage />} />
             <Route path="/finanzas" element={<FinancePage />} />

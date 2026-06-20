@@ -13,9 +13,20 @@ import {
   type Staff,
   type VoidSalePayload,
   type PartialRefundPayload,
-  type LoyaltyChangePayload
+  type LoyaltyChangePayload,
+  type RestaurantArea,
+  type RestaurantTable,
+  type Comanda,
+  type ComandaItem,
+  type ComandaClosePayload,
+  type KitchenStatusPayload,
+  type ModifierGroup,
+  type Modifier,
+  type ProductModifierGroup,
+  type RecipeIngredient
 } from './db';
 import { supabase } from './supabase';
+import { fetchServerTime, getTrustedNow } from './licenseClock';
 import type { Table } from 'dexie';
 import {
   filterRemoteItemsForBulkPut,
@@ -97,6 +108,23 @@ export async function addToQueue(type: QueueItem['type'], payload: QueuePayload)
   }
 }
 
+/**
+ * Lanza el error salvo que sea un 23505 (clave duplicada). Un 23505 significa que
+ * el registro YA existía en el servidor: es la idempotencia funcionando (típicamente
+ * un reintento tras corte de red entre el INSERT y la respuesta). No es un fallo, pero
+ * lo logueamos para tener visibilidad de cuán seguido ocurre en producción y poder
+ * diagnosticar quejas tipo "registré algo y no aparece".
+ */
+function throwUnlessDuplicate(
+  error: { code?: string; message?: string } | null | undefined,
+  label: string,
+  recordId: string,
+) {
+  if (!error) return;
+  if (error.code !== '23505') throw new Error(`${label}: ${error.message}`);
+  console.info(`ℹ️ [sync] ${label} ya existía en servidor (23505, idempotente): ${recordId}`);
+}
+
 async function processItem(item: QueueItem) {
   const { type, payload } = item;
 
@@ -110,7 +138,7 @@ async function processItem(item: QueueItem) {
         p_sale: saleClean, p_items: items || []
       });
 
-      if (error && error.code !== '23505') throw new Error(`Fallo venta: ${error.message}`);
+      throwUnlessDuplicate(error, 'Fallo venta', sale.id);
 
       if (rpcData?.conflict) {
         await db.sales.update(sale.id, { status: 'stock_conflict', sync_status: 'synced' });
@@ -129,7 +157,7 @@ async function processItem(item: QueueItem) {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanMov } = movement;
       const { error } = await supabase.from('inventory_movements').insert(cleanMov);
-      if (error && error.code !== '23505') throw new Error(`Error movimiento: ${error.message}`);
+      throwUnlessDuplicate(error, 'Error movimiento', movement.id);
       if (db.movements) await db.movements.update(movement.id, { sync_status: 'synced' });
       break;
     }
@@ -138,7 +166,7 @@ async function processItem(item: QueueItem) {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanLog } = log;
       const { error } = await supabase.from('audit_logs').insert(cleanLog);
-      if (error && error.code !== '23505') throw new Error(`Error audit: ${error.message}`);
+      throwUnlessDuplicate(error, 'Error audit', log.id);
       await db.audit_logs.update(log.id, { sync_status: 'synced' });
       break;
     }
@@ -149,7 +177,7 @@ async function processItem(item: QueueItem) {
       // SKU vacío → null para no violar UNIQUE(business_id, sku) en Supabase
       if (cleanProduct.sku === '') (cleanProduct as Record<string, unknown>).sku = null;
       const { error } = await supabase.from('products').upsert(cleanProduct);
-      if (error && error.code !== '23505') throw new Error(`Error producto: ${error.message}`);
+      throwUnlessDuplicate(error, 'Error producto', product.id);
       await db.products.update(product.id, { sync_status: 'synced' });
       break;
     }
@@ -158,18 +186,19 @@ async function processItem(item: QueueItem) {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sync_status, ...cleanCustomer } = customer;
       const { error } = await supabase.from('customers').upsert(cleanCustomer);
-      if (error && error.code !== '23505') throw new Error(`Error cliente: ${error.message}`);
+      throwUnlessDuplicate(error, 'Error cliente', customer.id);
       await db.customers.update(customer.id, { sync_status: 'synced' });
       break;
     }
     case 'SETTINGS_SYNC': {
       const config = payload as BusinessConfig;
-      const updateData = { 
-          name: config.name, 
-          address: config.address, 
-          phone: config.phone, 
+      const updateData = {
+          name: config.name,
+          address: config.address,
+          phone: config.phone,
           receipt_message: config.receipt_message,
-          master_pin: config.master_pin
+          master_pin: config.master_pin,
+          business_type: config.business_type
       };
       const { error } = await supabase.from('businesses').update(updateData).eq('id', config.id);
       if (error) throw new Error(`Error negocio: ${error.message}`);
@@ -190,7 +219,7 @@ async function processItem(item: QueueItem) {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { sync_status, ...cleanMov } = mov;
         const { error } = await supabase.from('cash_movements').insert(cleanMov);
-        if (error && error.code !== '23505') throw new Error(`Error mov caja: ${error.message}`);
+        throwUnlessDuplicate(error, 'Error mov caja', mov.id);
         await db.cash_movements.update(mov.id, { sync_status: 'synced' });
         break;
     }
@@ -255,6 +284,125 @@ async function processItem(item: QueueItem) {
         const finalPoints = typeof newPoints === 'number' ? newPoints : 0;
         await db.customers.update(customer_id, { loyalty_points: finalPoints, sync_status: 'synced' });
         break;
+    }
+    // ─── MODO RESTAURANTE ──────────────────────────────────────────────────
+    case 'AREA_SYNC': {
+      const area = payload as RestaurantArea;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = area;
+      const { error } = await supabase.from('restaurant_areas').upsert(clean);
+      throwUnlessDuplicate(error, 'Error área', area.id);
+      await db.restaurant_areas.update(area.id, { sync_status: 'synced' });
+      break;
+    }
+    case 'TABLE_SYNC': {
+      const table = payload as RestaurantTable;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = table;
+      const { error } = await supabase.from('restaurant_tables').upsert(clean);
+      throwUnlessDuplicate(error, 'Error mesa', table.id);
+      await db.restaurant_tables.update(table.id, { sync_status: 'synced' });
+      break;
+    }
+    case 'COMANDA_SYNC': {
+      const comanda = payload as Comanda;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = comanda;
+      const { error } = await supabase.from('comandas').upsert(clean);
+      throwUnlessDuplicate(error, 'Error comanda', comanda.id);
+      await db.comandas.update(comanda.id, { sync_status: 'synced' });
+      break;
+    }
+    case 'COMANDA_ITEM_SYNC': {
+      const item = payload as ComandaItem;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = item;
+      // upsert_comanda_item escribe SOLO columnas del mesero (cantidad/precio/nota/
+      // modificadores/voided), nunca kitchen_status — así la cocina (KDS) y el mesero
+      // tienen conjuntos de columnas disjuntos y no se pisan. (Propiedad disjunta, Fase 2)
+      const { error } = await supabase.rpc('upsert_comanda_item', { p_item: clean });
+      throwUnlessDuplicate(error, 'Error ítem comanda', item.id);
+      await db.comanda_items.update(item.id, { sync_status: 'synced' });
+      break;
+    }
+    case 'COMANDA_CLOSE': {
+      // Cierre de comanda: el RPC descuenta stock e inserta la(s) venta(s) de forma
+      // atómica e idempotente. Mismo contrato de conflicto de stock que 'SALE'.
+      const { comanda_id, sales, business_id, idempotency_key } = payload as ComandaClosePayload;
+      const { data: rpcData, error } = await supabase.rpc('close_comanda', {
+        p_comanda_id: comanda_id,
+        p_sales: sales,
+        p_business_id: business_id,
+        p_idempotency_key: idempotency_key,
+      });
+      if (error && error.code !== '23505') throw new Error(`Error cerrando comanda: ${error.message}`);
+
+      if (rpcData?.conflict) {
+        // Stock insuficiente para algún producto al cerrar — marcar las ventas en conflicto.
+        for (const s of sales) {
+          await db.sales.update(s.id, { status: 'stock_conflict', sync_status: 'synced' });
+        }
+        const names = (rpcData.conflict_items as string[] || []).join(', ');
+        window.dispatchEvent(new CustomEvent('nexus-stock-conflict', {
+          detail: { saleId: sales[0]?.id, items: names }
+        }));
+      } else {
+        for (const s of sales) {
+          await db.sales.update(s.id, { sync_status: 'synced' });
+        }
+        await db.comandas.update(comanda_id, { status: 'closed', sync_status: 'synced' });
+      }
+      break;
+    }
+    case 'KITCHEN_STATUS': {
+      // El KDS marca el estado de cocina. El RPC solo actualiza columnas de cocina y
+      // descarta escrituras viejas comparando item_updated_at (guard de concurrencia).
+      const { item_id, business_id, kitchen_status, item_updated_at } = payload as KitchenStatusPayload;
+      const { error } = await supabase.rpc('set_kitchen_status', {
+        p_item_id: item_id,
+        p_business_id: business_id,
+        p_status: kitchen_status,
+        p_item_updated_at: item_updated_at,
+      });
+      if (error) throw new Error(`Error estado cocina: ${error.message}`);
+      await db.comanda_items.update(item_id, { sync_status: 'synced' });
+      break;
+    }
+    case 'MODIFIER_GROUP_SYNC': {
+      const group = payload as ModifierGroup;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = group;
+      const { error } = await supabase.from('modifier_groups').upsert(clean);
+      throwUnlessDuplicate(error, 'Error grupo modificador', group.id);
+      await db.modifier_groups.update(group.id, { sync_status: 'synced' });
+      break;
+    }
+    case 'MODIFIER_SYNC': {
+      const modifier = payload as Modifier;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = modifier;
+      const { error } = await supabase.from('modifiers').upsert(clean);
+      throwUnlessDuplicate(error, 'Error modificador', modifier.id);
+      await db.modifiers.update(modifier.id, { sync_status: 'synced' });
+      break;
+    }
+    case 'PRODUCT_MODIFIER_SYNC': {
+      const link = payload as ProductModifierGroup;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = link;
+      const { error } = await supabase.from('product_modifier_groups').upsert(clean);
+      throwUnlessDuplicate(error, 'Error asignación modificador', link.id);
+      await db.product_modifier_groups.update(link.id, { sync_status: 'synced' });
+      break;
+    }
+    case 'RECIPE_SYNC': {
+      const recipe = payload as RecipeIngredient;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = recipe;
+      const { error } = await supabase.from('recipe_ingredients').upsert(clean);
+      throwUnlessDuplicate(error, 'Error receta', recipe.id);
+      await db.recipe_ingredients.update(recipe.id, { sync_status: 'synced' });
+      break;
     }
     default:
       throw new Error(`Tipo de acción desconocido: ${type}`);
@@ -433,6 +581,23 @@ async function safeBulkPut<T extends { id: string; sync_status?: string; updated
 }
 
 /**
+ * Aplica una fila recibida por Realtime (KDS) a Dexie, respetando cambios locales
+ * pendientes vía safeBulkPut. Pull-only: las escrituras siguen yendo por la cola
+ * offline. Usado por `lib/realtime.ts`.
+ */
+export async function applyRealtimeRow(
+  table: 'comandas' | 'comanda_items' | 'restaurant_tables',
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  row: any,
+) {
+  if (!db.isOpen() || !row?.id) return;
+  const clean = { ...row, sync_status: 'synced' as const };
+  if (table === 'comandas') await safeBulkPut(db.comandas as never, [clean]);
+  else if (table === 'comanda_items') await safeBulkPut(db.comanda_items as never, [clean]);
+  else if (table === 'restaurant_tables') await safeBulkPut(db.restaurant_tables as never, [clean]);
+}
+
+/**
  * Reintenta ventas en estado 'stock_conflict' si el stock local actual
  * ya es suficiente (fue repuesto por otro dispositivo o por un ajuste manual).
  * Se llama después del pull de productos en syncLiveData.
@@ -563,6 +728,7 @@ export async function syncCriticalData(businessId: string) {
         master_pin: localIsDirty && localSettings?.master_pin
           ? localSettings.master_pin
           : remoteBiz.master_pin,
+        business_type: remoteBiz.business_type ?? 'retail',
         subscription_expires_at: remoteBiz.subscription_expires_at,
         status: remoteBiz.status as any,
         last_check: new Date().toISOString(),
@@ -869,13 +1035,54 @@ export async function syncLiveData() {
             await safeBulkPut(db.staff as never, cleanStaff);
         }
 
-        // 7. Mejora 5: Verificar suscripción/trial con datos locales actualizados
-        // Si el trial venció mientras la app estaba abierta, notificar a Layout
+        // 6b. MODO RESTAURANTE: pull de áreas/mesas y comandas abiertas + sus ítems.
+        // Solo si el negocio es restaurante (evita tráfico inútil en retail). 30s es
+        // suficiente en Fase 1 (sin KDS). safeBulkPut preserva cambios locales pendientes.
+        if (settings[0]?.business_type === 'restaurant') {
+            const [areasRes, tablesRes, comandasRes, itemsData] = await Promise.all([
+                supabase.from('restaurant_areas').select('*').eq('business_id', businessId),
+                supabase.from('restaurant_tables').select('*').eq('business_id', businessId),
+                supabase.from('comandas').select('*').eq('business_id', businessId).eq('status', 'open'),
+                fetchSince('comanda_items', businessId, lastSync),
+            ]);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (areasRes.data?.length) await safeBulkPut(db.restaurant_areas as never, areasRes.data.map((a: any) => ({ ...a, sync_status: 'synced' as const })));
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (tablesRes.data?.length) await safeBulkPut(db.restaurant_tables as never, tablesRes.data.map((t: any) => ({ ...t, sync_status: 'synced' as const })));
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (comandasRes.data?.length) await safeBulkPut(db.comandas as never, comandasRes.data.map((c: any) => ({ ...c, sync_status: 'synced' as const })));
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (itemsData.length) await safeBulkPut(db.comanda_items as never, itemsData.map((i: any) => ({ ...i, sync_status: 'synced' as const })));
+
+            // Config del menú (modificadores) — baja rotación, full select.
+            const [mgRes, mRes, pmgRes] = await Promise.all([
+                supabase.from('modifier_groups').select('*').eq('business_id', businessId),
+                supabase.from('modifiers').select('*').eq('business_id', businessId),
+                supabase.from('product_modifier_groups').select('*').eq('business_id', businessId),
+            ]);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (mgRes.data?.length) await safeBulkPut(db.modifier_groups as never, mgRes.data.map((r: any) => ({ ...r, sync_status: 'synced' as const })));
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (mRes.data?.length) await safeBulkPut(db.modifiers as never, mRes.data.map((r: any) => ({ ...r, sync_status: 'synced' as const })));
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (pmgRes.data?.length) await safeBulkPut(db.product_modifier_groups as never, pmgRes.data.map((r: any) => ({ ...r, sync_status: 'synced' as const })));
+
+            // Recetas (lista de materiales) — baja rotación.
+            const recipesRes = await supabase.from('recipe_ingredients').select('*').eq('business_id', businessId);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (recipesRes.data?.length) await safeBulkPut(db.recipe_ingredients as never, recipesRes.data.map((r: any) => ({ ...r, sync_status: 'synced' as const })));
+        }
+
+        // 7. Anclar la hora del servidor (anti-truco-del-reloj) y verificar trial.
+        // fetchServerTime fija el HWM a la hora real del servidor y marca la
+        // última validación (resuelve el candado de revalidación offline).
+        try { await fetchServerTime(); } catch { /* offline: se usa el HWM local */ }
         const freshSettings = await db.settings.toArray();
         if (freshSettings.length > 0) {
             const cfg = freshSettings[0];
             if (cfg.status === 'trial' && cfg.subscription_expires_at) {
-                if (new Date() > new Date(cfg.subscription_expires_at)) {
+                // Tiempo confiable (no el reloj del teléfono) para el aviso de Layout.
+                if (getTrustedNow() > new Date(cfg.subscription_expires_at).getTime()) {
                     window.dispatchEvent(new CustomEvent('nexus-trial-expired'));
                 }
             }
