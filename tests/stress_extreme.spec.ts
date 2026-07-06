@@ -14,6 +14,17 @@ const ADMIN = {
 
 test.describe.serial('NEXUS POS – STRESS v2', () => {
 
+  // Este suite es una prueba de integración/estrés contra un backend real:
+  // registra un negocio, lo aprueba con una cuenta de superadmin y opera ventas.
+  // Requiere credenciales reales (ADMIN_EMAIL/ADMIN_PASS y un Supabase real vía
+  // VITE_SUPABASE_*). Sin ellas no puede pasar, así que se omite en lugar de fallar.
+  test.beforeEach(() => {
+    test.skip(
+      !process.env.ADMIN_EMAIL || !process.env.ADMIN_PASS,
+      'Requiere backend real: define ADMIN_EMAIL y ADMIN_PASS (y credenciales Supabase reales) para ejecutarlo.'
+    );
+  });
+
   test('SETUP: crear negocio e inventario', async ({ browser }) => {
     const page = await browser.newPage();
 
