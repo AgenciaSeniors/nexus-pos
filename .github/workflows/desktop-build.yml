@@ -1,0 +1,64 @@
+name: Desktop Build (Windows)
+
+# Construye el instalador de escritorio para PC (Windows / NSIS) con electron-builder.
+# Se ejecuta en un runner de Windows con acceso completo a la red, que es capaz de
+# descargar el binario de Electron y las herramientas de empaquetado (NSIS, winCodeSign).
+# El instalador resultante queda disponible como artefacto descargable del workflow.
+
+on:
+  # Ejecución manual desde la pestaña Actions de GitHub.
+  workflow_dispatch:
+  # Al publicar un tag de versión (p.ej. v1.4.0) se genera el instalador automáticamente.
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    name: Build Windows Installer
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web bundle + Windows installer
+        run: npm run electron:build
+        env:
+          # Variables públicas anon — necesarias para que vite no falle en el build.
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://placeholder.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder' }}
+          # Evita reintentos innecesarios de firma de código (no firmamos aquí).
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # Token de electron-builder para descargar binarios de GitHub sin rate limit.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-pos-windows-installer
+          path: |
+            release/*.exe
+            release/*.blockmap
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach installer to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.exe
+            release/*.blockmap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
