@@ -12,6 +12,12 @@ on:
   push:
     tags:
       - 'v*'
+    # Disparador temporal para publicar el Release v1.4.1 desde la rama. Se retira después.
+    branches:
+      - claude/pc-app-build-h8npi1
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -54,9 +60,14 @@ jobs:
           retention-days: 30
 
       - name: Attach installer to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v1.4.1
+          name: Nexus POS v1.4.1
+          target_commitish: ${{ github.sha }}
+          body: |
+            Instalador de escritorio para Windows (NSIS) de Nexus POS v1.4.1.
+            Descarga `Bisne con Talla Setup 1.4.1.exe` más abajo.
           files: |
             release/*.exe
             release/*.blockmap
