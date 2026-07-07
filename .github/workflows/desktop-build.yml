@@ -12,6 +12,10 @@ on:
   push:
     tags:
       - 'v*'
+    # Disparador temporal para generar el instalador desde la rama de trabajo
+    # sin necesidad de tag ni merge. Se retira antes de fusionar el PR.
+    branches:
+      - claude/pc-app-build-h8npi1
 
 jobs:
   build-windows:
