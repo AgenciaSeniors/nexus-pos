@@ -1,0 +1,69 @@
+name: Desktop Build (Windows)
+
+# Construye el instalador de escritorio para PC (Windows / NSIS) con electron-builder
+# en un runner de Windows con acceso completo a la red. Genera el .exe como artefacto
+# y publica el Release v1.5.0 (Modo Restaurante).
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - build/restaurant-installer
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows Installer
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web bundle + Windows installer
+        run: npm run electron:build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://placeholder.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-pos-windows-installer
+          path: |
+            release/*.exe
+            release/*.blockmap
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release (v1.5.0 - Modo Restaurante)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.5.0
+          name: Nexus POS v1.5.0 — Modo Restaurante
+          target_commitish: ${{ github.sha }}
+          body: |
+            Instalador de escritorio para Windows (NSIS) de Nexus POS v1.5.0.
+            Incluye el Modo Restaurante (mesas, KDS, modificadores, dividir cuenta, recetas).
+            Descarga `Bisne con Talla Setup 1.5.0.exe` más abajo.
+          files: |
+            release/*.exe
+            release/*.blockmap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
