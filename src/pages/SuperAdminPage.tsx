@@ -449,8 +449,16 @@ export function SuperAdminPage() {
         setShowNewPassword(false);
 
     } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : "Error desconocido";
         console.error(err);
+        const raw = err instanceof Error ? err.message : String(err ?? '');
+        const code = (err as { code?: string } | null)?.code;
+
+        let msg = raw || "Error desconocido";
+        if (/failed to fetch|network|load failed/i.test(raw)) {
+            msg = "No se pudo conectar con el servidor. Revisa tu conexión a internet e inténtalo de nuevo.";
+        } else if (code === 'PGRST202' || /reset_user_password/i.test(raw)) {
+            msg = "La función 'reset_user_password' no está instalada en la base de datos. Aplica la migración supabase/migrations/20260712000000_reset_user_password.sql.";
+        }
         toast.error("Error al restablecer: " + msg);
     } finally {
         setLoading(false);
