@@ -254,13 +254,14 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
       if (!email) return toast.error("Por favor, ingresa tu correo electrónico");
       setLoading(true);
       try {
-          // Envía un código de 6 dígitos al correo. La plantilla "Reset Password"
-          // de Supabase debe incluir {{ .Token }}. No usamos enlace porque la app
-          // es solo-APK y no hay sitio web a donde abrir el enlace.
+          // Envía un código al correo (8 dígitos, según la config de OTP del
+          // proyecto). La plantilla "Reset Password" de Supabase debe incluir
+          // {{ .Token }}. No usamos enlace porque la app es solo-APK y no hay
+          // sitio web a donde abrir el enlace.
           const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
           if (error) throw error;
           setOtpCode('');
-          toast.success("Te enviamos un código de 6 dígitos a tu correo. Revisa tu bandeja y la carpeta de spam.");
+          toast.success("Te enviamos un código de 8 dígitos a tu correo. Revisa tu bandeja y la carpeta de spam.");
           setMode('otp');
       } catch (err) {
           toast.error(err instanceof Error ? err.message : "No se pudo enviar el código. Intenta de nuevo.");
@@ -274,7 +275,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
   // verifyOtp no haga que la app entre sola antes de cambiar la clave.
   const handleVerifyOtp = async (e?: React.FormEvent) => {
       e?.preventDefault();
-      if (otpCode.trim().length < 6) return toast.error("Ingresa el código de 6 dígitos que te llegó al correo");
+      if (otpCode.trim().length < 8) return toast.error("Ingresa el código de 8 dígitos que te llegó al correo");
       if (password.length < 8) return toast.error("La nueva contraseña debe tener al menos 8 caracteres");
       setLoading(true);
       onRegistrationStart();
@@ -416,15 +417,15 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
 
               {mode === 'otp' && (
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Código de 6 dígitos</label>
+                  <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Código de 8 dígitos</label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
                     <input
-                      type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} required
-                      className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-mono tracking-[0.5em] text-center text-lg text-[#1F2937]"
-                      placeholder="••••••"
+                      type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={8} required
+                      className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-mono tracking-[0.4em] text-center text-lg text-[#1F2937]"
+                      placeholder="••••••••"
                       value={otpCode}
-                      onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
                     />
                   </div>
                 </div>
