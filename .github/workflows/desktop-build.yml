@@ -38,8 +38,12 @@ jobs:
       - name: Build web bundle + Windows installer
         run: npm run electron:build
         env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://placeholder.supabase.co' }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder' }}
+          # Credenciales públicas (anon) reales del proyecto POS, embebidas al
+          # compilar — igual que en android-apk.yml. Sin esto el instalador
+          # apuntaba a placeholder.supabase.co y toda petición fallaba con
+          # "Failed to fetch". Si defines los secrets del repo, tienen prioridad.
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://ypbajygoqqgaurikuctd.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlwYmFqeWdvcXFnYXVyaWt1Y3RkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc4ODkxMDYsImV4cCI6MjA4MzQ2NTEwNn0.YgpUm8tE6rgcvdUG85-7H8nXWNt6oYMZq-4G6LBELRk' }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
