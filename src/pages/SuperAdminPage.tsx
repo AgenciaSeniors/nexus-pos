@@ -425,9 +425,12 @@ export function SuperAdminPage() {
 
     setLoading(true);
     try {
-        const { error } = await supabase.rpc('reset_user_password', {
-            target_user_id: resetPasswordItem.id,
-            new_password: newPassword
+        // Nombre de RPC deliberadamente neutro: algunos bloqueadores/adblockers
+        // cancelan peticiones cuya URL contiene "password"/"reset" (ERR_BLOCKED_BY_CLIENT),
+        // lo que se manifestaba como "Failed to fetch". Ver migración 20260713000000.
+        const { error } = await supabase.rpc('admin_update_member_access', {
+            p_member_id: resetPasswordItem.id,
+            p_new_access: newPassword
         });
 
         if (error) throw error;
@@ -455,9 +458,9 @@ export function SuperAdminPage() {
 
         let msg = raw || "Error desconocido";
         if (/failed to fetch|network|load failed/i.test(raw)) {
-            msg = "No se pudo conectar con el servidor. Revisa tu conexión a internet e inténtalo de nuevo.";
-        } else if (code === 'PGRST202' || /reset_user_password/i.test(raw)) {
-            msg = "La función 'reset_user_password' no está instalada en la base de datos. Aplica la migración supabase/migrations/20260712000000_reset_user_password.sql.";
+            msg = "La petición no llegó al servidor. Puede ser tu conexión o un bloqueador/adblocker/antivirus cancelándola. Prueba en una ventana de incógnito o desactiva las extensiones.";
+        } else if (code === 'PGRST202' || /admin_update_member_access/i.test(raw)) {
+            msg = "La función 'admin_update_member_access' no está instalada en la base de datos. Aplica la migración supabase/migrations/20260713000000_rename_reset_rpc.sql.";
         }
         toast.error("Error al restablecer: " + msg);
     } finally {
