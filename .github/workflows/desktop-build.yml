@@ -11,6 +11,7 @@ on:
       - 'v*'
     branches:
       - build/restaurant-installer
+      - claude/reset-fix-v1.5.0
 
 permissions:
   contents: write
@@ -53,6 +54,9 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub Release (v1.5.0 - Modo Restaurante)
+        # Solo publica el Release oficial desde un tag v* (no desde ramas de
+        # trabajo como claude/reset-fix-v1.5.0, que solo generan el artefacto).
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.5.0
