@@ -71,7 +71,9 @@ jobs:
         run: npm ci
 
       - name: Build Electron (Windows installer)
-        run: npm run electron:build
+        # --publish never: solo empaquetar, no subir a un release de GitHub
+        # (en CI electron-builder intenta publicar y falla por falta de GH_TOKEN).
+        run: npm run electron:build -- --publish never
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
