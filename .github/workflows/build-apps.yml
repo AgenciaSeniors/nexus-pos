@@ -1,0 +1,81 @@
+name: Build apps (Android APK + Electron Windows)
+
+# Compila los binarios en la nube (GitHub tiene Android SDK y Windows).
+# Se ejecuta al hacer push a la rama del arreglo y también manualmente
+# (Actions -> "Build apps" -> Run workflow). Los binarios quedan como
+# artefactos descargables al final de cada ejecución.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/password-reset-fetch-error-jqrnt2
+
+# Variables públicas del cliente (la anon key va en el bundle, no es secreta).
+# Si defines secrets con el mismo nombre, tienen prioridad.
+env:
+  VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://ypbajygoqqgaurikuctd.supabase.co' }}
+  VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlwYmFqeWdvcXFnYXVyaWt1Y3RkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc4ODkxMDYsImV4cCI6MjA4MzQ2NTEwNn0.YgpUm8tE6rgcvdUG85-7H8nXWNt6oYMZq-4G6LBELRk' }}
+
+jobs:
+  android:
+    name: Android APK (debug)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web assets
+        run: npm run build
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  electron:
+    name: Electron Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Electron (Windows installer)
+        run: npm run electron:build
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: release/*.exe
+          if-no-files-found: error
