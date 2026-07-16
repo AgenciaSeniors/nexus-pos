@@ -831,7 +831,13 @@ function BusinessApp() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (!mounted) return;
       
-      if (event === 'PASSWORD_RECOVERY') setRecoveryMode(true);
+      // El flujo de código OTP (handleVerifyOtp) ya cambia la contraseña él
+      // mismo y activa isRegisteringRef; en ese caso NO mostramos la pantalla
+      // de recuperación redundante (evita el doble "Nueva Contraseña" y el
+      // error "New password should be different from the old password").
+      // La pantalla UpdatePasswordScreen queda solo para recuperación por
+      // enlace (type=recovery en la URL), donde isRegisteringRef es false.
+      if (event === 'PASSWORD_RECOVERY' && !isRegisteringRef.current) setRecoveryMode(true);
 
       if (event === 'SIGNED_IN' && newSession) {
         // Ignorar eventos durante el flujo de registro
