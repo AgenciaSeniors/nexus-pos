@@ -270,25 +270,22 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
       }
   };
 
-  // Verifica el código y fija la nueva contraseña. Reutiliza la guarda de
-  // registro (onRegistrationStart/End) para que el SIGNED_IN que dispara
-  // verifyOtp no haga que la app entre sola antes de cambiar la clave.
+  // Paso 1: verifica el código de 8 dígitos. Si es válido, verifyOtp abre una
+  // sesión de recuperación y emite PASSWORD_RECOVERY, que muestra la pantalla
+  // "Nueva Contraseña" (paso 2). Aquí NO se cambia la clave.
+  // La guarda onRegistrationStart/End silencia el SIGNED_IN que dispara
+  // verifyOtp para que la app no entre sola antes de fijar la nueva contraseña.
   const handleVerifyOtp = async (e?: React.FormEvent) => {
       e?.preventDefault();
       if (otpCode.trim().length < 8) return toast.error("Ingresa el código de 8 dígitos que te llegó al correo");
-      if (password.length < 8) return toast.error("La nueva contraseña debe tener al menos 8 caracteres");
       setLoading(true);
       onRegistrationStart();
       try {
           const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token: otpCode.trim(), type: 'recovery' });
           if (error) throw error;
-          const { error: updErr } = await supabase.auth.updateUser({ password });
-          if (updErr) throw updErr;
-          await supabase.auth.signOut();
           setOtpCode('');
-          setPassword('');
-          setMode('login');
-          toast.success("¡Contraseña actualizada! Ya puedes iniciar sesión con tu nueva contraseña.");
+          // No hacemos nada más: el evento PASSWORD_RECOVERY abre la pantalla
+          // "Nueva Contraseña" para fijar la clave.
       } catch (err) {
           toast.error(err instanceof Error ? err.message : "Código inválido o expirado. Pide uno nuevo.");
       } finally {
@@ -369,7 +366,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 {mode === 'login' ? 'Iniciar Sesión' : (mode === 'forgot' || mode === 'otp') ? 'Recuperar Contraseña' : 'Crear Cuenta'}
             </h2>
             <p className="text-[#6B7280] mb-8 text-sm hidden md:block">
-                {mode === 'login' ? 'Ingresa tus credenciales para acceder' : mode === 'forgot' ? 'Escribe tu correo y te enviaremos un código para restablecerla.' : mode === 'otp' ? 'Escribe el código que te enviamos y tu nueva contraseña.' : 'Completa los datos de tu negocio'}
+                {mode === 'login' ? 'Ingresa tus credenciales para acceder' : mode === 'forgot' ? 'Escribe tu correo y te enviaremos un código para restablecerla.' : mode === 'otp' ? 'Escribe el código de 8 dígitos que te enviamos a tu correo.' : 'Completa los datos de tu negocio'}
             </p>
 
             <form onSubmit={mode === 'login' ? handleLogin : mode === 'register' ? handleRegister : mode === 'otp' ? handleVerifyOtp : handleForgotPassword} className="space-y-4">
@@ -431,9 +428,9 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 </div>
               )}
 
-              {mode !== 'forgot' && (
+              {(mode === 'login' || mode === 'register') && (
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">{mode === 'otp' ? 'Nueva contraseña' : 'Contraseña'}</label>
+                    <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Contraseña</label>
                     <div className="relative">
                       <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
                       <input type={showPassword ? 'text' : 'password'} required className="w-full pl-10 pr-11 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
@@ -460,7 +457,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 {loading && <Loader2 className="animate-spin w-5 h-5" />}
                 {mode === 'login' && lockoutStatus.isLocked
                   ? `Bloqueado · ${formatLockoutTime(lockoutStatus.secondsLeft)}`
-                  : mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? 'Enviar código' : mode === 'otp' ? 'Cambiar contraseña' : 'Registrar Negocio'}
+                  : mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? 'Enviar código' : mode === 'otp' ? 'Verificar código' : 'Registrar Negocio'}
                 {!loading && mode !== 'forgot' && !(mode === 'login' && lockoutStatus.isLocked) && <ArrowRight className="w-5 h-5" />}
               </button>
             </form>
@@ -831,13 +828,12 @@ function BusinessApp() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (!mounted) return;
       
-      // El flujo de código OTP (handleVerifyOtp) ya cambia la contraseña él
-      // mismo y activa isRegisteringRef; en ese caso NO mostramos la pantalla
-      // de recuperación redundante (evita el doble "Nueva Contraseña" y el
-      // error "New password should be different from the old password").
-      // La pantalla UpdatePasswordScreen queda solo para recuperación por
-      // enlace (type=recovery en la URL), donde isRegisteringRef es false.
-      if (event === 'PASSWORD_RECOVERY' && !isRegisteringRef.current) setRecoveryMode(true);
+      // Recuperación en DOS pasos: al verificar el código, verifyOtp emite
+      // PASSWORD_RECOVERY → mostramos la pantalla "Nueva Contraseña"
+      // (UpdatePasswordScreen, paso 2). El SIGNED_IN que también dispara
+      // verifyOtp se ignora vía isRegisteringRef para no entrar a la app antes
+      // de fijar la nueva clave.
+      if (event === 'PASSWORD_RECOVERY') setRecoveryMode(true);
 
       if (event === 'SIGNED_IN' && newSession) {
         // Ignorar eventos durante el flujo de registro
