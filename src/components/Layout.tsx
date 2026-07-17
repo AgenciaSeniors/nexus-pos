@@ -356,7 +356,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
           )}
         </div>
 
-        <nav className="flex-1 flex flex-col gap-4 w-full px-3">
+        <nav className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 w-full px-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {menuItems.filter(i => i.show).map((item) => {
             const isActive = location.pathname === item.path;
             const showInventoryBadge = item.path === '/inventario' && inventoryAlertCount > 0;
@@ -391,7 +391,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
           })}
         </nav>
 
-        <div className="flex flex-col gap-3 w-full px-3 mt-4 border-t border-white/10 pt-6">
+        <div className="shrink-0 flex flex-col gap-3 w-full px-3 mt-4 border-t border-white/10 pt-6">
             <button onClick={() => setIsBillCounterOpen(true)} className="p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group border bg-white/5 hover:bg-[#7AC142]/15 text-gray-300 hover:text-[#7AC142] border-white/5" title="Contador de Efectivo">
                 <Calculator size={20} />
                 <span className="absolute left-full ml-4 px-3 py-2 bg-[#1F2937] text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 shadow-xl font-bold uppercase tracking-wide border border-gray-700">
