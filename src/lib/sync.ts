@@ -26,7 +26,7 @@ import {
   type RecipeIngredient
 } from './db';
 import { supabase } from './supabase';
-import { fetchServerTime, getTrustedNow } from './licenseClock';
+import { fetchServerTime, getTrustedNow, getServerNow } from './licenseClock';
 import type { Table } from 'dexie';
 import {
   filterRemoteItemsForBulkPut,
@@ -60,6 +60,30 @@ function getLastHeavySyncTimestamp(): number {
 
 function setLastHeavySyncTimestamp() {
   localStorage.setItem(LAST_HEAVY_SYNC_KEY, Date.now().toString());
+}
+
+// ─── WATERMARK DEL PULL INCREMENTAL (hora de SERVIDOR) ───────────────────────
+// fetchSince compara `updated_at > watermark`, y updated_at lo escribe el
+// SERVIDOR (trigger set_updated_at). Si el watermark saliera del reloj del
+// dispositivo (Date.now) y este fuera adelantado respecto al servidor, los
+// cambios remotos recientes quedarían "por debajo" del watermark y NUNCA se
+// descargarían. Por eso el watermark se ancla a la hora del servidor
+// (getServerNow, estimada desde el RPC get_server_time + reloj monotónico).
+// LAST_SYNC_KEY se mantiene aparte con hora local SOLO para mostrar
+// "última sincronización hace X" en la UI.
+const SYNC_WATERMARK_KEY = 'nexus_sync_watermark';
+// Solapamiento de seguridad: en cada ciclo se re-descargan estos ms ya vistos.
+// Cubre el error residual de la estimación de hora de servidor y los commits
+// con updated_at idéntico al watermark. Re-bajar filas repetidas es inocuo:
+// safeBulkPut es idempotente.
+const WATERMARK_OVERLAP_MS = 2 * 60_000;
+
+function getSyncWatermark(): number {
+  return parseInt(localStorage.getItem(SYNC_WATERMARK_KEY) || '0');
+}
+
+function setSyncWatermark(ms: number) {
+  localStorage.setItem(SYNC_WATERMARK_KEY, String(Math.floor(ms)));
 }
 
 export function isOnline() {
@@ -356,7 +380,8 @@ async function processItem(item: QueueItem) {
     }
     case 'KITCHEN_STATUS': {
       // El KDS marca el estado de cocina. El RPC solo actualiza columnas de cocina y
-      // descarta escrituras viejas comparando item_updated_at (guard de concurrencia).
+      // descarta escrituras viejas comparando kitchen_updated_at (guard KDS-vs-KDS,
+      // alimentado por este item_updated_at; ver 20260722000000_offline_sync_hardening.sql).
       const { item_id, business_id, kitchen_status, item_updated_at } = payload as KitchenStatusPayload;
       const { error } = await supabase.rpc('set_kitchen_status', {
         p_item_id: item_id,
@@ -645,7 +670,12 @@ async function fetchAll(table: string, businessId: string) {
 
     // eslint-disable-next-line no-constant-condition
     while(true) {
-        const { data, error } = await supabase.from(table).select('*').eq('business_id', businessId).range(page * size, (page + 1) * size - 1);
+        // order('id'): sin ORDER BY, PostgREST no garantiza orden estable entre
+        // páginas y el .range() puede saltarse o duplicar filas con >1000 registros.
+        const { data, error } = await supabase.from(table).select('*')
+            .eq('business_id', businessId)
+            .order('id')
+            .range(page * size, (page + 1) * size - 1);
         if (error) throw error;
         if (!data || data.length === 0) break;
 
@@ -660,20 +690,24 @@ async function fetchAll(table: string, businessId: string) {
 // Si since=0 (nunca se ha sincronizado), hace un fetchAll completo.
 // Esto reduce drásticamente el tráfico en el ciclo de 30s cuando hay muchos productos.
 async function fetchSince(table: string, businessId: string, since: number) {
-    if (since === 0) return fetchAll(table, businessId);
+    // Solapamiento de seguridad (ver WATERMARK_OVERLAP_MS)
+    const effectiveSince = Math.max(0, since - WATERMARK_OVERLAP_MS);
+    if (effectiveSince === 0) return fetchAll(table, businessId);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const allData: any[] = [];
-    const sinceIso = new Date(since).toISOString();
+    const sinceIso = new Date(effectiveSince).toISOString();
     let page = 0;
     const size = 1000;
 
     // eslint-disable-next-line no-constant-condition
     while(true) {
+        // order('id'): paginación estable (ver fetchAll)
         const { data, error } = await supabase
             .from(table).select('*')
             .eq('business_id', businessId)
             .gt('updated_at', sinceIso)
+            .order('id')
             .range(page * size, (page + 1) * size - 1);
         if (error) throw error;
         if (!data || data.length === 0) break;
@@ -898,6 +932,12 @@ export async function syncLiveData() {
     const businessId = settings[0].id;
 
     try {
+        // Candidato a watermark capturado ANTES de los pulls: lo que cambie en el
+        // servidor DURANTE este ciclo queda por encima y se baja en el siguiente.
+        // Anclado a hora de servidor; fallback a hora local solo si aún no hay
+        // ancla (primer ciclo tras abrir la app, antes de fetchServerTime).
+        const watermarkCandidate = getServerNow() ?? Date.now();
+
         // 1. Turno abierto actual (puede haber sido abierto/cerrado desde otro dispositivo)
         const { data: shiftData } = await supabase
             .from('cash_shifts')
@@ -976,7 +1016,7 @@ export async function syncLiveData() {
         // NOTA: el orphan cleanup (borrar locales que ya no existen en la nube) NO se hace
         // aquí porque con pull incremental no tenemos el set completo de IDs remotos.
         // El orphan cleanup vive en syncHeavyData (login + sync manual), donde sí hay fetchAll.
-        const lastSync = getLastSyncTimestamp();
+        const lastSync = getSyncWatermark();
         const productsData = await fetchSince('products', businessId, lastSync);
 
         if (productsData.length > 0) {
@@ -1089,7 +1129,10 @@ export async function syncLiveData() {
         }
 
         // Mejora 2: Registrar timestamp de última sincronización exitosa
+        // (hora local, solo para la UI) y avanzar el watermark del pull
+        // incremental (hora de servidor, para fetchSince).
         setLastSyncTimestamp();
+        setSyncWatermark(watermarkCandidate);
     } catch (error) {
         // Silencioso: no interrumpir la app si falla el pull en background
         console.error('syncLiveData error:', error);

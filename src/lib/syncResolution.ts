@@ -190,8 +190,13 @@ export function isTransientError(errorMessage: string): boolean {
     m.includes('err_network') ||
     m.includes('err_internet_disconnected') ||
     m.includes('err_connection') ||
+    m.includes('502') ||                       // bad gateway (proxy/servidor caído)
     m.includes('503') ||                       // servidor temporalmente no disponible
     m.includes('504') ||                       // gateway timeout
+    m.includes('bad gateway') ||
+    m.includes('408') ||                       // request timeout
+    m.includes('429') ||                       // rate limit: reintentar con backoff
+    m.includes('too many requests') ||
     m.includes('upstream')
   );
 }

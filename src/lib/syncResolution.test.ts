@@ -402,6 +402,14 @@ describe('isTransientError', () => {
   it('detecta errores de servidor temporal (5xx)', () => {
     expect(isTransientError('503 Service Unavailable')).toBe(true);
     expect(isTransientError('504 Gateway Timeout')).toBe(true);
+    expect(isTransientError('502 Bad Gateway')).toBe(true);
+    expect(isTransientError('Bad Gateway')).toBe(true);
+  });
+
+  it('detecta rate limit y request timeout como transitorios', () => {
+    expect(isTransientError('429 Too Many Requests')).toBe(true);
+    expect(isTransientError('Too many requests, please retry later')).toBe(true);
+    expect(isTransientError('408 Request Timeout')).toBe(true);
   });
 
   it('NO marca como transitorio errores permanentes de base de datos', () => {

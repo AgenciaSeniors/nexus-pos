@@ -7,6 +7,29 @@ sigue [Semantic Versioning](https://semver.org/lang/es/).
 
 ---
 
+## [Unreleased] — Endurecimiento de sincronización offline (2026-07-22)
+
+Correcciones de la auditoría de offline/sync (migración `20260722000000_offline_sync_hardening.sql`, **aplicar en el SQL Editor de Supabase**).
+
+### 🔒 Seguridad
+- **Validación de tenant en `process_sale_transaction` y `add_loyalty_points`**: ambos RPC son `SECURITY DEFINER` (saltan RLS) y aceptaban el `business_id` del payload sin verificar — un usuario autenticado podía crear ventas, descontar stock o alterar puntos de OTRO negocio. Ahora rechazan con `42501` como ya hacían los RPC de restaurante.
+
+### 🐛 Bugs corregidos
+- **CRÍTICO — Venta en conflicto de stock jamás descontaba inventario al resolverse**: el guard de idempotencia de `process_sale_transaction` cortaba el reintento con `already_processed` antes de descontar. Ahora el reintento de una venta en `stock_conflict` re-verifica stock, lo descuenta y completa la venta de forma atómica (con reclamo por fila para reintentos concurrentes de dos dispositivos).
+- **`updated_at` ahora lo mantiene el SERVIDOR en todas las tablas sincronizadas** (trigger `BEFORE INSERT OR UPDATE`): antes las tablas retail no tenían trigger y el cliente subía su propio reloj — un dispositivo con hora atrasada producía cambios que los demás nunca descargaban (el pull incremental filtra por `updated_at > watermark`).
+- **Watermark del pull incremental anclado a hora de servidor** (`getServerNow()` en `licenseClock` + clave `nexus_sync_watermark`): antes se usaba `Date.now()` local — un reloj adelantado dejaba cambios remotos "por debajo" del watermark para siempre. Con solapamiento de seguridad de 2 min por ciclo.
+- **Paginación estable en `fetchAll`/`fetchSince`** (`order('id')`): sin `ORDER BY`, PostgREST no garantiza orden entre páginas y con >1000 filas podían perderse o duplicarse registros.
+- **`close_comanda` ya no puede descontar stock dos veces**: el descuento estaba protegido solo por el `idempotency_key`; un key regenerado (re-cierre) volvía a descontar. Ahora bloquea la fila de la comanda y una comanda `closed` retorna `already_closed` sin tocar inventario.
+- **`set_kitchen_status` implementa de verdad el guard anti-escrituras-viejas** que el cliente asumía: nueva columna `kitchen_updated_at` (solo KDS-vs-KDS, sin mezclar el reloj del mesero) — un reintento offline con timestamp viejo ya no pisa un estado de cocina más nuevo.
+- **`add_loyalty_points`: reclamo atómico del idempotency key** (INSERT `ON CONFLICT` en vez de SELECT+UPDATE): dos llamadas concurrentes con el mismo key ya no aplican el delta dos veces.
+- **`process_sale_transaction` ya no enmascara el SQLSTATE**: se eliminó el `EXCEPTION WHEN OTHERS` que convertía un `23505` (duplicado, idempotencia) en `P0001` genérico.
+- **Realtime (KDS): los eventos DELETE ya no corrompen la fila local**: `payload.old` solo trae la PK y al aplicarse con `bulkPut` reemplazaba la comanda completa por un esqueleto `{id}`. Ahora solo se aplican INSERT/UPDATE (`payload.new`).
+- **`isTransientError` reconoce 502/429/408** (y "bad gateway"/"too many requests"): una caída temporal del servidor ya no manda ventas válidas a `failed` tras 5 reintentos.
+- **Indicador "Conexión a Internet" de Ajustes reactivo**: escucha `online`/`offline` en vivo (antes se evaluaba una sola vez por render).
+
+### 🗄️ Infraestructura
+- **Consolidación de migraciones**: `processed_mutations` y los RPC críticos de idempotencia ahora también viven en `supabase/migrations/` (antes solo en `db-migrations/` como scripts manuales sueltos).
+
 ## [Unreleased] — Endurecimiento post-v1.4.0
 
 ### 🔒 Seguridad
