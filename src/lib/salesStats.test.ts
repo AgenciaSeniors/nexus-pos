@@ -258,3 +258,138 @@ describe('compareValues', () => {
     expect(d.direction).toBe('flat');
   });
 });
+
+// =============================================================================
+// computeSaleNet / computeKpis — devoluciones parciales netas
+// =============================================================================
+describe('computeKpis — devoluciones parciales descuentan de los reportes', () => {
+  it('resta el dinero devuelto del ingreso, costo y ganancia', () => {
+    // Venta $100 (2 × $50, costo $20 c/u); devolución de 1 unidad ($50)
+    const sale = makeSale({
+      total: 100,
+      status: 'partial_refund',
+      items: [makeItem({ product_id: 'p1', price: 50, quantity: 2, cost: 20 })],
+      refunded_items: [{ product_id: 'p1', name: 'Producto', quantity: 1, amount: 50, date: new Date().toISOString() }],
+    });
+    const k = computeKpis([sale], [makeProduct({ id: 'p1' })]);
+    expect(k.revenue).toBe(50);   // 100 − 50
+    expect(k.cost).toBe(20);      // 40 − 20
+    expect(k.profit).toBe(30);
+  });
+
+  it('resta lo devuelto del desglose por método de pago (efectivo)', () => {
+    const sale = makeSale({
+      total: 100,
+      payment_method: 'efectivo',
+      status: 'partial_refund',
+      items: [makeItem({ product_id: 'p1', price: 50, quantity: 2 })],
+      refunded_items: [{ product_id: 'p1', name: 'Producto', quantity: 1, amount: 50, date: new Date().toISOString() }],
+    });
+    const k = computeKpis([sale], []);
+    expect(k.paymentBreakdown.efectivo).toBe(50);
+  });
+
+  it('venta mixta: el reembolso consume primero el efectivo y el resto la transferencia', () => {
+    // $100 = $40 efectivo + $60 transferencia; devuelto $80
+    const sale = makeSale({
+      total: 100,
+      payment_method: 'mixto',
+      cash_amount: 40,
+      transfer_amount: 60,
+      status: 'partial_refund',
+      items: [makeItem({ product_id: 'p1', price: 100, quantity: 1 })],
+      refunded_items: [{ product_id: 'p1', name: 'Producto', quantity: 1, amount: 80, date: new Date().toISOString() }],
+    });
+    const k = computeKpis([sale], []);
+    expect(k.paymentBreakdown.efectivo).toBe(0);        // 40 − 40
+    expect(k.paymentBreakdown.transferencia).toBe(20);  // 60 − 40
+    expect(k.revenue).toBe(20);
+  });
+
+  it('resta cantidades devueltas de topProducts y categorías', () => {
+    const sale = makeSale({
+      total: 100,
+      status: 'partial_refund',
+      items: [makeItem({ product_id: 'p1', name: 'Ron', price: 50, quantity: 2 })],
+      refunded_items: [{ product_id: 'p1', name: 'Ron', quantity: 2, amount: 100, date: new Date().toISOString() }],
+    });
+    const k = computeKpis([sale], [makeProduct({ id: 'p1', category: 'Bebidas' })]);
+    // Todo devuelto → no aparece en top products y la categoría queda en 0
+    expect(k.topProducts).toEqual([]);
+    expect(k.byCategory.find(c => c.name === 'Bebidas')?.value).toBe(0);
+    expect(k.revenue).toBe(0);
+  });
+
+  it('inmutabilidad histórica: una devolución posterior al período no altera el reporte', () => {
+    const periodEnd = new Date('2026-01-10T23:59:59').getTime();
+    const sale = makeSale({
+      total: 100,
+      date: new Date('2026-01-10T12:00:00').toISOString(),
+      status: 'partial_refund',
+      items: [makeItem({ product_id: 'p1', price: 100, quantity: 1 })],
+      refunded_items: [{ product_id: 'p1', name: 'Producto', quantity: 1, amount: 100, date: '2026-01-15T10:00:00.000Z' }],
+    });
+    const k = computeKpis([sale], [], periodEnd);
+    expect(k.revenue).toBe(100); // al cierre del 10, la venta seguía completa
+    const kNow = computeKpis([sale], []);
+    expect(kNow.revenue).toBe(0); // sin período: refleja el estado actual
+  });
+
+  it('el monto devuelto nunca supera el total de la venta (data corrupta)', () => {
+    const sale = makeSale({
+      total: 50,
+      items: [makeItem({ product_id: 'p1', price: 50, quantity: 1 })],
+      refunded_items: [{ product_id: 'p1', name: 'Producto', quantity: 1, amount: 999, date: new Date().toISOString() }],
+    });
+    const k = computeKpis([sale], []);
+    expect(k.revenue).toBe(0); // clamp, no negativo
+  });
+
+  it('la suma del gráfico por hora coincide con el ingreso neto', () => {
+    const sale = makeSale({
+      total: 100,
+      date: new Date('2026-01-10T09:30:00').toISOString(),
+      status: 'partial_refund',
+      items: [makeItem({ product_id: 'p1', price: 50, quantity: 2 })],
+      refunded_items: [{ product_id: 'p1', name: 'Producto', quantity: 1, amount: 50, date: new Date().toISOString() }],
+    });
+    const k = computeKpis([sale], []);
+    const hourlySum = k.hourly.reduce((s, h) => s + h.total, 0);
+    expect(hourlySum).toBe(k.revenue);
+  });
+});
+
+describe('computeKpis — custom_price y métodos desconocidos', () => {
+  it('usa custom_price para ingreso por producto/categoría (consistente con el total)', () => {
+    const sale = makeSale({
+      total: 30,
+      items: [makeItem({ product_id: 'p1', name: 'Ron', price: 10, custom_price: 15, quantity: 2 })],
+    });
+    const k = computeKpis([sale], [makeProduct({ id: 'p1', category: 'Bebidas' })]);
+    expect(k.byCategory[0].value).toBe(30); // 15×2, no 10×2
+    expect(k.topProducts[0].revenue).toBe(30);
+  });
+
+  it('métodos de pago desconocidos no desaparecen del desglose', () => {
+    const sale = makeSale({ total: 40, payment_method: 'cheque' as Sale['payment_method'] });
+    const k = computeKpis([sale], []);
+    const sum = k.paymentBreakdown.efectivo + k.paymentBreakdown.transferencia + k.paymentBreakdown.tarjeta;
+    expect(sum).toBe(40);
+  });
+});
+
+describe('computeProductProfitability — devoluciones parciales', () => {
+  it('resta cantidad, ingreso y costo de lo devuelto', () => {
+    const sale = makeSale({
+      total: 100,
+      status: 'partial_refund',
+      items: [makeItem({ product_id: 'p1', name: 'Ron', price: 50, quantity: 2, cost: 20 })],
+      refunded_items: [{ product_id: 'p1', name: 'Ron', quantity: 1, amount: 50, date: new Date().toISOString() }],
+    });
+    const list = computeProductProfitability([sale], []);
+    expect(list[0].qty).toBe(1);
+    expect(list[0].revenue).toBe(50);
+    expect(list[0].cost).toBe(20);
+    expect(list[0].profit).toBe(30);
+  });
+});

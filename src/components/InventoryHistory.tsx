@@ -1,22 +1,30 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../lib/db';
-// ✅ CORRECCIÓN: Eliminados imports 'User' y 'History' que no se usaban
+import { round3 } from '../lib/recipe';
 import { ArrowUpRight, ArrowDownLeft, PackageSearch } from 'lucide-react';
 
 interface Props {
-  productId?: string | null; 
+  productId?: string | null;
 }
 
 export function InventoryHistory({ productId }: Props) {
   // 1. Consultamos los movimientos
   const historyData = useLiveQuery(async () => {
-    // ✅ CORRECCIÓN: Cambiado 'let' a 'const' porque no se reasigna
-    const collection = db.movements.orderBy('created_at').reverse();
-
-    let movements = await collection.limit(productId ? 500 : 100).toArray();
-
+    const businessId = localStorage.getItem('nexus_business_id');
+    let movements;
     if (productId) {
-        movements = movements.filter(m => m.product_id === productId);
+        // Consulta por índice del producto: el historial de un producto nunca
+        // queda oculto por el límite global de movimientos recientes.
+        movements = (await db.movements.where('product_id').equals(productId).toArray())
+            .sort((a, b) => b.created_at.localeCompare(a.created_at))
+            .slice(0, 500);
+    } else {
+        movements = await db.movements
+            .orderBy('created_at')
+            .reverse()
+            .filter(m => !businessId || m.business_id === businessId)
+            .limit(100)
+            .toArray();
     }
 
     const productIds = [...new Set(movements.map(m => m.product_id))];
@@ -98,7 +106,7 @@ export function InventoryHistory({ productId }: Props) {
                     }`}
                   >
                     {item.qty_change > 0 ? <ArrowUpRight size={12} /> : <ArrowDownLeft size={12} />}
-                    {item.qty_change > 0 ? '+' : ''}{item.qty_change}
+                    {item.qty_change > 0 ? '+' : ''}{round3(item.qty_change)}
                   </span>
                 </td>
                 

@@ -5,6 +5,7 @@ import { db, type Product, type Sale, type ParkedOrder, type SaleItem, type Staf
 import { addToQueue, syncPush, syncPull, isOnline, getLastSyncTimestamp } from '../lib/sync';
 import { currency } from '../lib/currency';
 import { logAuditAction } from '../lib/audit';
+import { round3 } from '../lib/recipe';
 import { TicketModal } from '../components/TicketModal';
 import { PaymentModal } from '../components/PaymentModal';
 import { ParkedOrdersModal } from '../components/ParkedOrdersModal';
@@ -467,7 +468,9 @@ export function PosPage() {
                         throw new Error(`Stock insuficiente para "${product.name}": disponible ${product.stock}, solicitado ${item.quantity}`);
                     }
                     await db.products.update(item.id, {
-                        stock: product.stock - item.quantity,
+                        // round3: cantidades fraccionarias (0.15 kg) acumulan
+                        // residuo binario si se resta sin redondear
+                        stock: round3(product.stock - item.quantity),
                         sync_status: 'pending_update'
                     });
                 }
@@ -790,7 +793,7 @@ export function PosPage() {
                             </div>
                             <div className="w-full flex justify-between items-end border-t border-gray-50 pt-2 mt-auto">
                                 <div className="text-xs text-text-secondary font-body">
-                                    Stock: <span className="font-bold text-text-main">{product.stock}</span>
+                                    Stock: <span className="font-bold text-text-main">{round3(product.stock)}</span>
                                 </div>
                                 <div className="text-lg font-bold text-talla-growth font-body">
                                     {currency.format(product.price)}
@@ -898,7 +901,7 @@ export function PosPage() {
                             </div>
                             <div className="flex items-center gap-1.5 flex-shrink-0">
                                 <div className="font-black text-text-main text-lg text-right whitespace-nowrap font-body">
-                                    {currency.format(effectivePrice * item.quantity)}
+                                    {currency.format(currency.multiply(effectivePrice, item.quantity))}
                                 </div>
                                 <button
                                     onClick={() => isEditing ? setEditingItemId(null) : openItemEditor(item)}

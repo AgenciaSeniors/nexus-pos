@@ -72,6 +72,10 @@ export function SplitBillModal({
   };
 
   const allPaid = Object.keys(paid).length === parts;
+  // Con la primera cuenta cobrada, la división queda BLOQUEADA: cambiar el
+  // modo, el número de partes o la asignación recalcularía los totales y la
+  // suma de las cuentas dejaría de coincidir con el total de la comanda.
+  const locked = Object.keys(paid).length > 0;
 
   return (
     <>
@@ -83,7 +87,7 @@ export function SplitBillModal({
             fullWidth
             aria-label="Modo de división"
             value={mode}
-            onChange={setMode}
+            onChange={(m) => { if (!locked) setMode(m); }}
             options={[
               { value: 'equal', label: 'Partes iguales', icon: <Users size={18} /> },
               { value: 'item', label: 'Por ítem', icon: <ListChecks size={18} /> },
@@ -93,10 +97,16 @@ export function SplitBillModal({
           {/* Número de cuentas */}
           <div className="flex items-center justify-between">
             <span className="text-sm font-bold text-[#6B7280]">Cuentas</span>
-            <Stepper value={parts} min={2} max={10} label="Número de cuentas"
-              onDecrement={() => setParts(p => Math.max(2, p - 1))}
-              onIncrement={() => setParts(p => Math.min(10, p + 1))} />
+            <Stepper value={parts} min={locked ? parts : 2} max={locked ? parts : 10} label="Número de cuentas"
+              onDecrement={() => { if (!locked) setParts(p => Math.max(2, p - 1)); }}
+              onIncrement={() => { if (!locked) setParts(p => Math.min(10, p + 1)); }} />
           </div>
+
+          {locked && !allPaid && (
+            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+              Ya hay cuentas cobradas: la división quedó fija para que la suma coincida con el total.
+            </p>
+          )}
 
           {/* Asignación por ítem */}
           {mode === 'item' && (
@@ -105,7 +115,7 @@ export function SplitBillModal({
                 <div key={it.id} className="flex items-center gap-2 p-2 rounded-xl bg-gray-50">
                   <span className="flex-1 min-w-0 text-sm font-bold text-[#1F2937] truncate">{it.quantity}× {it.name}</span>
                   <span className="text-xs text-[#6B7280]">${comandaItemTotal(it).toFixed(2)}</span>
-                  <select value={assignment[it.id] ?? ''} onChange={e => setAssignment(a => ({ ...a, [it.id]: Number(e.target.value) }))}
+                  <select value={assignment[it.id] ?? ''} disabled={locked} onChange={e => setAssignment(a => ({ ...a, [it.id]: Number(e.target.value) }))}
                     aria-label={`Asignar ${it.name} a una cuenta`}
                     className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white outline-none focus:ring-2 focus:ring-[#0B3B68]">
                     <option value="">—</option>

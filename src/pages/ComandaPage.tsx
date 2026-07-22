@@ -4,7 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type ComandaItem, type ComandaItemModifier, type Product, type Sale, type SaleItem, type Staff } from '../lib/db';
 import { addToQueue, syncPush } from '../lib/sync';
 import { comandaItemTotal, comandaTotal } from '../lib/comanda';
-import { computeStockDeductions } from '../lib/recipe';
+import { computeStockDeductions, round3 } from '../lib/recipe';
 import { currency } from '../lib/currency';
 import { logAuditAction } from '../lib/audit';
 import { PaymentModal } from '../components/PaymentModal';
@@ -199,7 +199,7 @@ export default function ComandaPage() {
           );
           for (const [pid, qty] of deductions) {
             const p = await db.products.get(pid);
-            if (p) await db.products.update(pid, { stock: p.stock - qty, sync_status: 'pending_update' });
+            if (p) await db.products.update(pid, { stock: round3(p.stock - qty), sync_status: 'pending_update' });
           }
           await db.comandas.update(comanda.id, { status: 'closed', closed_at: now, total: grandTotal, sale_ids: sales.map(s => s.id), sync_status: 'pending_update' });
           await db.restaurant_tables.update(comanda.table_id, { state: 'libre', current_comanda_id: null, sync_status: 'pending_update' });
