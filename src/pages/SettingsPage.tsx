@@ -38,7 +38,20 @@ export function SettingsPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
-  const onlineStatus = isOnline();
+  // Reactivo a cambios de red: antes se evaluaba una sola vez por render y la
+  // tarjeta "Conexión a Internet" (y los disabled de los botones de sync)
+  // quedaban desactualizados si la conexión cambiaba con la pantalla abierta.
+  const [onlineStatus, setOnlineStatus] = useState(isOnline());
+  useEffect(() => {
+    const goOnline = () => setOnlineStatus(true);
+    const goOffline = () => setOnlineStatus(false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
 
   const failedCount = useLiveQuery(
     () => db.action_queue.where('status').equals('failed').count(),

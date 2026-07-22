@@ -18,17 +18,21 @@ let onlineHandler: (() => void) | null = null;
 function subscribe(businessId: string) {
   channel = supabase
     .channel(`kds-${businessId}`)
+    // Solo payload.new (INSERT/UPDATE). En un DELETE, payload.old trae solo la
+    // PK (replica identity por defecto): aplicarlo con bulkPut reemplazaría la
+    // fila local completa por un esqueleto {id}. Los borrados físicos (que hoy
+    // no ocurren en comandas) convergen por el pull de 30s / heavy sync.
     .on('postgres_changes',
       { event: '*', schema: 'public', table: 'comanda_items', filter: `business_id=eq.${businessId}` },
       payload => {
-        const row = payload.new ?? payload.old;
-        if (row) applyRealtimeRow('comanda_items', row).catch(() => {});
+        const row = payload.new;
+        if (row && (row as { id?: string }).id) applyRealtimeRow('comanda_items', row).catch(() => {});
       })
     .on('postgres_changes',
       { event: '*', schema: 'public', table: 'comandas', filter: `business_id=eq.${businessId}` },
       payload => {
-        const row = payload.new ?? payload.old;
-        if (row) applyRealtimeRow('comandas', row).catch(() => {});
+        const row = payload.new;
+        if (row && (row as { id?: string }).id) applyRealtimeRow('comandas', row).catch(() => {});
       })
     .subscribe();
 }

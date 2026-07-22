@@ -1074,10 +1074,51 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return authorized ? <>{children}</> : <Navigate to="/admin-login" replace />;
 }
 
+/**
+ * Toasts de eventos del motor de sync, montados a nivel RAÍZ de la app.
+ * Antes vivían en Layout: un evento disparado antes de montar Layout (p.ej.
+ * un nexus-sync-failed del primer processQueue tras abrir la app) se perdía
+ * sin aviso. Aquí los listeners existen durante toda la vida de la app,
+ * junto al <Toaster>.
+ */
+function SyncEventToasts() {
+  useEffect(() => {
+    const handleStockAlert = (e: Event) => {
+      const { products } = (e as CustomEvent).detail;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const names = products.map((p: any) => p.name).join(', ');
+      toast.error(`Stock negativo detectado: ${names}. Revisa el inventario.`, { duration: 8000 });
+    };
+    const handleStockConflict = (e: Event) => {
+      const { items } = (e as CustomEvent).detail;
+      toast.warning(
+        items
+          ? `Conflicto de stock al sincronizar: ${items}. La venta quedó marcada para revisión.`
+          : 'Conflicto de stock al sincronizar. Revisa Finanzas > Historial.',
+        { duration: 10000 }
+      );
+    };
+    const handleSyncFailed = (e: Event) => {
+      const { type, error } = (e as CustomEvent).detail;
+      toast.error(`Sincronización fallida: ${type}. ${error?.includes('Failed to fetch') ? 'Sin conexión al servidor.' : error?.slice(0, 80) || 'Error desconocido.'}`, { duration: 8000 });
+    };
+    window.addEventListener('nexus-stock-alert', handleStockAlert);
+    window.addEventListener('nexus-stock-conflict', handleStockConflict);
+    window.addEventListener('nexus-sync-failed', handleSyncFailed);
+    return () => {
+      window.removeEventListener('nexus-stock-alert', handleStockAlert);
+      window.removeEventListener('nexus-stock-conflict', handleStockConflict);
+      window.removeEventListener('nexus-sync-failed', handleSyncFailed);
+    };
+  }, []);
+  return null;
+}
+
 export default function App() {
   return (
     <>
       <Toaster position="top-right" richColors />
+      <SyncEventToasts />
       <HashRouter>
         <Suspense fallback={<div className="flex items-center justify-center h-screen"><Loader2 className="animate-spin text-[#0B3B68]" size={32} /></div>}>
           <Routes>

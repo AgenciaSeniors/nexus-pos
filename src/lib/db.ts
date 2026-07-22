@@ -300,6 +300,12 @@ export interface ComandaItem {
   ready_at?: string;
   voided?: boolean;
   item_updated_at?: string;  // pivote de concurrencia por ítem (Fase 2)
+  /**
+   * Última escritura de cocina aplicada (server-side, set_kitchen_status).
+   * El guard del servidor compara SOLO contra esta columna (KDS vs KDS) para
+   * descartar reintentos viejos sin mezclar el reloj del mesero.
+   */
+  kitchen_updated_at?: string;
   created_at?: string;
   updated_at?: string;
   sync_status: 'synced' | 'pending_create' | 'pending_update';

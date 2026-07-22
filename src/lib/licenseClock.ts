@@ -35,6 +35,11 @@ let lastValidation = 0;     // última hora de servidor confirmada (epoch ms)
 let perfBase = 0;           // performance.now() de referencia
 let epochAtPerfBase = 0;    // epoch correspondiente a perfBase
 let started = false;
+// Ancla PURA de servidor (sin mezclar con el reloj local, a diferencia del HWM):
+// permite estimar "qué hora es en el servidor" para el watermark del pull
+// incremental, inmune al desfase del reloj del dispositivo.
+let serverPerfBase = 0;      // performance.now() cuando llegó la hora del servidor
+let serverEpochBase = 0;     // esa hora del servidor (epoch ms); 0 = nunca anclado
 
 function readNum(key: string): number {
   const v = Number(localStorage.getItem(key));
@@ -86,9 +91,24 @@ export function getLastServerValidation(): number {
   return lastValidation;
 }
 
+/**
+ * Estimación de la hora ACTUAL del servidor (epoch ms), calculada como la
+ * última hora de servidor conocida + tiempo monotónico transcurrido desde
+ * entonces. Retorna null si nunca se ha validado contra el servidor en esta
+ * sesión. Usada por el motor de sync para el watermark del pull incremental
+ * (comparar `updated_at` del servidor contra el reloj del cliente pierde
+ * actualizaciones cuando el reloj del dispositivo va adelantado).
+ */
+export function getServerNow(): number | null {
+  if (serverEpochBase <= 0) return null;
+  return serverEpochBase + (performance.now() - serverPerfBase);
+}
+
 /** Registra la hora del servidor: ancla el HWM y refresca la base monotónica. */
 export function noteServerTime(serverMs: number): void {
   if (!Number.isFinite(serverMs) || serverMs <= 0) return;
+  serverEpochBase = serverMs;
+  serverPerfBase = performance.now();
   if (serverMs > hwm) hwm = serverMs;
   // Re-anclar la base monotónica al nuevo HWM para no perder el avance ya contado.
   perfBase = performance.now();
