@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../lib/db';
 import { round3 } from '../lib/recipe';
-import { ArrowUpRight, ArrowDownLeft, PackageSearch } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, ArrowRightLeft, PackageSearch } from 'lucide-react';
 
 interface Props {
   productId?: string | null;
@@ -100,14 +100,23 @@ export function InventoryHistory({ productId }: Props) {
                 </td>
                 
                 <td className="p-4 text-center">
-                  <span
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold ${
-                      item.qty_change > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                    }`}
-                  >
-                    {item.qty_change > 0 ? <ArrowUpRight size={12} /> : <ArrowDownLeft size={12} />}
-                    {item.qty_change > 0 ? '+' : ''}{round3(item.qty_change)}
-                  </span>
+                  {isTransfer(item.reason) ? (
+                    // Traslado vitrina↔almacén: el stock TOTAL no cambia, así que
+                    // se muestra neutro (ni ganancia verde ni pérdida roja).
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-700">
+                      <ArrowRightLeft size={12} />
+                      {round3(Math.abs(item.qty_change))}
+                    </span>
+                  ) : (
+                    <span
+                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold ${
+                        item.qty_change > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                      }`}
+                    >
+                      {item.qty_change > 0 ? <ArrowUpRight size={12} /> : <ArrowDownLeft size={12} />}
+                      {item.qty_change > 0 ? '+' : ''}{round3(item.qty_change)}
+                    </span>
+                  )}
                 </td>
                 
                 <td className="p-4">
@@ -126,6 +135,10 @@ export function InventoryHistory({ productId }: Props) {
 
 function LoaderIcon() {
     return <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600 mx-auto"></div>;
+}
+
+function isTransfer(reason: string) {
+  return reason === 'transfer_to_display' || reason === 'transfer_to_warehouse';
 }
 
 function translateReason(reason: string) {

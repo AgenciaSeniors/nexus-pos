@@ -10,6 +10,7 @@ import { logAuditAction } from '../lib/audit';
 import { PaymentModal } from '../components/PaymentModal';
 import { ModifierPickerModal } from '../components/ModifierPickerModal';
 import { SplitBillModal } from '../components/SplitBillModal';
+import { clearSplitState } from '../lib/splitState';
 import { ArrowLeft, Search, Trash2, Package, CreditCard, ChefHat, Users, ClipboardList, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Input, EmptyState, Stepper, IconButton } from '../components/ui';
@@ -221,6 +222,9 @@ export default function ComandaPage() {
           await logAuditAction('SALE', { total: grandTotal, comanda: comanda.id, ventas: sales.length }, currentStaff);
         },
       );
+      // La comanda quedó cobrada: cualquier progreso de división guardado
+      // (p. ej. de un intento de dividir abandonado) ya no aplica.
+      clearSplitState(comanda.id);
       syncPush().catch(() => {});
       toast.success('Comanda cobrada');
       navigate('/mesas');
