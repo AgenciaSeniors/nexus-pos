@@ -69,35 +69,9 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
     return cleanup; // preload retorna función que elimina el listener de ipcRenderer
   }, [navigate]);
 
-  // Escuchar alertas de stock negativo (conflicto multi-dispositivo offline)
-  useEffect(() => {
-    const handleStockAlert = (e: Event) => {
-      const { products } = (e as CustomEvent).detail;
-      const names = products.map((p: any) => p.name).join(', ');
-      toast.error(`Stock negativo detectado: ${names}. Revisa el inventario.`, { duration: 8000 });
-    };
-    const handleStockConflict = (e: Event) => {
-      const { items } = (e as CustomEvent).detail;
-      toast.warning(
-        items
-          ? `Conflicto de stock al sincronizar: ${items}. La venta quedó marcada para revisión.`
-          : 'Conflicto de stock al sincronizar. Revisa Finanzas > Historial.',
-        { duration: 10000 }
-      );
-    };
-    const handleSyncFailed = (e: Event) => {
-      const { type, error } = (e as CustomEvent).detail;
-      toast.error(`Sincronización fallida: ${type}. ${error?.includes('Failed to fetch') ? 'Sin conexión al servidor.' : error?.slice(0, 80) || 'Error desconocido.'}`, { duration: 8000 });
-    };
-    window.addEventListener('nexus-stock-alert', handleStockAlert);
-    window.addEventListener('nexus-stock-conflict', handleStockConflict);
-    window.addEventListener('nexus-sync-failed', handleSyncFailed);
-    return () => {
-      window.removeEventListener('nexus-stock-alert', handleStockAlert);
-      window.removeEventListener('nexus-stock-conflict', handleStockConflict);
-      window.removeEventListener('nexus-sync-failed', handleSyncFailed);
-    };
-  }, []);
+  // Los toasts de eventos de sync (nexus-stock-alert / nexus-stock-conflict /
+  // nexus-sync-failed) viven en SyncEventToasts a nivel raíz de App: así no se
+  // pierden avisos disparados antes de montar Layout.
 
   // Mejora 5: Trial expirado detectado durante uso
   const [trialJustExpired, setTrialJustExpired] = useState(false);
