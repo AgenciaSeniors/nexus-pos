@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Product, type Sale, type ParkedOrder, type SaleItem, type Staff, type Customer } from '../lib/db';
+import { db, type Product, type Sale, type ParkedOrder, type SaleItem, type Staff, type Customer, type InventoryMovement } from '../lib/db';
 import { addToQueue, syncPush, syncPull, isOnline, getLastSyncTimestamp } from '../lib/sync';
 import { currency } from '../lib/currency';
 import { logAuditAction } from '../lib/audit';
@@ -473,6 +473,16 @@ export function PosPage() {
                         stock: round3(product.stock - item.quantity),
                         sync_status: 'pending_update'
                     });
+                    // Movimiento de inventario: el historial del producto debe
+                    // explicar TODAS las bajas de stock, incluidas las ventas.
+                    const mov: InventoryMovement = {
+                        id: crypto.randomUUID(), business_id: bId, product_id: item.id,
+                        qty_change: -item.quantity, reason: 'sale',
+                        created_at: new Date().toISOString(), staff_id: sale.staff_id,
+                        sync_status: 'pending_create'
+                    };
+                    await db.movements.add(mov);
+                    await addToQueue('MOVEMENT', mov);
                 }
             });
             await Promise.all(updateStockPromises);

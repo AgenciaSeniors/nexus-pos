@@ -32,7 +32,8 @@ import {
   filterRemoteItemsForBulkPut,
   isReadyToRetry,
   canResolveStockConflict,
-  sortQueueByDependency,
+  sortQueueForUpload,
+  computeStockSyncBlockers,
   decideQueueItemOutcome,
   QUEUE_TYPE_LABELS,
 } from './syncResolution';
@@ -81,6 +82,9 @@ export async function addToQueue(type: QueueItem['type'], payload: QueuePayload)
       type,
       payload,
       timestamp: Date.now(),
+      // Orden causal ESTABLE: `timestamp` se sobrescribe en reintentos/backoff,
+      // así que el orden de encolado real se preserva aparte (ver syncResolution).
+      enqueued_at: Date.now(),
       retries: 0,
       status: 'pending'
     });
@@ -498,9 +502,13 @@ async function _runQueue() {
   if (allPending.length === 0) return;
 
   // Ordenar por dependencia de foreign key (entidades base primero) y luego
-  // FIFO. Esto evita errores "foreign key violation" al subir, por ejemplo,
-  // un AUDIT antes que la venta/empleado del que depende. (lógica en syncResolution.ts)
-  const ordered = sortQueueByDependency(allPending);
+  // FIFO, con una restricción causal extra: un PRODUCT_SYNC (stock ABSOLUTO)
+  // va DESPUÉS de las ventas pendientes más antiguas que tocan su producto —
+  // si subiera antes, el RPC de la venta volvería a descontar sobre un stock
+  // que ya la incluía y se perderían unidades. (lógica en syncResolution.ts)
+  const ordered = sortQueueForUpload(allPending);
+  const stockBlockers = computeStockSyncBlockers(allPending);
+  const completedThisRun = new Set<string>();
 
   let processedCount = 0;
 
@@ -508,6 +516,12 @@ async function _runQueue() {
     // Backoff exponencial: si el item falló antes y aún no cumple su espera,
     // se SALTA — pero NO bloquea a los siguientes (clave del fix).
     if (!isReadyToRetry(item.retries, item.timestamp)) continue;
+
+    // Restricción de stock: si alguna venta bloqueadora NO se completó en esta
+    // vuelta (falló o está en backoff), posponer este PRODUCT_SYNC al próximo
+    // ciclo — subirlo ahora reintroduciría la pérdida de unidades.
+    const blockedBy = stockBlockers.get(item.id);
+    if (blockedBy && blockedBy.some(id => !completedThisRun.has(id))) continue;
 
     processedCount++;
 
@@ -519,6 +533,7 @@ async function _runQueue() {
       // que el item pase a retry y la cola NO se congele (ver withTimeout arriba).
       await withTimeout(processItem(item), ITEM_PROCESS_TIMEOUT_MS, item.type);
       await db.action_queue.delete(item.id);
+      completedThisRun.add(item.id);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 

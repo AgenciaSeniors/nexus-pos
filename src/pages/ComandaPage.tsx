@@ -188,7 +188,7 @@ export default function ComandaPage() {
       const live = items.filter(i => !i.voided);
       const grandTotal = comandaTotal(items);
       await db.transaction('rw',
-        [db.sales, db.products, db.comandas, db.restaurant_tables, db.action_queue, db.audit_logs],
+        [db.sales, db.products, db.movements, db.comandas, db.restaurant_tables, db.action_queue, db.audit_logs],
         async () => {
           for (const s of sales) await db.sales.add(s);
           // Descuento de stock (una sola vez): por receta si el plato la tiene, o su
@@ -199,7 +199,19 @@ export default function ComandaPage() {
           );
           for (const [pid, qty] of deductions) {
             const p = await db.products.get(pid);
-            if (p) await db.products.update(pid, { stock: round3(p.stock - qty), sync_status: 'pending_update' });
+            if (p) {
+              await db.products.update(pid, { stock: round3(p.stock - qty), sync_status: 'pending_update' });
+              // Movimiento de inventario: el historial debe explicar las bajas
+              // por venta (con receta, la baja es del ingrediente).
+              const mov = {
+                id: crypto.randomUUID(), business_id: businessId, product_id: pid,
+                qty_change: -qty, reason: 'sale',
+                created_at: now, staff_id: comanda.staff_id ?? currentStaff?.id,
+                sync_status: 'pending_create' as const,
+              };
+              await db.movements.add(mov);
+              await addToQueue('MOVEMENT', mov);
+            }
           }
           await db.comandas.update(comanda.id, { status: 'closed', closed_at: now, total: grandTotal, sale_ids: sales.map(s => s.id), sync_status: 'pending_update' });
           await db.restaurant_tables.update(comanda.table_id, { state: 'libre', current_comanda_id: null, sync_status: 'pending_update' });

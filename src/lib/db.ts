@@ -423,6 +423,12 @@ export interface QueueItem {
   type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT' | 'STAFF_SYNC' | 'VOID_SALE' | 'PARTIAL_REFUND' | 'LOYALTY_CHANGE' | 'AREA_SYNC' | 'TABLE_SYNC' | 'COMANDA_SYNC' | 'COMANDA_ITEM_SYNC' | 'COMANDA_CLOSE' | 'KITCHEN_STATUS' | 'MODIFIER_GROUP_SYNC' | 'MODIFIER_SYNC' | 'PRODUCT_MODIFIER_SYNC' | 'RECIPE_SYNC';
   payload: QueuePayload;
   timestamp: number;
+  /**
+   * Momento de encolado, ESTABLE (no se toca en reintentos, a diferencia de
+   * `timestamp`, que persiste el backoff). Usado para el orden causal de subida.
+   * Opcional: items encolados por versiones anteriores no lo traen.
+   */
+  enqueued_at?: number;
   retries: number;
   status: 'pending' | 'processing' | 'failed';
   error?: string;
