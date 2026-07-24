@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff, type InventoryMovement, type RefundedItem } from '../lib/db';
+import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff, type InventoryMovement, type RefundedItem, type RecipeIngredient } from '../lib/db';
 import { addToQueue, syncPull, syncPush, isOnline } from '../lib/sync';
 import { hashPin, verifyPin, needsRehash } from '../lib/pin';
 import { supabase } from '../lib/supabase';
@@ -21,9 +21,10 @@ import {
 } from 'lucide-react';
 import { BillCounter } from '../components/BillCounter';
 import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
-import { computeVoidDelta } from '../lib/saleRefund';
+import { computeVoidDelta, computeRefundQuote, cashPortionOfRefund } from '../lib/saleRefund';
 import { isSaleValidAtTime, endOfLocalDay } from '../lib/shiftStats';
-import { computeProductProfitability } from '../lib/salesStats';
+import { computeProductProfitability, computeSaleNet } from '../lib/salesStats';
+import { computeStockDeductions, round3 } from '../lib/recipe';
 import { BRAND_CHART_COLORS, CHART_TOOLTIP_STYLE } from '../lib/chartTheme';
 
 const EMPTY_ARRAY: never[] = [];
@@ -166,11 +167,24 @@ export function FinancePage() {
       .toArray();
   }, []) || EMPTY_ARRAY;
 
-  // Productos por reponer: stock <= umbral (default 5)
+  // Recetas (plato → ingredientes): al anular/devolver una venta de un plato
+  // con receta hay que restaurar el stock de los INGREDIENTES (que fue lo que
+  // se descontó al cobrar), no el del plato.
+  const recipesByDish = useLiveQuery(async () => {
+    const bId = localStorage.getItem('nexus_business_id');
+    if (!bId) return new Map<string, RecipeIngredient[]>();
+    const rows = (await db.recipe_ingredients.where('business_id').equals(bId).toArray()).filter(r => !r.deleted_at);
+    const map = new Map<string, RecipeIngredient[]>();
+    for (const r of rows) { const arr = map.get(r.dish_product_id) || []; arr.push(r); map.set(r.dish_product_id, arr); }
+    return map;
+  }, []) || new Map<string, RecipeIngredient[]>();
+
+  // Productos por reponer: stock <= umbral (default 5).
+  // Los platos con receta se excluyen: su stock vive en los ingredientes.
   const lowStockProducts = useMemo(() => {
     const LOW_STOCK_DEFAULT = 5;
     return products
-      .filter(p => p.stock <= (p.low_stock_threshold ?? LOW_STOCK_DEFAULT))
+      .filter(p => !p.tracks_recipe && p.stock <= (p.low_stock_threshold ?? LOW_STOCK_DEFAULT))
       .sort((a, b) => a.stock - b.stock);
   }, [products]);
 
@@ -180,7 +194,9 @@ export function FinancePage() {
     return products
       .filter(p => p.expiration_date && p.stock > 0)
       .map(p => {
-        const days = Math.ceil((new Date(p.expiration_date!).getTime() - now) / 86400000);
+        // 'YYYY-MM-DD' sin hora se parsea como UTC; anclar a medianoche LOCAL
+        const iso = p.expiration_date!.includes('T') ? p.expiration_date! : p.expiration_date! + 'T00:00';
+        const days = Math.ceil((new Date(iso).getTime() - now) / 86400000);
         return { ...p, daysToExpiry: days };
       })
       .filter(p => p.daysToExpiry <= 30)
@@ -192,31 +208,44 @@ export function FinancePage() {
   // con items[] anidados → varios MB en RAM en Android low-end. Si llega al límite,
   // se muestra solo lo más reciente (el resto se accede por filtros de fecha).
   const MAX_SALES_LOAD = 5000;
+  // El Cierre del Día (Reporte Z) SIEMPRE es de un solo día (selectedDate),
+  // aunque el usuario haya dejado "Reportes" en modo rango.
+  const effectiveReportMode = viewMode === 'closing' ? 'day' : reportMode;
   const allSales = useLiveQuery<Sale[]>(async () => {
     const bId = localStorage.getItem('nexus_business_id');
     if (!bId) return [];
     if (viewMode !== 'history' && viewMode !== 'daily' && viewMode !== 'trends' && viewMode !== 'closing') return [];
 
+    const isDayScope = (viewMode === 'daily' && reportMode === 'day') || viewMode === 'closing';
     const cutoff = new Date();
+    let upper = '￿'; // max char Unicode → "todo lo posterior al cutoff"
     if (viewMode === 'daily' && reportMode === 'range' && dateFrom) {
-      // En modo rango, cargar desde la fecha inicial del rango
-      cutoff.setTime(new Date(dateFrom).getTime());
-    } else if (viewMode === 'daily' && reportMode === 'day') {
-      // En modo día, cargar solo 3 días (ayer, hoy, mañana buffer)
-      cutoff.setDate(cutoff.getDate() - 3);
+      // En modo rango, cargar desde la fecha inicial del rango (T00:00 = local,
+      // sin la 'T' se parsearía como UTC y en husos positivos faltarían horas)
+      cutoff.setTime(new Date(dateFrom + 'T00:00').getTime());
+    } else if (isDayScope) {
+      // En modo día, cargar alrededor de la FECHA SELECCIONADA (no de hoy: si
+      // el usuario elige un día viejo, el reporte saldría vacío). ±2 días de
+      // margen cubren cualquier desfase huso local ↔ UTC del campo `date`.
+      const anchor = new Date(selectedDate + 'T00:00');
+      const base = isNaN(anchor.getTime()) ? new Date() : anchor;
+      cutoff.setTime(base.getTime());
+      cutoff.setDate(cutoff.getDate() - 2);
+      const upperDate = new Date(base.getTime());
+      upperDate.setDate(upperDate.getDate() + 2);
+      upper = upperDate.toISOString();
     } else {
       cutoff.setDate(cutoff.getDate() - 30);
     }
 
     // Usa índice compuesto [business_id+date] para evitar full scan + filter en JS.
-    // El '￿' es el max char Unicode → "todo lo que esté después de cutoff".
     return await db.sales
       .where('[business_id+date]')
-      .between([bId, cutoff.toISOString()], [bId, '￿'])
+      .between([bId, cutoff.toISOString()], [bId, upper])
       .reverse()
       .limit(MAX_SALES_LOAD)
       .sortBy('date');
-  }, [viewMode, reportMode, dateFrom]) || EMPTY_ARRAY;
+  }, [viewMode, reportMode, dateFrom, selectedDate]) || EMPTY_ARRAY;
 
   useEffect(() => {
     if (activeShift !== undefined) {
@@ -273,11 +302,13 @@ export function FinancePage() {
       const h = new Date(s.date).getHours().toString().padStart(2, '0');
       shiftHourly[h] = (shiftHourly[h] || 0) + safeFloat(s.total);
     });
-    // Solo mostrar horas con actividad o rango relevante
+    // Solo mostrar horas con actividad o rango relevante. El módulo 24 cubre
+    // turnos nocturnos que cruzan medianoche (abre 20:00, ahora 01:00 → 6 horas).
     const openHour = new Date(activeShift.opened_at).getHours();
     const nowHour = new Date().getHours();
-    const hourlyChart = Array.from({ length: nowHour - openHour + 1 }, (_, i) => {
-      const h = (openHour + i).toString().padStart(2, '0');
+    const hoursSpan = Math.min(24, ((nowHour - openHour + 24) % 24) + 1);
+    const hourlyChart = Array.from({ length: hoursSpan }, (_, i) => {
+      const h = ((openHour + i) % 24).toString().padStart(2, '0');
       return { h: h + ':00', v: shiftHourly[h] || 0 };
     });
 
@@ -306,44 +337,94 @@ export function FinancePage() {
     // anulaciones DENTRO del periodo se descuentan.
     // - Modo día: fin del periodo = 23:59:59.999 de selectedDate
     // - Modo rango: fin del periodo = 23:59:59.999 de dateTo
-    const periodEnd = reportMode === 'range'
+    const periodEnd = effectiveReportMode === 'range'
       ? endOfLocalDay(dateTo).getTime()
       : endOfLocalDay(selectedDate).getTime();
 
-    const salesForDay = reportMode === 'range'
+    const salesForDay = effectiveReportMode === 'range'
       ? allSales.filter((sale) => saleMatchesRange(sale.date) && isSaleValidAtTime(sale, periodEnd))
       : allSales.filter((sale) => saleMatchesLocalDate(sale.date, selectedDate) && isSaleValidAtTime(sale, periodEnd));
     let revenue = 0, cost = 0;
     const hourlyCounts: Record<string, number> = {};
     const categoryCounts: Record<string, number> = {};
     const productCounts: Record<string, number> = {};
+    const productRevenue: Record<string, number> = {};
     // En modo rango: agrupar ventas por día para el gráfico de barras
     const dailyCounts: Record<string, number> = {};
 
     for (let i = 7; i <= 23; i++) hourlyCounts[i.toString().padStart(2, '0') + ":00"] = 0;
 
+    const paymentBreakdown = { efectivo: 0, transferencia: 0, tarjeta: 0 };
+    // Regla de caja: los reembolsos consumen primero la porción de efectivo
+    const subtractRefundFromBreakdown = (s: Sale, refundAmount: number) => {
+      if (refundAmount <= 0) return;
+      const m = s.payment_method?.toLowerCase() || 'efectivo';
+      if (m === 'tarjeta') { paymentBreakdown.tarjeta -= refundAmount; return; }
+      if (m === 'transferencia' || m === 'transfer') { paymentBreakdown.transferencia -= refundAmount; return; }
+      const fromCash = cashPortionOfRefund(m, safeFloat(s.total), safeFloat(s.cash_amount), 0, refundAmount);
+      paymentBreakdown.efectivo -= fromCash;
+      paymentBreakdown.transferencia -= Math.max(0, refundAmount - fromCash);
+    };
+
     salesForDay.forEach((sale) => {
-      const saleTotal = safeFloat(sale.total);
-      revenue += saleTotal;
+      // Neto de devoluciones parciales HECHAS DENTRO del período (inmutabilidad
+      // histórica: una devolución posterior no cambia el reporte de este día).
+      const { refunds, refundAmount, netTotal } = computeSaleNet(sale, periodEnd);
+      revenue += netTotal;
       const saleDate = new Date(sale.date);
       if (!isNaN(saleDate.getTime())) {
           const h = saleDate.getHours().toString().padStart(2, '0') + ":00";
-          if (hourlyCounts[h] !== undefined) hourlyCounts[h] += saleTotal;
+          // Las horas 00–06 se crean bajo demanda (el resto ya existe): ninguna
+          // venta queda fuera del gráfico y su suma coincide con "Ingresos".
+          hourlyCounts[h] = (hourlyCounts[h] || 0) + netTotal;
           // Agrupar por día para gráfico de rango
-          if (reportMode === 'range') {
+          if (effectiveReportMode === 'range') {
             const dayKey = saleDate.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' });
-            dailyCounts[dayKey] = (dailyCounts[dayKey] || 0) + saleTotal;
+            dailyCounts[dayKey] = (dailyCounts[dayKey] || 0) + netTotal;
           }
       }
+      const itemByProduct = new Map<string, Sale['items'][number]>();
       (sale.items || []).forEach((item) => {
+        if (!itemByProduct.has(item.product_id)) itemByProduct.set(item.product_id, item);
         const itemQty = safeFloat(item.quantity);
-        const itemPrice = safeFloat(item.price);
+        const itemPrice = safeFloat(item.custom_price ?? item.price);
         const historicalCost = item.cost !== undefined ? safeFloat(item.cost) : (productMeta.costs.get(item.product_id) || 0);
         cost += historicalCost * itemQty;
         const cat = productMeta.cats.get(item.product_id) || 'General';
         categoryCounts[cat] = (categoryCounts[cat] || 0) + (itemPrice * itemQty);
         productCounts[item.name] = (productCounts[item.name] || 0) + itemQty;
+        productRevenue[item.name] = (productRevenue[item.name] || 0) + (itemPrice * itemQty);
       });
+      // Descontar lo devuelto de cantidades, categorías y costo
+      refunds.forEach(r => {
+        const qty = Math.max(0, safeFloat(r.quantity));
+        const amt = Math.max(0, safeFloat(r.amount));
+        const src = itemByProduct.get(r.product_id);
+        const name = src?.name || r.name;
+        const historicalCost = src?.cost !== undefined ? safeFloat(src.cost) : (productMeta.costs.get(r.product_id) || 0);
+        cost -= historicalCost * qty;
+        const cat = productMeta.cats.get(r.product_id) || 'General';
+        categoryCounts[cat] = (categoryCounts[cat] || 0) - amt;
+        if (name) {
+          productCounts[name] = (productCounts[name] || 0) - qty;
+          productRevenue[name] = (productRevenue[name] || 0) - amt;
+        }
+      });
+
+      const m = sale.payment_method?.toLowerCase() || 'efectivo';
+      const saleTotal = safeFloat(sale.total);
+      if (m === 'efectivo') paymentBreakdown.efectivo += saleTotal;
+      else if (m === 'transferencia' || m === 'transfer') paymentBreakdown.transferencia += saleTotal;
+      else if (m === 'tarjeta') paymentBreakdown.tarjeta += saleTotal;
+      else if (m === 'mixto') {
+        paymentBreakdown.efectivo += safeFloat(sale.cash_amount || 0);
+        paymentBreakdown.transferencia += safeFloat(sale.transfer_amount || 0);
+      } else {
+        // Método desconocido: agrupar con transferencia (mismo criterio que el
+        // Reporte Z) para que el desglose siempre sume el total.
+        paymentBreakdown.transferencia += saleTotal;
+      }
+      subtractRefundFromBreakdown(sale, refundAmount);
     });
 
     let bestSeller = { name: 'N/A', count: 0 };
@@ -351,56 +432,47 @@ export function FinancePage() {
 
     const profit = revenue - cost;
     const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
-    const chartData = Object.entries(hourlyCounts).map(([time, total]) => ({ time, total }));
+    const chartData = Object.entries(hourlyCounts)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([time, total]) => ({ time, total }));
     const rangeChartData = Object.entries(dailyCounts).map(([date, total]) => ({ date, total }));
     const pieData = Object.entries(categoryCounts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
 
-    // Top 5 productos por cantidad
+    // Top 5 productos por cantidad (con su ingreso real, no el de la categoría)
     const topProducts = Object.entries(productCounts)
-      .map(([name, qty]) => ({ name, qty, revenue: categoryCounts[name] || 0 }))
+      .map(([name, qty]) => ({ name, qty, revenue: productRevenue[name] || 0 }))
+      .filter(p => p.qty > 0)
       .sort((a, b) => b.qty - a.qty)
       .slice(0, 5);
 
-    // Desglose por método de pago
-    const paymentBreakdown = { efectivo: 0, transferencia: 0, tarjeta: 0 };
-    salesForDay.forEach(s => {
-      const m = s.payment_method?.toLowerCase() || 'efectivo';
-      if (m === 'efectivo') paymentBreakdown.efectivo += safeFloat(s.total);
-      else if (m === 'transferencia' || m === 'transfer') paymentBreakdown.transferencia += safeFloat(s.total);
-      else if (m === 'tarjeta') paymentBreakdown.tarjeta += safeFloat(s.total);
-      else if (m === 'mixto') {
-        paymentBreakdown.efectivo += safeFloat(s.cash_amount || 0);
-        paymentBreakdown.transferencia += safeFloat(s.transfer_amount || 0);
-      }
-    });
-
-    // Promedio diario (solo para modo rango)
-    const daysInRange = reportMode === 'range'
-      ? Math.max(1, Math.round((new Date(dateTo + 'T23:59').getTime() - new Date(dateFrom + 'T00:00').getTime()) / 86400000) + 1)
+    // Promedio diario (solo para modo rango). El fin del rango ya es 23:59,
+    // así que la división directa da el número de días — sin +1 extra.
+    const daysInRange = effectiveReportMode === 'range'
+      ? Math.max(1, Math.round((new Date(dateTo + 'T23:59').getTime() - new Date(dateFrom + 'T00:00').getTime()) / 86400000))
       : 1;
     const dailyAvg = revenue / daysInRange;
 
-    // Desglose por vendedor (para modo rango)
+    // Desglose por vendedor (para modo rango) — neto de devoluciones
     const staffCounts: Record<string, { count: number; total: number }> = {};
     salesForDay.forEach(s => {
       const name = s.staff_name || 'Sin asignar';
       if (!staffCounts[name]) staffCounts[name] = { count: 0, total: 0 };
       staffCounts[name].count++;
-      staffCounts[name].total += safeFloat(s.total);
+      staffCounts[name].total += computeSaleNet(s, periodEnd).netTotal;
     });
     const staffList = Object.entries(staffCounts).map(([name, d]) => ({ name, ...d })).sort((a, b) => b.total - a.total);
 
-    return { sales: salesForDay, revenue, profit, cost, margin, chartData, rangeChartData, pieData, bestSeller, topProducts, paymentBreakdown, dailyAvg, daysInRange, staffList };
-  }, [allSales, selectedDate, productMeta, reportMode, dateFrom, dateTo]);
+    return { sales: salesForDay, periodEnd, revenue, profit, cost, margin, chartData, rangeChartData, pieData, bestSeller, topProducts, paymentBreakdown, dailyAvg, daysInRange, staffList };
+  }, [allSales, selectedDate, productMeta, effectiveReportMode, dateFrom, dateTo]);
 
   // Rentabilidad por producto del período seleccionado (ganancia y margen reales,
   // no solo cantidad). Reusa las ventas ya filtradas por `dailyStats`.
   const productProfit = useMemo(() => {
-    const list = computeProductProfitability(dailyStats.sales, products);
+    const list = computeProductProfitability(dailyStats.sales, products, dailyStats.periodEnd);
     return profitSort === 'margin'
       ? [...list].sort((a, b) => b.margin - a.margin)
       : list; // ya viene ordenada por ganancia
-  }, [dailyStats.sales, products, profitSort]);
+  }, [dailyStats.sales, dailyStats.periodEnd, products, profitSort]);
 
   // Productos mostrados y base de escala de las barras. La escala se calcula SOLO
   // sobre lo visible para que el producto de referencia esté en pantalla (si se
@@ -414,6 +486,7 @@ export function FinancePage() {
     const staffSummary: Record<string, { count: number, total: number }> = {};
 
     dailyStats.sales.forEach((sale) => {
+      const { refunds, refundAmount, netTotal } = computeSaleNet(sale, dailyStats.periodEnd);
       const saleTotal = safeFloat(sale.total);
       const method = sale.payment_method?.toLowerCase() || 'efectivo';
       if (method === 'efectivo') cashTotal += saleTotal;
@@ -423,24 +496,45 @@ export function FinancePage() {
         transferTotal += safeFloat(sale.transfer_amount || 0);
       }
       else transferTotal += saleTotal;
+      // Restar devoluciones del método correspondiente (efectivo primero)
+      if (refundAmount > 0) {
+        if (method === 'tarjeta') cardTotal -= refundAmount;
+        else if (method === 'efectivo' || method === 'mixto') {
+          const fromCash = cashPortionOfRefund(method, saleTotal, safeFloat(sale.cash_amount), 0, refundAmount);
+          cashTotal -= fromCash;
+          transferTotal -= Math.max(0, refundAmount - fromCash);
+        }
+        else transferTotal -= refundAmount;
+      }
 
+      const itemByProduct = new Map<string, Sale['items'][number]>();
       (sale.items || []).forEach((item) => {
+        if (!itemByProduct.has(item.product_id)) itemByProduct.set(item.product_id, item);
         if (!productSummary[item.name]) productSummary[item.name] = { quantity: 0, total: 0 };
         productSummary[item.name].quantity += safeFloat(item.quantity);
-        productSummary[item.name].total += (safeFloat(item.price) * safeFloat(item.quantity));
+        productSummary[item.name].total += (safeFloat(item.custom_price ?? item.price) * safeFloat(item.quantity));
+      });
+      refunds.forEach(r => {
+        const name = itemByProduct.get(r.product_id)?.name || r.name;
+        if (!name || !productSummary[name]) return;
+        productSummary[name].quantity -= Math.max(0, safeFloat(r.quantity));
+        productSummary[name].total -= Math.max(0, safeFloat(r.amount));
       });
 
-      // Desglose por vendedor
+      // Desglose por vendedor — neto de devoluciones
       const sellerName = sale.staff_name || 'Sin asignar';
       if (!staffSummary[sellerName]) staffSummary[sellerName] = { count: 0, total: 0 };
       staffSummary[sellerName].count++;
-      staffSummary[sellerName].total += saleTotal;
+      staffSummary[sellerName].total += netTotal;
     });
 
-    const productsList = Object.entries(productSummary).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.quantity - a.quantity);
+    const productsList = Object.entries(productSummary)
+      .map(([name, data]) => ({ name, ...data }))
+      .filter(p => p.quantity > 0)
+      .sort((a, b) => b.quantity - a.quantity);
     const staffList = Object.entries(staffSummary).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.total - a.total);
     return { cashTotal, transferTotal, cardTotal, productsList, staffList, ticketCount: dailyStats.sales.length };
-  }, [dailyStats.sales]);
+  }, [dailyStats.sales, dailyStats.periodEnd]);
 
   const trendStats = useMemo(() => {
     const daysToShow = trendFilter === 'week' ? 7 : 30;
@@ -452,16 +546,24 @@ export function FinancePage() {
     const salesByDate: Record<string, number> = {};
 
     filteredSales.forEach((sale) => {
-      const saleTotal = safeFloat(sale.total);
-      totalRevenue += saleTotal;
+      // Neto de devoluciones parciales (sin período: tendencias reflejan el estado actual)
+      const { refunds, netTotal } = computeSaleNet(sale);
+      totalRevenue += netTotal;
       let saleCost = 0;
+      const itemByProduct = new Map<string, Sale['items'][number]>();
       (sale.items || []).forEach((i) => {
+          if (!itemByProduct.has(i.product_id)) itemByProduct.set(i.product_id, i);
           const historicalCost = i.cost !== undefined ? safeFloat(i.cost) : (productMeta.costs.get(i.product_id) || 0);
           saleCost += historicalCost * safeFloat(i.quantity);
       });
+      refunds.forEach(r => {
+        const src = itemByProduct.get(r.product_id);
+        const historicalCost = src?.cost !== undefined ? safeFloat(src.cost) : (productMeta.costs.get(r.product_id) || 0);
+        saleCost -= historicalCost * Math.max(0, safeFloat(r.quantity));
+      });
       totalCost += saleCost;
       const dateKey = new Date(sale.date).toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' });
-      salesByDate[dateKey] = (salesByDate[dateKey] || 0) + saleTotal;
+      salesByDate[dateKey] = (salesByDate[dateKey] || 0) + netTotal;
     });
 
     const totalProfit = totalRevenue - totalCost;
@@ -471,14 +573,23 @@ export function FinancePage() {
     // Top 5 productos del período
     const productAgg: Record<string, { qty: number; revenue: number }> = {};
     filteredSales.forEach(sale => {
+      const itemByProduct = new Map<string, Sale['items'][number]>();
       (sale.items || []).forEach(item => {
+        if (!itemByProduct.has(item.product_id)) itemByProduct.set(item.product_id, item);
         if (!productAgg[item.name]) productAgg[item.name] = { qty: 0, revenue: 0 };
         productAgg[item.name].qty += safeFloat(item.quantity);
         productAgg[item.name].revenue += safeFloat(item.custom_price ?? item.price) * safeFloat(item.quantity);
       });
+      computeSaleNet(sale).refunds.forEach(r => {
+        const name = itemByProduct.get(r.product_id)?.name || r.name;
+        if (!name || !productAgg[name]) return;
+        productAgg[name].qty -= Math.max(0, safeFloat(r.quantity));
+        productAgg[name].revenue -= Math.max(0, safeFloat(r.amount));
+      });
     });
     const topProducts = Object.entries(productAgg)
       .map(([name, d]) => ({ name, ...d }))
+      .filter(p => p.qty > 0)
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 5);
 
@@ -603,9 +714,10 @@ export function FinancePage() {
     if (val <= 0) return toast.error('Monto inválido');
     if (!reason.trim()) return toast.error('Debes indicar un motivo');
 
-    // Validar fondos suficientes para retiros
+    // Validar fondos suficientes para retiros (comparación a centavos: la
+    // acumulación en float puede dejar residuos tipo 99.99999999999)
     if (movementType === 'out' && shiftStats) {
-      if (val > shiftStats.expectedCash) {
+      if (currency.subtract(val, shiftStats.expectedCash) > 0) {
         toast.error(`Fondos insuficientes. Disponible en caja: ${formatMoney(shiftStats.expectedCash)}`);
         return;
       }
@@ -696,7 +808,7 @@ export function FinancePage() {
           expected_transfer: stats.transferSales, real_transfer: finalTransferCount, transfer_diff: transferDiff,
         }, staffPayload as any);
 
-        const totalDiff = cashDiff + transferDiff;
+        const totalDiff = currency.add(cashDiff, transferDiff);
         toast.success(`Caja cerrada. Diferencia total: ${formatMoney(totalDiff)}`);
         setIsClosing(false); setClosingShiftStats(null); setAmount(''); setTransferCount('');
         syncPush().catch(() => {});
@@ -778,18 +890,23 @@ export function FinancePage() {
                   }
               }
 
-              // 3. Devolver stock SOLO de la cantidad pendiente (no la ya devuelta en partials)
-              for (const [productId, pendingQty] of Object.entries(pendingQtyByProduct)) {
+              // 3. Devolver stock SOLO de la cantidad pendiente (no la ya devuelta en partials).
+              // Si el producto vendido tiene RECETA, lo que se descontó al cobrar fueron
+              // sus ingredientes → se restauran los ingredientes, no el plato.
+              const pendingItems = Object.entries(pendingQtyByProduct)
+                  .map(([product_id, quantity]) => ({ product_id, quantity }));
+              const stockRestores = computeStockDeductions(pendingItems, recipesByDish);
+              for (const [productId, restoreQty] of stockRestores) {
                   const product = await db.products.get(productId);
                   if (product) {
-                      const newStock = product.stock + pendingQty;
+                      const newStock = round3(product.stock + restoreQty);
                       const nowVoid = new Date().toISOString();
                       await db.products.update(product.id, { stock: newStock, updated_at: nowVoid, sync_status: 'pending_update' });
                       await addToQueue('PRODUCT_SYNC', { ...product, stock: newStock, updated_at: nowVoid, sync_status: 'pending_update' });
 
                       const mov: InventoryMovement = {
                           id: crypto.randomUUID(), business_id: safeBid, product_id: product.id,
-                          qty_change: pendingQty,
+                          qty_change: restoreQty,
                           reason: refundedAmount > 0
                               ? `Anulación (resto) - Venta #${sale.id.slice(0,6)}`
                               : `Anulación - Venta #${sale.id.slice(0,6)}`,
@@ -800,25 +917,46 @@ export function FinancePage() {
                   }
               }
 
-              // 4. Movimiento de caja por el monto PENDIENTE (no por el total).
-              // - Si la venta es del turno actual, no hace falta movimiento porque al cambiar
-              //   a 'voided' deja de contar en cashSales. Pero los cash_movements de refunds
-              //   parciales previos SÍ quedan registrados → caja resultaría con saldo negativo.
-              //   Compensamos con un IN equivalente al ya pagado en partials de este turno.
-              // - Si la venta es de un turno anterior, hacemos OUT por el monto pendiente.
-              if (pendingAmount > 0 && activeShift && sale.shift_id !== activeShift.id
-                  && ['efectivo', 'mixto'].includes(sale.payment_method)) {
-                  // Venta de turno previo: reembolsar el pendiente en este turno
-                  const cashMov: CashMovement = {
-                      id: crypto.randomUUID(), shift_id: activeShift.id, business_id: safeBid, type: 'out',
-                      amount: pendingAmount,
-                      reason: refundedAmount > 0
-                          ? `Anulación (resto) Venta Anterior #${sale.id.slice(0,6)}`
-                          : `Reembolso Venta Anterior #${sale.id.slice(0,6)}`,
-                      staff_id: sId, created_at: new Date().toISOString(), sync_status: 'pending_create'
-                  };
-                  await db.cash_movements.add(cashMov);
-                  await addToQueue('CASH_MOVEMENT', cashMov);
+              // 4. Movimientos de caja:
+              // - Venta de turno ANTERIOR: OUT por el pendiente (el dinero sale hoy).
+              // - Venta del turno ACTUAL: no hace falta OUT (al pasar a 'voided' deja
+              //   de contar en cashSales). Pero los OUT de refunds parciales previos
+              //   de ESTE turno quedan registrados y restarían dos veces → se
+              //   compensan con un IN por la porción de efectivo ya devuelta.
+              if (activeShift && ['efectivo', 'mixto'].includes(sale.payment_method)) {
+                  if (sale.shift_id !== activeShift.id && pendingAmount > 0) {
+                      const cashOutNow = cashPortionOfRefund(
+                          sale.payment_method, safeFloat(freshSale.total), safeFloat(freshSale.cash_amount),
+                          refundedAmount, pendingAmount,
+                      );
+                      if (cashOutNow > 0) {
+                          const cashMov: CashMovement = {
+                              id: crypto.randomUUID(), shift_id: activeShift.id, business_id: safeBid, type: 'out',
+                              amount: cashOutNow,
+                              reason: refundedAmount > 0
+                                  ? `Anulación (resto) Venta Anterior #${sale.id.slice(0,6)}`
+                                  : `Reembolso Venta Anterior #${sale.id.slice(0,6)}`,
+                              staff_id: sId, created_at: new Date().toISOString(), sync_status: 'pending_create'
+                          };
+                          await db.cash_movements.add(cashMov);
+                          await addToQueue('CASH_MOVEMENT', cashMov);
+                      }
+                  } else if (sale.shift_id === activeShift.id && refundedAmount > 0) {
+                      const cashAlreadyOut = cashPortionOfRefund(
+                          sale.payment_method, safeFloat(freshSale.total), safeFloat(freshSale.cash_amount),
+                          0, refundedAmount,
+                      );
+                      if (cashAlreadyOut > 0) {
+                          const compMov: CashMovement = {
+                              id: crypto.randomUUID(), shift_id: activeShift.id, business_id: safeBid, type: 'in',
+                              amount: cashAlreadyOut,
+                              reason: `Ajuste anulación (devol. previas) #${sale.id.slice(0,6)}`,
+                              staff_id: sId, created_at: new Date().toISOString(), sync_status: 'pending_create'
+                          };
+                          await db.cash_movements.add(compMov);
+                          await addToQueue('CASH_MOVEMENT', compMov);
+                      }
+                  }
               }
 
               // 5. Log
@@ -847,12 +985,18 @@ export function FinancePage() {
     setRefundSelections(selections);
   };
 
-  const refundTotal = refundSale
-    ? (refundSale.items || []).reduce((sum, item) => {
-        const qty = refundSelections[item.product_id] || 0;
-        return sum + (qty * (item.custom_price ?? item.price));
-      }, 0)
-    : 0;
+  // Cotización de la devolución: el dinero a devolver se prorratea por los
+  // descuentos de la venta (manual + puntos canjeados) y nunca supera lo que
+  // queda pagado. Maneja líneas duplicadas del mismo producto (restaurante).
+  const refundQuote = refundSale
+    ? computeRefundQuote(
+        safeFloat(refundSale.total),
+        refundSale.items || [],
+        refundSale.refunded_items || [],
+        refundSelections,
+      )
+    : null;
+  const refundTotal = refundQuote?.amount ?? 0;
 
   const handlePartialRefund = async () => {
     if (!refundSale || !activeShift || refundTotal <= 0) return;
@@ -862,41 +1006,60 @@ export function FinancePage() {
       const safeBid = bId || refundSale.business_id;
       const staffPayload = { id: sId, name: currentStaff?.name || 'Cajero', business_id: safeBid };
 
-      const itemsToRefund = (refundSale.items || []).filter(item => (refundSelections[item.product_id] || 0) > 0);
-      if (itemsToRefund.length === 0) { toast.error('Selecciona al menos un producto'); setIsLoading(false); return; }
-
-      const refundedItems: RefundedItem[] = itemsToRefund.map(item => ({
-        product_id: item.product_id,
-        name: item.name,
-        quantity: refundSelections[item.product_id],
-        amount: refundSelections[item.product_id] * (item.custom_price ?? item.price),
-        date: new Date().toISOString()
-      }));
+      let appliedAmount = 0;
+      let wasFullRefund = false;
 
       await db.transaction('rw', [db.sales, db.products, db.movements, db.cash_movements, db.customers, db.action_queue, db.audit_logs], async () => {
         // Fix: Verificar cantidades dentro de la transacción (previene race condition)
         const freshSale = await db.sales.get(refundSale.id);
         if (!freshSale || freshSale.status === 'voided') throw new Error('Esta venta ya fue anulada.');
         const existingRefunds = freshSale.refunded_items || [];
-        for (const ri of refundedItems) {
-          const originalItem = (freshSale.items || []).find(i => i.product_id === ri.product_id);
-          const alreadyRefunded = existingRefunds.filter(r => r.product_id === ri.product_id).reduce((s, r) => s + r.quantity, 0);
-          const maxAllowed = (originalItem?.quantity || 0) - alreadyRefunded;
-          if (ri.quantity > maxAllowed) throw new Error(`No se pueden devolver ${ri.quantity} unidades de "${ri.name}" (máx: ${maxAllowed})`);
+        const freshDelta = computeVoidDelta(safeFloat(freshSale.total), freshSale.items || [], existingRefunds);
+
+        // Validar contra lo VENDIDO por producto (sumando líneas duplicadas)
+        for (const [pid, qty] of Object.entries(refundSelections)) {
+          if ((qty || 0) <= 0) continue;
+          const maxAllowed = freshDelta.pendingQtyByProduct[pid] || 0;
+          if (qty > maxAllowed) {
+            const name = (freshSale.items || []).find(i => i.product_id === pid)?.name || pid;
+            throw new Error(`No se pueden devolver ${qty} unidades de "${name}" (máx: ${maxAllowed})`);
+          }
         }
 
-        // 1. Devolver stock por cada item
-        for (const ri of refundedItems) {
-          const product = await db.products.get(ri.product_id);
+        // Recalcular la cotización con los datos FRESCOS de la venta
+        const quote = computeRefundQuote(safeFloat(freshSale.total), freshSale.items || [], existingRefunds, refundSelections);
+        if (quote.perProduct.length === 0) throw new Error('Selecciona al menos un producto');
+        appliedAmount = quote.amount;
+        const isFullRefund = quote.coversRemainder;
+        wasFullRefund = isFullRefund;
+        const nameOf = (pid: string) =>
+          (freshSale.items || []).find(i => i.product_id === pid)?.name || pid;
+
+        const refundedItems: RefundedItem[] = quote.perProduct.map(p => ({
+          product_id: p.product_id,
+          name: nameOf(p.product_id),
+          quantity: p.quantity,
+          amount: p.amount,
+          date: new Date().toISOString()
+        }));
+
+        // 1. Devolver stock. Con receta se restauran los INGREDIENTES (fue lo
+        //    que se descontó al cobrar), no el plato.
+        const stockRestores = computeStockDeductions(
+          quote.perProduct.map(p => ({ product_id: p.product_id, quantity: p.quantity })),
+          recipesByDish,
+        );
+        for (const [productId, restoreQty] of stockRestores) {
+          const product = await db.products.get(productId);
           if (product) {
-            const newStock = product.stock + ri.quantity;
+            const newStock = round3(product.stock + restoreQty);
             const nowRefund = new Date().toISOString();
-            await db.products.update(ri.product_id, { stock: newStock, updated_at: nowRefund, sync_status: 'pending_update' });
+            await db.products.update(productId, { stock: newStock, updated_at: nowRefund, sync_status: 'pending_update' });
             await addToQueue('PRODUCT_SYNC', { ...product, stock: newStock, updated_at: nowRefund, sync_status: 'pending_update' });
 
             const mov: InventoryMovement = {
-              id: crypto.randomUUID(), business_id: safeBid, product_id: ri.product_id,
-              qty_change: ri.quantity, reason: `Devolución parcial - Venta #${refundSale.id.slice(0, 6)}`,
+              id: crypto.randomUUID(), business_id: safeBid, product_id: productId,
+              qty_change: restoreQty, reason: `Devolución parcial - Venta #${refundSale.id.slice(0, 6)}`,
               created_at: new Date().toISOString(), staff_id: sId, sync_status: 'pending_create'
             };
             await db.movements.add(mov);
@@ -904,28 +1067,48 @@ export function FinancePage() {
           }
         }
 
-        // 2. Movimiento de caja (reembolso) si fue efectivo/mixto
-        if (['efectivo', 'mixto'].includes(refundSale.payment_method)) {
-          const cashMov: CashMovement = {
-            id: crypto.randomUUID(), shift_id: activeShift.id, business_id: safeBid,
-            type: 'out', amount: refundTotal,
-            reason: `Devolución parcial - Venta #${refundSale.id.slice(0, 6)}`,
-            staff_id: sId, created_at: new Date().toISOString(), sync_status: 'pending_create'
-          };
-          await db.cash_movements.add(cashMov);
-          await addToQueue('CASH_MOVEMENT', cashMov);
+        // 2. Movimiento de caja: solo la porción que realmente entró en EFECTIVO
+        //    (una venta mixta no puede vaciar la gaveta por su parte transferida).
+        //    Caso especial: si esta devolución COMPLETA la venta y la venta es del
+        //    turno actual, la venta pasa a 'voided' y deja de contar en cashSales,
+        //    así que NO se registra OUT (se restaría dos veces); en su lugar se
+        //    compensan los OUT de devoluciones previas de este mismo turno.
+        const isSaleFromActiveShift = freshSale.shift_id === activeShift.id;
+        if (['efectivo', 'mixto'].includes(freshSale.payment_method)) {
+          if (!(isFullRefund && isSaleFromActiveShift)) {
+            const cashOut = cashPortionOfRefund(
+              freshSale.payment_method, safeFloat(freshSale.total), safeFloat(freshSale.cash_amount),
+              freshDelta.alreadyRefundedAmount, quote.amount,
+            );
+            if (cashOut > 0) {
+              const cashMov: CashMovement = {
+                id: crypto.randomUUID(), shift_id: activeShift.id, business_id: safeBid,
+                type: 'out', amount: cashOut,
+                reason: `Devolución parcial - Venta #${refundSale.id.slice(0, 6)}`,
+                staff_id: sId, created_at: new Date().toISOString(), sync_status: 'pending_create'
+              };
+              await db.cash_movements.add(cashMov);
+              await addToQueue('CASH_MOVEMENT', cashMov);
+            }
+          } else if (freshDelta.alreadyRefundedAmount > 0) {
+            const cashAlreadyOut = cashPortionOfRefund(
+              freshSale.payment_method, safeFloat(freshSale.total), safeFloat(freshSale.cash_amount),
+              0, freshDelta.alreadyRefundedAmount,
+            );
+            if (cashAlreadyOut > 0) {
+              const compMov: CashMovement = {
+                id: crypto.randomUUID(), shift_id: activeShift.id, business_id: safeBid, type: 'in',
+                amount: cashAlreadyOut,
+                reason: `Ajuste anulación (devol. previas) #${refundSale.id.slice(0, 6)}`,
+                staff_id: sId, created_at: new Date().toISOString(), sync_status: 'pending_create'
+              };
+              await db.cash_movements.add(compMov);
+              await addToQueue('CASH_MOVEMENT', compMov);
+            }
+          }
         }
 
-        // 4. Detectar si esta devolución cubre TODAS las unidades vendidas (devolución total)
-        // Calculado ANTES de revertir puntos porque influye en si devolver redeemed_points
         const allRefunds = [...existingRefunds, ...refundedItems];
-        const originalItems = freshSale.items || [];
-        const isFullRefund = originalItems.every(orig => {
-          const refundedQty = allRefunds
-            .filter(r => r.product_id === orig.product_id)
-            .reduce((s, r) => s + r.quantity, 0);
-          return refundedQty >= orig.quantity;
-        });
 
         // 3. Revertir puntos de lealtad proporcionalmente
         // - Siempre: descontar pts GANADOS por el monto devuelto (floor(refund/10))
@@ -935,7 +1118,9 @@ export function FinancePage() {
         if (refundSale.customer_id) {
           const customer = await db.customers.get(refundSale.customer_id);
           if (customer) {
-            const pointsEarnedToRevert = Math.floor(refundTotal / 10);
+            const pointsEarnedToRevert = isFullRefund
+              ? freshDelta.pointsToRevertNow // cerrar exacto: ganados − ya revertidos
+              : Math.floor(quote.amount / 10);
             const pointsRedeemedToReturn = isFullRefund ? (refundSale.redeemed_points || 0) : 0;
             const delta = -pointsEarnedToRevert + pointsRedeemedToReturn;
             if (delta !== 0) {
@@ -953,11 +1138,12 @@ export function FinancePage() {
           }
         }
 
-        // 5. Actualizar venta con items devueltos
+        // 4. Actualizar venta con items devueltos
         // - Si fue devolución total → status='voided' (no cuenta para totales/reportes)
         // - Si parcial → status='partial_refund' (sigue contando lo no devuelto)
         await db.sales.update(refundSale.id, {
           status: isFullRefund ? 'voided' : 'partial_refund',
+          ...(isFullRefund && { voided_at: new Date().toISOString() }),
           refunded_items: allRefunds,
           sync_status: 'pending_update'
         });
@@ -967,35 +1153,22 @@ export function FinancePage() {
           await addToQueue('VOID_SALE', { saleId: refundSale.id });
         }
 
-        // 6. Audit
+        // 5. Audit
         await logAuditAction(isFullRefund ? 'VOID_SALE' : 'PARTIAL_REFUND', {
-          sale_id: refundSale.id, refund_amount: refundTotal,
+          sale_id: refundSale.id, refund_amount: quote.amount,
           items: refundedItems.map(i => `${i.name} x${i.quantity}`),
           full_refund: isFullRefund || undefined,
         }, staffPayload as any);
       });
 
-      // Mensaje contextual
-      const wasFull = (() => {
-        const remainingByProduct: Record<string, number> = {};
-        (refundSale.items || []).forEach(item => {
-          const alreadyRefunded = (refundSale.refunded_items || [])
-            .filter(r => r.product_id === item.product_id)
-            .reduce((s, r) => s + r.quantity, 0);
-          remainingByProduct[item.product_id] = item.quantity - alreadyRefunded;
-        });
-        const totalRemaining = Object.values(remainingByProduct).reduce((s, n) => s + n, 0);
-        const totalSelected = Object.entries(refundSelections).reduce((s, [pid, qty]) => s + Math.min(qty, remainingByProduct[pid] || 0), 0);
-        return totalSelected > 0 && totalSelected === totalRemaining;
-      })();
-      toast.success(wasFull
-        ? `Venta anulada — devolución total de ${currency.format(refundTotal)}`
-        : `Devolución de ${currency.format(refundTotal)} procesada`);
+      toast.success(wasFullRefund
+        ? `Venta anulada — devolución total de ${currency.format(appliedAmount)}`
+        : `Devolución de ${currency.format(appliedAmount)} procesada`);
       setRefundSale(null);
       syncPush().catch(() => {});
     } catch (error) {
       console.error(error);
-      toast.error('Error al procesar la devolución');
+      toast.error(error instanceof Error && error.message ? error.message : 'Error al procesar la devolución');
     } finally {
       setIsLoading(false);
     }
@@ -1021,6 +1194,8 @@ export function FinancePage() {
       { label: 'Items', value: s => (s.items || []).map(i => `${i.quantity}x ${i.name}`).join(' | ') },
       { label: 'Descuento', value: s => safeFloat(s.discount_amount).toFixed(2) },
       { label: 'Total', value: s => safeFloat(s.total).toFixed(2) },
+      { label: 'Reembolsado', value: s => computeSaleNet(s).refundAmount.toFixed(2) },
+      { label: 'Total neto', value: s => computeSaleNet(s).netTotal.toFixed(2) },
     ];
     downloadCsv(`Ventas_${localDateStr()}`, allSales, columns);
     toast.success(`${allSales.length} venta(s) exportada(s)`);
@@ -1896,7 +2071,7 @@ export function FinancePage() {
              <div className="text-center mb-8 border-b border-dashed border-gray-300 pb-6">
                  <h1 className="text-2xl font-black text-[#0B3B68] uppercase tracking-widest mb-2">REPORTE Z</h1>
                  <p className="text-[#6B7280] font-mono text-xs">Bisne con Talla POS</p>
-                 <p className="text-sm text-[#6B7280] mt-1">Fecha: {new Date(selectedDate).toLocaleDateString()}</p>
+                 <p className="text-sm text-[#6B7280] mt-1">Fecha: {new Date(selectedDate + 'T00:00').toLocaleDateString()}</p>
              </div>
              <div className="mb-8">
                  <div className="space-y-3 font-mono text-sm text-[#1F2937]">
@@ -2124,21 +2299,39 @@ export function FinancePage() {
 
       {/* MODAL DEVOLUCIÓN (parcial o total) */}
       {refundSale && (() => {
-        // Detectar si la selección actual cubre TODA la venta (devolución total)
-        const remainingByProduct: Record<string, number> = {};
-        (refundSale.items || []).forEach(item => {
-          const alreadyRefunded = (refundSale.refunded_items || [])
-            .filter(r => r.product_id === item.product_id)
-            .reduce((s, r) => s + r.quantity, 0);
-          remainingByProduct[item.product_id] = item.quantity - alreadyRefunded;
-        });
-        const totalRemaining = Object.values(remainingByProduct).reduce((s, n) => s + n, 0);
-        const totalSelected = Object.entries(refundSelections).reduce((s, [pid, qty]) => s + Math.min(qty, remainingByProduct[pid] || 0), 0);
-        const isTotalRefund = totalSelected > 0 && totalSelected === totalRemaining;
+        // Agregar por producto (una venta puede tener varias líneas del mismo
+        // product_id — restaurante) y detectar si la selección cubre TODO.
+        const refundDelta = computeVoidDelta(
+          safeFloat(refundSale.total), refundSale.items || [], refundSale.refunded_items || [],
+        );
+        const productRows = (() => {
+          const rows: { product_id: string; name: string; unitLabel: string; sold: number; already: number; remaining: number }[] = [];
+          const seen = new Map<string, number>();
+          (refundSale.items || []).forEach(item => {
+            const idx = seen.get(item.product_id);
+            const unit = item.custom_price ?? item.price;
+            if (idx === undefined) {
+              seen.set(item.product_id, rows.length);
+              rows.push({
+                product_id: item.product_id, name: item.name,
+                unitLabel: currency.format(unit),
+                sold: item.quantity,
+                already: refundDelta.alreadyRefundedQtyByProduct[item.product_id] || 0,
+                remaining: refundDelta.pendingQtyByProduct[item.product_id] || 0,
+              });
+            } else {
+              rows[idx].sold += item.quantity;
+              // Precios distintos entre líneas (modificadores): indicar variación
+              if (rows[idx].unitLabel !== currency.format(unit)) rows[idx].unitLabel = 'precio variable';
+            }
+          });
+          return rows;
+        })();
+        const isTotalRefund = refundQuote?.coversRemainder ?? false;
 
         const selectAllForRefund = () => {
           const newSelections: Record<string, number> = {};
-          Object.entries(remainingByProduct).forEach(([pid, max]) => {
+          Object.entries(refundDelta.pendingQtyByProduct).forEach(([pid, max]) => {
             newSelections[pid] = max;
           });
           setRefundSelections(newSelections);
@@ -2167,57 +2360,54 @@ export function FinancePage() {
               </div>
             </div>
 
-            {/* Items */}
+            {/* Items (agrupados por producto) */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {(refundSale.items || []).map((item, idx) => {
-                const alreadyRefunded = (refundSale.refunded_items || [])
-                  .filter(r => r.product_id === item.product_id)
-                  .reduce((sum, r) => sum + r.quantity, 0);
-                const maxQty = item.quantity - alreadyRefunded;
-                const qty = refundSelections[item.product_id] || 0;
-                const itemTotal = qty * (item.custom_price ?? item.price);
+              {productRows.map((row) => {
+                const maxQty = row.remaining;
+                const qty = refundSelections[row.product_id] || 0;
+                const rowAmount = refundQuote?.perProduct.find(p => p.product_id === row.product_id)?.amount || 0;
 
                 if (maxQty <= 0) return (
-                  <div key={idx} className="bg-gray-50 rounded-xl p-3 opacity-50">
+                  <div key={row.product_id} className="bg-gray-50 rounded-xl p-3 opacity-50">
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="font-bold text-sm text-gray-400">{item.name}</p>
+                        <p className="font-bold text-sm text-gray-400">{row.name}</p>
                         <p className="text-[10px] text-gray-400">Ya devuelto completamente</p>
                       </div>
-                      <span className="text-xs font-bold text-gray-400">x{item.quantity}</span>
+                      <span className="text-xs font-bold text-gray-400">x{row.sold}</span>
                     </div>
                   </div>
                 );
 
                 return (
-                  <div key={idx} className={`rounded-xl p-3 border-2 transition-all ${qty > 0 ? 'bg-amber-50 border-amber-300' : 'bg-white border-gray-100'}`}>
+                  <div key={row.product_id} className={`rounded-xl p-3 border-2 transition-all ${qty > 0 ? 'bg-amber-50 border-amber-300' : 'bg-white border-gray-100'}`}>
                     <div className="flex justify-between items-start mb-2">
                       <div className="flex-1 min-w-0">
-                        <p className="font-bold text-sm text-[#1F2937]">{item.name}</p>
+                        <p className="font-bold text-sm text-[#1F2937]">{row.name}</p>
                         <p className="text-[10px] text-[#6B7280]">
-                          {currency.format(item.custom_price ?? item.price)} x {item.quantity} vendido(s)
-                          {alreadyRefunded > 0 && <span className="text-amber-600 ml-1">({alreadyRefunded} ya devuelto)</span>}
+                          {row.unitLabel} x {row.sold} vendido(s)
+                          {row.already > 0 && <span className="text-amber-600 ml-1">({row.already} ya devuelto)</span>}
                         </p>
                       </div>
-                      {qty > 0 && <span className="text-xs font-black text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">{currency.format(itemTotal)}</span>}
+                      {qty > 0 && <span className="text-xs font-black text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">{currency.format(rowAmount)}</span>}
                     </div>
                     <div className="flex items-center gap-2">
                       <label className="text-[10px] font-bold text-[#6B7280] uppercase">Devolver:</label>
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => setRefundSelections(prev => ({ ...prev, [item.product_id]: Math.max(0, qty - 1) }))}
+                          onClick={() => setRefundSelections(prev => ({ ...prev, [row.product_id]: Math.max(0, qty - 1) }))}
                           className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center font-black text-[#6B7280] transition-colors"
                         >-</button>
                         <input
                           type="number" min={0} max={maxQty} step={1}
                           value={qty}
-                          onChange={e => setRefundSelections(prev => ({ ...prev, [item.product_id]: Math.min(maxQty, Math.max(0, parseInt(e.target.value) || 0)) }))}
+                          onChange={e => setRefundSelections(prev => ({ ...prev, [row.product_id]: Math.min(maxQty, Math.max(0, parseInt(e.target.value) || 0)) }))}
                           className="w-14 text-center font-bold border border-gray-200 rounded-lg py-1 text-sm outline-none focus:ring-2 focus:ring-amber-300"
                         />
                         <button
                           type="button"
-                          onClick={() => setRefundSelections(prev => ({ ...prev, [item.product_id]: Math.min(maxQty, qty + 1) }))}
+                          onClick={() => setRefundSelections(prev => ({ ...prev, [row.product_id]: Math.min(maxQty, qty + 1) }))}
                           className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center font-black text-[#6B7280] transition-colors"
                         >+</button>
                       </div>
@@ -2231,11 +2421,18 @@ export function FinancePage() {
             {/* Footer */}
             <div className="p-4 border-t border-gray-200 flex-shrink-0 space-y-3 bg-white">
               {refundTotal > 0 && (
-                <div className={`flex justify-between items-center rounded-xl p-3 border ${isTotalRefund ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
-                  <span className={`text-sm font-bold ${isTotalRefund ? 'text-red-800' : 'text-amber-800'}`}>
-                    {isTotalRefund ? 'Reembolso total' : 'Total a reembolsar'}
-                  </span>
-                  <span className={`text-xl font-black ${isTotalRefund ? 'text-red-700' : 'text-amber-700'}`}>{currency.format(refundTotal)}</span>
+                <div className={`rounded-xl p-3 border ${isTotalRefund ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
+                  <div className="flex justify-between items-center">
+                    <span className={`text-sm font-bold ${isTotalRefund ? 'text-red-800' : 'text-amber-800'}`}>
+                      {isTotalRefund ? 'Reembolso total' : 'Total a reembolsar'}
+                    </span>
+                    <span className={`text-xl font-black ${isTotalRefund ? 'text-red-700' : 'text-amber-700'}`}>{currency.format(refundTotal)}</span>
+                  </div>
+                  {refundQuote && refundQuote.grossAmount > refundQuote.amount && (
+                    <p className="text-[10px] mt-1 text-amber-700">
+                      Valor de los productos {currency.format(refundQuote.grossAmount)} − descuentos de la venta aplicados proporcionalmente.
+                    </p>
+                  )}
                 </div>
               )}
               <div className="flex gap-3">
@@ -2288,8 +2485,13 @@ export function FinancePage() {
       {/* MODAL CIERRE */}
       {isClosing && (closingShiftStats || shiftStats) && (() => {
         const ss = closingShiftStats || shiftStats;
-        const cashDiffPreview = amount !== '' ? safeFloat(amount) - ss.expectedCash : null;
-        const transferDiffPreview = transferCount !== '' ? safeFloat(transferCount) - ss.transferSales : null;
+        // currency.subtract redondea a centavos: un conteo exacto muestra $0.00
+        // en verde (mismo valor que se guardará al cerrar), sin residuos float.
+        const cashDiffPreview = amount !== '' ? currency.subtract(safeFloat(amount), ss.expectedCash) : null;
+        const transferDiffPreview = transferCount !== '' ? currency.subtract(safeFloat(transferCount), ss.transferSales) : null;
+        const totalDiffPreview = cashDiffPreview !== null && transferDiffPreview !== null
+          ? currency.add(cashDiffPreview, transferDiffPreview)
+          : null;
         return (
         <div className="fixed inset-0 bg-[#0B3B68]/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
             <div className="bg-white rounded-2xl p-0 max-w-md w-full shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
@@ -2355,12 +2557,12 @@ export function FinancePage() {
                     </div>
 
                     {/* RESUMEN TOTAL */}
-                    {amount !== '' && transferCount !== '' && (
-                      <div className={`p-4 rounded-xl border-2 ${(cashDiffPreview! + transferDiffPreview!) === 0 ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+                    {totalDiffPreview !== null && (
+                      <div className={`p-4 rounded-xl border-2 ${totalDiffPreview === 0 ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
                         <div className="flex justify-between items-center">
                           <span className="text-sm font-black text-[#1F2937] uppercase">Diferencia Total</span>
-                          <span className={`text-xl font-black ${(cashDiffPreview! + transferDiffPreview!) === 0 ? 'text-green-700' : (cashDiffPreview! + transferDiffPreview!) > 0 ? 'text-amber-700' : 'text-red-600'}`}>
-                            {(cashDiffPreview! + transferDiffPreview!) >= 0 ? '+' : ''}{formatMoney(cashDiffPreview! + transferDiffPreview!)}
+                          <span className={`text-xl font-black ${totalDiffPreview === 0 ? 'text-green-700' : totalDiffPreview > 0 ? 'text-amber-700' : 'text-red-600'}`}>
+                            {totalDiffPreview >= 0 ? '+' : ''}{formatMoney(totalDiffPreview)}
                           </span>
                         </div>
                       </div>

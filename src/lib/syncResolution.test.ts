@@ -496,3 +496,123 @@ describe('QUEUE_TYPE_PRIORITY', () => {
     for (const t of tipos) expect(QUEUE_TYPE_PRIORITY[t]).toBeGreaterThan(0);
   });
 });
+
+// =============================================================================
+// sortQueueForUpload / computeStockSyncBlockers — orden causal de stock
+// (evita perder unidades: PRODUCT_SYNC absoluto vs. deducción del RPC de venta)
+// =============================================================================
+import { sortQueueForUpload, computeStockSyncBlockers, enqueueOrderOf } from './syncResolution';
+
+type QI = { id: string; type: string; timestamp: number; enqueued_at?: number; payload?: unknown };
+
+const salePayload = (productIds: string[]) => ({
+  sale: { id: 's' },
+  items: productIds.map(pid => ({ product_id: pid, quantity: 1 })),
+});
+
+describe('computeStockSyncBlockers', () => {
+  it('PRODUCT_SYNC encolado DESPUÉS de una venta del mismo producto queda bloqueado por ella', () => {
+    const queue: QI[] = [
+      { id: 'sale1', type: 'SALE', timestamp: 100, enqueued_at: 100, payload: salePayload(['p1']) },
+      { id: 'ps1', type: 'PRODUCT_SYNC', timestamp: 200, enqueued_at: 200, payload: { id: 'p1' } },
+    ];
+    const blockers = computeStockSyncBlockers(queue);
+    expect(blockers.get('ps1')).toEqual(['sale1']);
+  });
+
+  it('PRODUCT_SYNC encolado ANTES de la venta NO se bloquea (producto creado offline y vendido después)', () => {
+    const queue: QI[] = [
+      { id: 'ps1', type: 'PRODUCT_SYNC', timestamp: 100, enqueued_at: 100, payload: { id: 'p1' } },
+      { id: 'sale1', type: 'SALE', timestamp: 200, enqueued_at: 200, payload: salePayload(['p1']) },
+    ];
+    expect(computeStockSyncBlockers(queue).size).toBe(0);
+  });
+
+  it('ventas de OTRO producto no bloquean', () => {
+    const queue: QI[] = [
+      { id: 'sale1', type: 'SALE', timestamp: 100, enqueued_at: 100, payload: salePayload(['otro']) },
+      { id: 'ps1', type: 'PRODUCT_SYNC', timestamp: 200, enqueued_at: 200, payload: { id: 'p1' } },
+    ];
+    expect(computeStockSyncBlockers(queue).size).toBe(0);
+  });
+
+  it('COMANDA_CLOSE más antigua bloquea a cualquier PRODUCT_SYNC (los ingredientes de las recetas no son visibles en el payload)', () => {
+    const queue: QI[] = [
+      { id: 'cc1', type: 'COMANDA_CLOSE', timestamp: 100, enqueued_at: 100, payload: { sales: [] } },
+      { id: 'ps1', type: 'PRODUCT_SYNC', timestamp: 200, enqueued_at: 200, payload: { id: 'ing1' } },
+    ];
+    expect(computeStockSyncBlockers(queue).get('ps1')).toEqual(['cc1']);
+  });
+
+  it('usa enqueued_at (estable) y no timestamp (que se sobrescribe en reintentos)', () => {
+    // La venta falló y su timestamp se actualizó por backoff (ahora es "nuevo"),
+    // pero fue encolada ANTES que el PRODUCT_SYNC → debe seguir bloqueando.
+    const queue: QI[] = [
+      { id: 'sale1', type: 'SALE', timestamp: 9999, enqueued_at: 100, payload: salePayload(['p1']) },
+      { id: 'ps1', type: 'PRODUCT_SYNC', timestamp: 200, enqueued_at: 200, payload: { id: 'p1' } },
+    ];
+    expect(computeStockSyncBlockers(queue).get('ps1')).toEqual(['sale1']);
+  });
+});
+
+describe('sortQueueForUpload', () => {
+  it('caso del bug: venta offline + anulación offline → SALE sube antes que el PRODUCT_SYNC de la restauración', () => {
+    // Offline: vender 2 (SALE t100) → anular (PRODUCT_SYNC stock=10 t200 + VOID_SALE t201)
+    const queue: QI[] = [
+      { id: 'void1', type: 'VOID_SALE', timestamp: 201, enqueued_at: 201, payload: { saleId: 's' } },
+      { id: 'ps1', type: 'PRODUCT_SYNC', timestamp: 200, enqueued_at: 200, payload: { id: 'p1' } },
+      { id: 'sale1', type: 'SALE', timestamp: 100, enqueued_at: 100, payload: salePayload(['p1']) },
+    ];
+    const order = sortQueueForUpload(queue).map(i => i.id);
+    expect(order.indexOf('sale1')).toBeLessThan(order.indexOf('ps1'));
+    expect(order.indexOf('ps1')).toBeLessThan(order.indexOf('void1'));
+  });
+
+  it('ajuste de stock offline tras venta offline: la venta sube primero', () => {
+    const queue: QI[] = [
+      { id: 'ps1', type: 'PRODUCT_SYNC', timestamp: 300, enqueued_at: 300, payload: { id: 'p1' } },
+      { id: 'sale1', type: 'SALE', timestamp: 100, enqueued_at: 100, payload: salePayload(['p1']) },
+    ];
+    const order = sortQueueForUpload(queue).map(i => i.id);
+    expect(order).toEqual(['sale1', 'ps1']);
+  });
+
+  it('producto creado offline y vendido después: PRODUCT_SYNC mantiene su lugar (FK primero)', () => {
+    const queue: QI[] = [
+      { id: 'sale1', type: 'SALE', timestamp: 200, enqueued_at: 200, payload: salePayload(['nuevo']) },
+      { id: 'ps1', type: 'PRODUCT_SYNC', timestamp: 100, enqueued_at: 100, payload: { id: 'nuevo' } },
+    ];
+    const order = sortQueueForUpload(queue).map(i => i.id);
+    expect(order).toEqual(['ps1', 'sale1']);
+  });
+
+  it('varias ventas antiguas: el PRODUCT_SYNC va después de TODAS las que tocan su producto', () => {
+    const queue: QI[] = [
+      { id: 'saleA', type: 'SALE', timestamp: 100, enqueued_at: 100, payload: salePayload(['p1']) },
+      { id: 'saleB', type: 'SALE', timestamp: 150, enqueued_at: 150, payload: salePayload(['p1']) },
+      { id: 'ps1', type: 'PRODUCT_SYNC', timestamp: 200, enqueued_at: 200, payload: { id: 'p1' } },
+    ];
+    const order = sortQueueForUpload(queue).map(i => i.id);
+    expect(order.indexOf('saleA')).toBeLessThan(order.indexOf('ps1'));
+    expect(order.indexOf('saleB')).toBeLessThan(order.indexOf('ps1'));
+  });
+
+  it('PRODUCT_SYNC sin relación con ventas conserva el orden por prioridad', () => {
+    const queue: QI[] = [
+      { id: 'sale1', type: 'SALE', timestamp: 100, enqueued_at: 100, payload: salePayload(['otro']) },
+      { id: 'ps1', type: 'PRODUCT_SYNC', timestamp: 200, enqueued_at: 200, payload: { id: 'p1' } },
+    ];
+    const order = sortQueueForUpload(queue).map(i => i.id);
+    expect(order).toEqual(['ps1', 'sale1']); // prioridad 10 antes que 30
+  });
+
+  it('items legados sin enqueued_at caen a timestamp sin romper', () => {
+    const queue: QI[] = [
+      { id: 'sale1', type: 'SALE', timestamp: 100, payload: salePayload(['p1']) },
+      { id: 'ps1', type: 'PRODUCT_SYNC', timestamp: 200, payload: { id: 'p1' } },
+    ];
+    expect(enqueueOrderOf(queue[0])).toBe(100);
+    const order = sortQueueForUpload(queue).map(i => i.id);
+    expect(order).toEqual(['sale1', 'ps1']);
+  });
+});

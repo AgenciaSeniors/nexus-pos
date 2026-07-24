@@ -1,22 +1,30 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../lib/db';
-// ✅ CORRECCIÓN: Eliminados imports 'User' y 'History' que no se usaban
-import { ArrowUpRight, ArrowDownLeft, PackageSearch } from 'lucide-react';
+import { round3 } from '../lib/recipe';
+import { ArrowUpRight, ArrowDownLeft, ArrowRightLeft, PackageSearch } from 'lucide-react';
 
 interface Props {
-  productId?: string | null; 
+  productId?: string | null;
 }
 
 export function InventoryHistory({ productId }: Props) {
   // 1. Consultamos los movimientos
   const historyData = useLiveQuery(async () => {
-    // ✅ CORRECCIÓN: Cambiado 'let' a 'const' porque no se reasigna
-    const collection = db.movements.orderBy('created_at').reverse();
-
-    let movements = await collection.limit(productId ? 500 : 100).toArray();
-
+    const businessId = localStorage.getItem('nexus_business_id');
+    let movements;
     if (productId) {
-        movements = movements.filter(m => m.product_id === productId);
+        // Consulta por índice del producto: el historial de un producto nunca
+        // queda oculto por el límite global de movimientos recientes.
+        movements = (await db.movements.where('product_id').equals(productId).toArray())
+            .sort((a, b) => b.created_at.localeCompare(a.created_at))
+            .slice(0, 500);
+    } else {
+        movements = await db.movements
+            .orderBy('created_at')
+            .reverse()
+            .filter(m => !businessId || m.business_id === businessId)
+            .limit(100)
+            .toArray();
     }
 
     const productIds = [...new Set(movements.map(m => m.product_id))];
@@ -92,14 +100,23 @@ export function InventoryHistory({ productId }: Props) {
                 </td>
                 
                 <td className="p-4 text-center">
-                  <span
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold ${
-                      item.qty_change > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                    }`}
-                  >
-                    {item.qty_change > 0 ? <ArrowUpRight size={12} /> : <ArrowDownLeft size={12} />}
-                    {item.qty_change > 0 ? '+' : ''}{item.qty_change}
-                  </span>
+                  {isTransfer(item.reason) ? (
+                    // Traslado vitrina↔almacén: el stock TOTAL no cambia, así que
+                    // se muestra neutro (ni ganancia verde ni pérdida roja).
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-700">
+                      <ArrowRightLeft size={12} />
+                      {round3(Math.abs(item.qty_change))}
+                    </span>
+                  ) : (
+                    <span
+                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold ${
+                        item.qty_change > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                      }`}
+                    >
+                      {item.qty_change > 0 ? <ArrowUpRight size={12} /> : <ArrowDownLeft size={12} />}
+                      {item.qty_change > 0 ? '+' : ''}{round3(item.qty_change)}
+                    </span>
+                  )}
                 </td>
                 
                 <td className="p-4">
@@ -118,6 +135,10 @@ export function InventoryHistory({ productId }: Props) {
 
 function LoaderIcon() {
     return <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600 mx-auto"></div>;
+}
+
+function isTransfer(reason: string) {
+  return reason === 'transfer_to_display' || reason === 'transfer_to_warehouse';
 }
 
 function translateReason(reason: string) {

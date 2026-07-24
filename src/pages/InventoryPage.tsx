@@ -13,6 +13,7 @@ import { toast } from 'sonner';
 import { logAuditAction } from '../lib/audit';
 import { InventoryHistory } from '../components/InventoryHistory';
 import { downloadCsv, type CsvColumn } from '../lib/csv';
+import { round3 } from '../lib/recipe';
 
 export function InventoryPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
@@ -70,7 +71,9 @@ export function InventoryPage() {
   // ✅ LÓGICA DE ALERTAS (Bajo Stock y Vencimiento)
   const getDaysUntilExpiration = (dateString?: string) => {
       if (!dateString) return null;
-      const expDate = new Date(dateString);
+      // 'YYYY-MM-DD' sin hora se parsea como medianoche UTC → en husos negativos
+      // (Cuba) caería en el día ANTERIOR. Anclar a medianoche local.
+      const expDate = new Date(dateString.includes('T') ? dateString : dateString + 'T00:00');
       if (isNaN(expDate.getTime())) return null;
       const today = new Date();
       expDate.setHours(0, 0, 0, 0);
@@ -81,7 +84,9 @@ export function InventoryPage() {
 
   const LOW_STOCK_DEFAULT = 5;
   const { lowStockProducts, expiringProducts, totalAlerts } = useMemo(() => {
-    const low = products.filter(p => p.stock <= (p.low_stock_threshold ?? LOW_STOCK_DEFAULT));
+    // Platos con receta se excluyen: su stock vive en los ingredientes y su
+    // propio stock permanece en 0 — alertarían siempre sin razón.
+    const low = products.filter(p => !p.tracks_recipe && p.stock <= (p.low_stock_threshold ?? LOW_STOCK_DEFAULT));
     const expiring = products.filter(p => {
       const days = getDaysUntilExpiration(p.expiration_date);
       return days !== null && days <= 90;
@@ -175,8 +180,7 @@ export function InventoryPage() {
       try {
           const target = getStockTarget(stockAdjustment.reason);
           const isWarehouse = target === 'warehouse';
-          const currentStock = isWarehouse ? (editingProduct.stock_warehouse ?? 0) : editingProduct.stock;
-          const newStock = parseFloat(stockAdjustment.newStock.toString());
+          const newStock = round3(parseFloat(stockAdjustment.newStock.toString()));
 
           if (isNaN(newStock) || newStock < 0) {
               toast.error("El stock no puede ser negativo");
@@ -184,21 +188,24 @@ export function InventoryPage() {
               return;
           }
 
-          const difference = newStock - currentStock;
-
-          if (difference === 0) {
-              toast.info("No hay cambios en el stock");
-              setIsStockModalOpen(false);
-              return;
-          }
-
           const reasonKey = isWarehouse && !['restock'].includes(stockAdjustment.reason)
             ? `${stockAdjustment.reason}_warehouse`
             : isWarehouse ? 'restock_warehouse' : stockAdjustment.reason;
 
+          let noChange = false;
           await db.transaction('rw', [db.products, db.movements, db.action_queue, db.audit_logs], async () => {
+              // Releer el producto DENTRO de la transacción: mientras el modal
+              // estaba abierto pudo entrar una venta o un sync de otro
+              // dispositivo; escribir el snapshot viejo revertiría ese cambio.
+              const fresh = await db.products.get(editingProduct.id);
+              if (!fresh) throw new Error('Producto no encontrado');
+              const currentStock = isWarehouse ? (fresh.stock_warehouse ?? 0) : fresh.stock;
+              const difference = round3(newStock - currentStock);
+
+              if (Math.abs(difference) < 0.0005) { noChange = true; return; }
+
               const updatedProduct = {
-                  ...editingProduct,
+                  ...fresh,
                   ...(isWarehouse
                     ? { stock_warehouse: newStock }
                     : { stock: newStock }),
@@ -222,13 +229,19 @@ export function InventoryPage() {
               await addToQueue('MOVEMENT', movement);
 
               await logAuditAction('UPDATE_STOCK', {
-                  product: editingProduct.name,
+                  product: fresh.name,
                   target: isWarehouse ? 'almacén' : 'vitrina',
                   old: currentStock,
                   new: newStock,
                   reason: stockAdjustment.reason
               }, currentStaff);
           });
+          if (noChange) {
+              toast.info("No hay cambios en el stock");
+              setIsStockModalOpen(false);
+              setIsLoading(false);
+              return;
+          }
 
           toast.success(isWarehouse ? 'Almacén actualizado' : 'Vitrina actualizada');
           setIsStockModalOpen(false);
@@ -247,22 +260,27 @@ export function InventoryPage() {
   const handleTransfer = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!editingProduct || !businessId) return;
-      const qty = parseFloat(transferQty);
-      const warehouseStock = editingProduct.stock_warehouse ?? 0;
-      const displayStock = editingProduct.stock;
+      const qty = round3(parseFloat(transferQty));
       const isToDisplay = transferDirection === 'to_display';
 
       if (isNaN(qty) || qty <= 0) { toast.error("Ingresa una cantidad válida"); return; }
-      if (isToDisplay && qty > warehouseStock) { toast.error(`Solo hay ${warehouseStock} en almacén`); return; }
-      if (!isToDisplay && qty > displayStock) { toast.error(`Solo hay ${displayStock} en vitrina`); return; }
 
       setIsLoading(true);
       try {
           await db.transaction('rw', [db.products, db.movements, db.action_queue, db.audit_logs], async () => {
+              // Releer DENTRO de la transacción: valida contra el stock real del
+              // momento (no el snapshot de cuando se abrió el modal).
+              const fresh = await db.products.get(editingProduct.id);
+              if (!fresh) throw new Error('Producto no encontrado');
+              const warehouseStock = fresh.stock_warehouse ?? 0;
+              const displayStock = fresh.stock;
+              if (isToDisplay && qty > warehouseStock) throw new Error(`Solo hay ${round3(warehouseStock)} en almacén`);
+              if (!isToDisplay && qty > displayStock) throw new Error(`Solo hay ${round3(displayStock)} en vitrina`);
+
               const updatedProduct = {
-                  ...editingProduct,
-                  stock: isToDisplay ? displayStock + qty : displayStock - qty,
-                  stock_warehouse: isToDisplay ? warehouseStock - qty : warehouseStock + qty,
+                  ...fresh,
+                  stock: round3(isToDisplay ? displayStock + qty : displayStock - qty),
+                  stock_warehouse: round3(isToDisplay ? warehouseStock - qty : warehouseStock + qty),
                   updated_at: new Date().toISOString(),
                   sync_status: 'pending_update' as const
               };
@@ -283,7 +301,7 @@ export function InventoryPage() {
               await addToQueue('MOVEMENT', movement);
 
               await logAuditAction('UPDATE_STOCK', {
-                  product: editingProduct.name,
+                  product: fresh.name,
                   action: 'transfer',
                   qty,
                   from: isToDisplay ? 'almacén' : 'vitrina',
@@ -298,7 +316,7 @@ export function InventoryPage() {
           syncPush().catch(console.error);
       } catch (error) {
           console.error(error);
-          toast.error("Error al transferir");
+          toast.error(error instanceof Error && error.message ? error.message : "Error al transferir");
       } finally {
           setIsLoading(false);
       }
@@ -614,9 +632,9 @@ export function InventoryPage() {
         { label: 'Categoría', value: p => p.category || 'General' },
         { label: 'Precio Venta', value: p => p.price.toFixed(2) },
         { label: 'Costo', value: p => (p.cost ?? 0).toFixed(2) },
-        { label: 'Stock Vitrina', value: p => p.stock },
-        { label: 'Stock Almacén', value: p => p.stock_warehouse ?? 0 },
-        { label: 'Stock Total', value: p => p.stock + (p.stock_warehouse ?? 0) },
+        { label: 'Stock Vitrina', value: p => round3(p.stock) },
+        { label: 'Stock Almacén', value: p => round3(p.stock_warehouse ?? 0) },
+        { label: 'Stock Total', value: p => round3(p.stock + (p.stock_warehouse ?? 0)) },
         { label: 'Umbral Stock Bajo', value: p => p.low_stock_threshold ?? 5 },
         { label: 'Unidad', value: p => p.unit || 'un' },
         { label: 'Vencimiento', value: p => p.expiration_date || '' },
@@ -799,7 +817,7 @@ export function InventoryPage() {
                                     <td className="p-4 text-sm" data-label="Precio">
                                         <div className="text-right md:text-left">
                                             <div className="font-bold text-[#7AC142]">{currency.format(product.price)}</div>
-                                            {product.cost && <div className="text-xs text-[#6B7280]">Costo: {currency.format(product.cost)}</div>}
+                                            {(product.cost ?? 0) > 0 ? <div className="text-xs text-[#6B7280]">Costo: {currency.format(product.cost!)}</div> : null}
                                         </div>
                                     </td>
                                     <td className="p-4 text-center" data-label="Stock">
@@ -810,13 +828,13 @@ export function InventoryPage() {
                                                     : 'bg-[#7AC142]/10 border-[#7AC142]/20 text-[#7AC142]'
                                             }`}>
                                                 <span className="text-[9px] uppercase font-bold opacity-60">Vitrina</span>
-                                                <span className="text-lg font-black leading-none">{product.stock}</span>
+                                                <span className="text-lg font-black leading-none">{round3(product.stock)}</span>
                                                 <span className="text-[9px] uppercase font-bold opacity-70">{product.unit}</span>
                                             </div>
                                             {(product.stock_warehouse ?? 0) > 0 && (
                                                 <div className="inline-flex flex-col items-center px-2 py-0.5 rounded border bg-blue-50 border-blue-100 text-blue-600">
                                                     <span className="text-[8px] uppercase font-bold opacity-60">Almacén</span>
-                                                    <span className="text-sm font-black leading-none">{product.stock_warehouse}</span>
+                                                    <span className="text-sm font-black leading-none">{round3(product.stock_warehouse!)}</span>
                                                 </div>
                                             )}
                                             {isLowStock && (
@@ -889,7 +907,7 @@ export function InventoryPage() {
                                         </div>
                                         <div className="flex items-center gap-3">
                                             <span className="bg-red-100 text-red-600 px-2 py-1 rounded text-xs font-bold border border-red-200">
-                                                Quedan {p.stock} {p.unit}
+                                                Quedan {round3(p.stock)} {p.unit}
                                             </span>
                                             <button onClick={() => {setShowAlertsModal(false); openStock(p);}} className="text-[#0B3B68] text-xs font-bold hover:underline">Reabastecer</button>
                                         </div>
@@ -919,7 +937,7 @@ export function InventoryPage() {
                                         <div key={p.id} className="bg-white p-3 rounded-xl border border-orange-100 shadow-sm flex justify-between items-center">
                                             <div>
                                                 <p className="font-bold text-[#1F2937] text-sm">{p.name}</p>
-                                                <p className="text-xs text-gray-500">Fecha: {new Date(p.expiration_date!).toLocaleDateString()}</p>
+                                                <p className="text-xs text-gray-500">Fecha: {new Date(p.expiration_date!.includes('T') ? p.expiration_date! : p.expiration_date! + 'T00:00').toLocaleDateString()}</p>
                                             </div>
                                             <div className="flex items-center gap-3">
                                                 <span className={`px-2 py-1 rounded text-xs font-bold border ${statusColor}`}>
@@ -1136,7 +1154,7 @@ export function InventoryPage() {
                                 {getStockTarget(stockAdjustment.reason) === 'warehouse' ? 'Almacén Actual' : 'Vitrina Actual'}
                             </span>
                             <span className="text-xl font-bold text-[#1F2937]">
-                                {getStockTarget(stockAdjustment.reason) === 'warehouse' ? (editingProduct.stock_warehouse ?? 0) : editingProduct.stock}
+                                {round3(getStockTarget(stockAdjustment.reason) === 'warehouse' ? (editingProduct.stock_warehouse ?? 0) : editingProduct.stock)}
                             </span>
                         </div>
                         <ArrowRightLeft className="text-[#6B7280]"/>
@@ -1195,14 +1213,14 @@ export function InventoryPage() {
                     <div className="grid grid-cols-2 gap-3">
                         <div className={`rounded-xl p-3 text-center border ${!isToDisplay ? 'bg-emerald-50 border-emerald-200 ring-2 ring-emerald-300' : 'bg-blue-50 border-blue-100'}`}>
                             <span className="block text-[10px] font-bold text-blue-500 uppercase">Almacén</span>
-                            <span className="text-2xl font-black text-blue-700">{editingProduct.stock_warehouse ?? 0}</span>
+                            <span className="text-2xl font-black text-blue-700">{round3(editingProduct.stock_warehouse ?? 0)}</span>
                             <span className="block text-[9px] font-bold text-blue-400 uppercase">{editingProduct.unit}</span>
                             {isToDisplay && <span className="text-[9px] text-emerald-600 font-bold">← origen</span>}
                             {!isToDisplay && <span className="text-[9px] text-blue-600 font-bold">← destino</span>}
                         </div>
                         <div className={`rounded-xl p-3 text-center border ${isToDisplay ? 'bg-emerald-50 border-emerald-200 ring-2 ring-emerald-300' : 'bg-[#7AC142]/10 border-[#7AC142]/20'}`}>
                             <span className="block text-[10px] font-bold text-[#7AC142] uppercase">Vitrina</span>
-                            <span className="text-2xl font-black text-[#5a962e]">{editingProduct.stock}</span>
+                            <span className="text-2xl font-black text-[#5a962e]">{round3(editingProduct.stock)}</span>
                             <span className="block text-[9px] font-bold text-[#7AC142] uppercase">{editingProduct.unit}</span>
                             {isToDisplay && <span className="text-[9px] text-emerald-600 font-bold">← destino</span>}
                             {!isToDisplay && <span className="text-[9px] text-blue-600 font-bold">← origen</span>}

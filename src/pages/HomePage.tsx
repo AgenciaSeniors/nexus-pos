@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Staff } from '../lib/db';
+import { db, type Staff, type Sale, type Product, type CashShift } from '../lib/db';
 import { isRestaurantMode } from '../lib/businessType';
 import { currency } from '../lib/currency';
 import {
@@ -34,7 +34,9 @@ const formatMoney = (val: number): string => {
 
 const daysUntil = (dateString?: string): number | null => {
   if (!dateString) return null;
-  const exp = new Date(dateString);
+  // 'YYYY-MM-DD' sin hora se parsea como UTC → en Cuba (UTC-4/-5) caería en
+  // el día anterior. Anclar a medianoche local.
+  const exp = new Date(dateString.includes('T') ? dateString : dateString + 'T00:00');
   if (isNaN(exp.getTime())) return null;
   exp.setHours(0, 0, 0, 0);
   const today = new Date();
@@ -74,19 +76,19 @@ export function HomePage() {
   const isRestaurant = isRestaurantMode(settingsRows);
   const businessName = settingsRows?.[0]?.name || 'tu negocio';
 
-  const allSales = useLiveQuery(
+  const allSales = useLiveQuery<Sale[]>(
     () => (businessId ? db.sales.where('business_id').equals(businessId).toArray() : Promise.resolve([])),
     [businessId],
   ) ?? [];
 
-  const products = useLiveQuery(
+  const products = useLiveQuery<Product[]>(
     () => (businessId
       ? db.products.where('business_id').equals(businessId).filter(p => !p.deleted_at).toArray()
       : Promise.resolve([])),
     [businessId],
   ) ?? [];
 
-  const activeShift = useLiveQuery(
+  const activeShift = useLiveQuery<CashShift | undefined>(
     () => (businessId
       ? db.cash_shifts.where('business_id').equals(businessId).filter(s => s.status === 'open').first()
       : Promise.resolve(undefined)),
@@ -120,7 +122,8 @@ export function HomePage() {
   }, [todayKpis.hourly]);
 
   const { lowStock, expiring } = useMemo(() => {
-    const low = products.filter(p => p.stock <= (p.low_stock_threshold ?? LOW_STOCK_DEFAULT));
+    // Platos con receta se excluyen: su stock vive en los ingredientes
+    const low = products.filter(p => !p.tracks_recipe && p.stock <= (p.low_stock_threshold ?? LOW_STOCK_DEFAULT));
     const exp = products.filter(p => {
       const d = daysUntil(p.expiration_date);
       return d !== null && d <= 90;

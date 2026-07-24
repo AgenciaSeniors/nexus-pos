@@ -32,7 +32,8 @@ import {
   filterRemoteItemsForBulkPut,
   isReadyToRetry,
   canResolveStockConflict,
-  sortQueueByDependency,
+  sortQueueForUpload,
+  computeStockSyncBlockers,
   decideQueueItemOutcome,
   QUEUE_TYPE_LABELS,
 } from './syncResolution';
@@ -105,6 +106,9 @@ export async function addToQueue(type: QueueItem['type'], payload: QueuePayload)
       type,
       payload,
       timestamp: Date.now(),
+      // Orden causal ESTABLE: `timestamp` se sobrescribe en reintentos/backoff,
+      // así que el orden de encolado real se preserva aparte (ver syncResolution).
+      enqueued_at: Date.now(),
       retries: 0,
       status: 'pending'
     });
@@ -523,9 +527,13 @@ async function _runQueue() {
   if (allPending.length === 0) return;
 
   // Ordenar por dependencia de foreign key (entidades base primero) y luego
-  // FIFO. Esto evita errores "foreign key violation" al subir, por ejemplo,
-  // un AUDIT antes que la venta/empleado del que depende. (lógica en syncResolution.ts)
-  const ordered = sortQueueByDependency(allPending);
+  // FIFO, con una restricción causal extra: un PRODUCT_SYNC (stock ABSOLUTO)
+  // va DESPUÉS de las ventas pendientes más antiguas que tocan su producto —
+  // si subiera antes, el RPC de la venta volvería a descontar sobre un stock
+  // que ya la incluía y se perderían unidades. (lógica en syncResolution.ts)
+  const ordered = sortQueueForUpload(allPending);
+  const stockBlockers = computeStockSyncBlockers(allPending);
+  const completedThisRun = new Set<string>();
 
   let processedCount = 0;
 
@@ -533,6 +541,12 @@ async function _runQueue() {
     // Backoff exponencial: si el item falló antes y aún no cumple su espera,
     // se SALTA — pero NO bloquea a los siguientes (clave del fix).
     if (!isReadyToRetry(item.retries, item.timestamp)) continue;
+
+    // Restricción de stock: si alguna venta bloqueadora NO se completó en esta
+    // vuelta (falló o está en backoff), posponer este PRODUCT_SYNC al próximo
+    // ciclo — subirlo ahora reintroduciría la pérdida de unidades.
+    const blockedBy = stockBlockers.get(item.id);
+    if (blockedBy && blockedBy.some(id => !completedThisRun.has(id))) continue;
 
     processedCount++;
 
@@ -544,6 +558,7 @@ async function _runQueue() {
       // que el item pase a retry y la cola NO se congele (ver withTimeout arriba).
       await withTimeout(processItem(item), ITEM_PROCESS_TIMEOUT_MS, item.type);
       await db.action_queue.delete(item.id);
+      completedThisRun.add(item.id);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
@@ -718,6 +733,54 @@ async function fetchSince(table: string, businessId: string, since: number) {
     return allData;
 }
 
+// ─── PULL DE MOVIMIENTOS DE INVENTARIO ───────────────────────────────────────
+// Los movimientos eran push-only: un dispositivo no veía el historial generado
+// por otro, y tras reinstalar se perdía todo el historial aunque el stock
+// persistiera. Son filas INMUTABLES (insert-only), así que el pull incremental
+// filtra por created_at (la tabla no mantiene updated_at).
+//
+// En el primer pull (since=0) se limita a los últimos 90 días: el historial es
+// una bitácora de consulta, no data operativa, y en negocios con años de
+// movimientos un fetchAll completo castigaría a los dispositivos Android
+// low-end. A partir de ahí, el incremental de 30s mantiene todo al día.
+const MOVEMENTS_INITIAL_PULL_DAYS = 90;
+
+async function fetchMovementsSince(businessId: string, since: number) {
+    const sinceIso = since === 0
+        ? new Date(Date.now() - MOVEMENTS_INITIAL_PULL_DAYS * 86400000).toISOString()
+        : new Date(since).toISOString();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allData: any[] = [];
+    let page = 0;
+    const size = 1000;
+
+    while (true) {
+        const { data, error } = await supabase
+            .from('inventory_movements').select('*')
+            .eq('business_id', businessId)
+            .gt('created_at', sinceIso)
+            .range(page * size, (page + 1) * size - 1);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        allData.push(...data);
+        if (data.length < size) break;
+        page++;
+    }
+    return allData;
+}
+
+async function pullInventoryMovements(businessId: string, since: number): Promise<number> {
+    const movementsData = await fetchMovementsSince(businessId, since);
+    if (movementsData.length > 0) {
+        // bulkPut por id: los movimientos son inmutables, así que re-recibir uno
+        // propio (ya subido) solo reafirma su estado synced. Los pending_create
+        // locales aún no subidos tienen ids que el servidor no conoce → intactos.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await db.movements.bulkPut(movementsData.map((m: any) => ({ ...m, sync_status: 'synced' as const })));
+    }
+    return movementsData.length;
+}
+
 export async function syncCriticalData(businessId: string) {
   if (!isOnline()) return;
 
@@ -811,6 +874,16 @@ export async function syncHeavyData(businessId: string): Promise<{ products: num
     fetchAll('products', businessId),
     fetchAll('customers', businessId)
   ]);
+
+  // Historial de inventario en dispositivos nuevos/reinstalados: si la tabla
+  // local está vacía, traer los últimos 90 días de una vez (el incremental de
+  // syncLiveData mantiene el resto). No bloquea el sync de productos/clientes.
+  try {
+    const localMovements = await db.movements.count();
+    if (localMovements === 0) await pullInventoryMovements(businessId, 0);
+  } catch (err) {
+    console.warn('Pull inicial de movimientos falló (se reintenta en el ciclo):', err);
+  }
 
   if (productsData.length > 0) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1046,7 +1119,12 @@ export async function syncLiveData() {
             await safeBulkPut(db.customers as never, cleanCustomers);
         }
 
-        // 5b. Cada 24h: forzar fetchAll (orphan cleanup) para detectar items
+        // 5b. Movimientos de inventario: pull incremental por created_at para
+        // que el historial de TODOS los dispositivos sea visible en cada uno
+        // (antes era push-only y cada dispositivo solo veía el suyo).
+        await pullInventoryMovements(businessId, lastSync);
+
+        // 5c. Cada 24h: forzar fetchAll (orphan cleanup) para detectar items
         // que fueron borrados FÍSICAMENTE en el servidor. El pull incremental
         // por updated_at no puede verlos. syncHeavyData hace el set-diff completo.
         const lastHeavy = getLastHeavySyncTimestamp();

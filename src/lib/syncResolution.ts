@@ -285,11 +285,22 @@ const DEFAULT_PRIORITY = 35; // tipos desconocidos: en medio, antes que mutacion
 interface QueueItemOrderable {
   type: string;
   timestamp: number;
+  /**
+   * Momento de ENCOLADO, estable (no se toca en reintentos, a diferencia de
+   * `timestamp`, que se sobrescribe al entrar a processing / fallar).
+   * Items encolados antes de introducir el campo caen a `timestamp`.
+   */
+  enqueued_at?: number;
+}
+
+/** Orden causal de encolado de un item (estable frente a reintentos). */
+export function enqueueOrderOf(item: QueueItemOrderable): number {
+  return item.enqueued_at ?? item.timestamp;
 }
 
 /**
  * Comparador para ordenar la cola de sync: primero por prioridad de dependencia,
- * luego por timestamp (FIFO dentro del mismo nivel).
+ * luego por orden de encolado (FIFO dentro del mismo nivel).
  *
  * Uso: `pendingItems.sort(compareQueueOrder)`
  */
@@ -297,15 +308,125 @@ export function compareQueueOrder(a: QueueItemOrderable, b: QueueItemOrderable):
   const pa = QUEUE_TYPE_PRIORITY[a.type] ?? DEFAULT_PRIORITY;
   const pb = QUEUE_TYPE_PRIORITY[b.type] ?? DEFAULT_PRIORITY;
   if (pa !== pb) return pa - pb;
-  return a.timestamp - b.timestamp;
+  return enqueueOrderOf(a) - enqueueOrderOf(b);
 }
 
 /**
- * Ordena una lista de items de cola por dependencia + timestamp.
+ * Ordena una lista de items de cola por dependencia + orden de encolado.
  * No muta el array original.
  */
 export function sortQueueByDependency<T extends QueueItemOrderable>(items: T[]): T[] {
   return [...items].sort(compareQueueOrder);
+}
+
+// ─── ORDEN CAUSAL DE STOCK (evita perder unidades al reconectar) ─────────────
+//
+// Problema: PRODUCT_SYNC sube el stock como valor ABSOLUTO (upsert de la fila),
+// mientras que SALE y COMANDA_CLOSE lo DESCUENTAN en el servidor (RPC
+// process_sale_transaction). Con la ordenación por prioridad pura, un
+// PRODUCT_SYNC encolado DESPUÉS de una venta pendiente (p. ej. anulación o
+// ajuste hechos offline tras vender offline) se subía ANTES que la venta:
+// el upsert fijaba el stock ya descontado y el RPC volvía a descontar encima
+// → unidades perdidas permanentemente.
+//
+// Regla: un PRODUCT_SYNC debe procesarse DESPUÉS de toda venta pendiente MÁS
+// ANTIGUA (orden de encolado) que toque su producto — su stock absoluto ya
+// incluye el efecto de esa venta. Sigue yendo ANTES que ventas más nuevas
+// (producto creado offline y vendido después: la FK exige el producto primero).
+
+/** Tipos de cola cuyo procesamiento descuenta stock en el servidor. */
+const STOCK_DEDUCTING_TYPES = new Set(['SALE', 'COMANDA_CLOSE']);
+
+interface QueueItemWithPayload extends QueueItemOrderable {
+  id: string;
+  payload?: unknown;
+}
+
+/** product_ids que un item de venta descuenta en el servidor, o `null` si no
+ *  se pueden determinar con certeza (→ tratar como "toca cualquier producto").
+ *  COMANDA_CLOSE devuelve `null`: con recetas, el servidor descuenta
+ *  INGREDIENTES que el cliente no conoce desde el payload. */
+function productsDeductedBy(item: QueueItemWithPayload): Set<string> | null {
+  if (item.type === 'COMANDA_CLOSE') return null;
+  if (item.type === 'SALE') {
+    const p = item.payload as { items?: { product_id?: string }[] } | undefined;
+    if (!p || !Array.isArray(p.items)) return null;
+    return new Set(p.items.map(i => i.product_id).filter((x): x is string => !!x));
+  }
+  return new Set();
+}
+
+/**
+ * Para cada PRODUCT_SYNC pendiente, calcula los ids de items de venta
+ * pendientes que deben completarse ANTES (sus "bloqueadores"): ventas con
+ * orden de encolado más antiguo que tocan el mismo producto.
+ */
+export function computeStockSyncBlockers(items: QueueItemWithPayload[]): Map<string, string[]> {
+  const blockers = new Map<string, string[]>();
+  const deducting = items.filter(i => STOCK_DEDUCTING_TYPES.has(i.type));
+  if (deducting.length === 0) return blockers;
+
+  for (const ps of items) {
+    if (ps.type !== 'PRODUCT_SYNC') continue;
+    const productId = (ps.payload as { id?: string } | undefined)?.id;
+    const psOrder = enqueueOrderOf(ps);
+    const blocking = deducting
+      .filter(d => {
+        if (enqueueOrderOf(d) >= psOrder) return false;
+        const touched = productsDeductedBy(d);
+        return touched === null || !productId || touched.has(productId);
+      })
+      .map(d => d.id);
+    if (blocking.length > 0) blockers.set(ps.id, blocking);
+  }
+  return blockers;
+}
+
+/**
+ * Ordena la cola para subir: prioridad de dependencia + FIFO, y con cada
+ * PRODUCT_SYNC bloqueado recolocado inmediatamente DESPUÉS de su último
+ * bloqueador. No muta el array original.
+ */
+export function sortQueueForUpload<T extends QueueItemWithPayload>(items: T[]): T[] {
+  const ordered = sortQueueByDependency(items);
+  const blockers = computeStockSyncBlockers(items);
+  if (blockers.size === 0) return ordered;
+
+  const result: T[] = [];
+  const emitted = new Set<string>();
+  const deferred: T[] = [];
+
+  const tryFlushDeferred = () => {
+    let progressed = true;
+    while (progressed) {
+      progressed = false;
+      for (let i = 0; i < deferred.length; i++) {
+        const item = deferred[i];
+        const pending = (blockers.get(item.id) || []).some(id => !emitted.has(id));
+        if (!pending) {
+          deferred.splice(i, 1);
+          result.push(item);
+          emitted.add(item.id);
+          progressed = true;
+          break;
+        }
+      }
+    }
+  };
+
+  for (const item of ordered) {
+    const blockedBy = blockers.get(item.id);
+    if (blockedBy && blockedBy.some(id => !emitted.has(id))) {
+      deferred.push(item);
+      continue;
+    }
+    result.push(item);
+    emitted.add(item.id);
+    tryFlushDeferred();
+  }
+  // Defensa: si algún bloqueador no estaba en la lista, emitir igual al final
+  result.push(...deferred);
+  return result;
 }
 
 /**

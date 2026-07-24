@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { addToQueue, syncPush } from '../lib/sync';
 import { logAuditAction } from '../lib/audit';
 import { currency } from '../lib/currency';
+import { computeSaleNet } from '../lib/salesStats';
 import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
 
 export function CustomersPage() {
@@ -53,7 +54,8 @@ export function CustomersPage() {
 
       sales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-      const totalSpent = sales.reduce((sum, s) => sum + s.total, 0);
+      // Neto de devoluciones parciales: lo que el cliente realmente gastó
+      const totalSpent = sales.reduce((sum, s) => sum + computeSaleNet(s).netTotal, 0);
       const lastVisit = sales.length > 0 ? sales[0].date : null;
 
       return { sales, totalSpent, lastVisit };

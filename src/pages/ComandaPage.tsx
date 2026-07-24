@@ -4,12 +4,13 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type ComandaItem, type ComandaItemModifier, type Product, type Sale, type SaleItem, type Staff } from '../lib/db';
 import { addToQueue, syncPush } from '../lib/sync';
 import { comandaItemTotal, comandaTotal } from '../lib/comanda';
-import { computeStockDeductions } from '../lib/recipe';
+import { computeStockDeductions, round3 } from '../lib/recipe';
 import { currency } from '../lib/currency';
 import { logAuditAction } from '../lib/audit';
 import { PaymentModal } from '../components/PaymentModal';
 import { ModifierPickerModal } from '../components/ModifierPickerModal';
 import { SplitBillModal } from '../components/SplitBillModal';
+import { clearSplitState } from '../lib/splitState';
 import { ArrowLeft, Search, Trash2, Package, CreditCard, ChefHat, Users, ClipboardList, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Input, EmptyState, Stepper, IconButton } from '../components/ui';
@@ -188,7 +189,7 @@ export default function ComandaPage() {
       const live = items.filter(i => !i.voided);
       const grandTotal = comandaTotal(items);
       await db.transaction('rw',
-        [db.sales, db.products, db.comandas, db.restaurant_tables, db.action_queue, db.audit_logs],
+        [db.sales, db.products, db.movements, db.comandas, db.restaurant_tables, db.action_queue, db.audit_logs],
         async () => {
           for (const s of sales) await db.sales.add(s);
           // Descuento de stock (una sola vez): por receta si el plato la tiene, o su
@@ -199,7 +200,19 @@ export default function ComandaPage() {
           );
           for (const [pid, qty] of deductions) {
             const p = await db.products.get(pid);
-            if (p) await db.products.update(pid, { stock: p.stock - qty, sync_status: 'pending_update' });
+            if (p) {
+              await db.products.update(pid, { stock: round3(p.stock - qty), sync_status: 'pending_update' });
+              // Movimiento de inventario: el historial debe explicar las bajas
+              // por venta (con receta, la baja es del ingrediente).
+              const mov = {
+                id: crypto.randomUUID(), business_id: businessId, product_id: pid,
+                qty_change: -qty, reason: 'sale',
+                created_at: now, staff_id: comanda.staff_id ?? currentStaff?.id,
+                sync_status: 'pending_create' as const,
+              };
+              await db.movements.add(mov);
+              await addToQueue('MOVEMENT', mov);
+            }
           }
           await db.comandas.update(comanda.id, { status: 'closed', closed_at: now, total: grandTotal, sale_ids: sales.map(s => s.id), sync_status: 'pending_update' });
           await db.restaurant_tables.update(comanda.table_id, { state: 'libre', current_comanda_id: null, sync_status: 'pending_update' });
@@ -209,6 +222,9 @@ export default function ComandaPage() {
           await logAuditAction('SALE', { total: grandTotal, comanda: comanda.id, ventas: sales.length }, currentStaff);
         },
       );
+      // La comanda quedó cobrada: cualquier progreso de división guardado
+      // (p. ej. de un intento de dividir abandonado) ya no aplica.
+      clearSplitState(comanda.id);
       syncPush().catch(() => {});
       toast.success('Comanda cobrada');
       navigate('/mesas');

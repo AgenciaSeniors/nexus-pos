@@ -43,8 +43,9 @@ export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled,
   const [redeemedPoints, setRedeemedPoints] = useState(0);
 
   const availablePoints = customer?.loyalty_points || 0;
-  // Max points = min of what customer has AND what would cover the total (1pt = $0.10)
-  const maxRedeemable = Math.min(availablePoints, Math.floor(total / 0.10));
+  // Max points = min of what customer has AND what would cover the total (1pt = $0.10).
+  // En centavos: total/0.10 en float da 81.999… para $8.20 y perdería un punto.
+  const maxRedeemable = Math.min(availablePoints, Math.floor(Math.round(total * 100) / 10));
   const pointsDiscount = Math.round(redeemedPoints * 0.10 * 100) / 100;
   const effectiveTotal = Math.max(0, Math.round((total - pointsDiscount) * 100) / 100);
 
@@ -193,7 +194,7 @@ export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled,
                   <div className="flex gap-1.5">
                     {[10, 15].map(pct => (
                       <button key={pct} type="button"
-                        onClick={() => setTipInput((Math.round(total * pct) / 100).toFixed(2))}
+                        onClick={() => setTipInput((Math.round(Math.round(total * 100) * (pct / 100)) / 100).toFixed(2))}
                         className="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-700 text-xs font-bold hover:bg-amber-200">
                         {pct}%
                       </button>

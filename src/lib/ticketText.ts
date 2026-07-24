@@ -6,6 +6,7 @@
  * de pago, mensaje de pie) sin depender de React ni del DOM.
  */
 import type { Sale, ParkedOrder, BusinessConfig } from './db';
+import { currency } from './currency';
 
 type TicketConfig = Pick<BusinessConfig, 'name' | 'address' | 'phone' | 'receipt_message'> | null | undefined;
 
@@ -44,9 +45,12 @@ export function buildTicketText(
   lines.push(SEP);
 
   // --- Ítems ---
+  // currency.multiply redondea a centavos por línea: el ticket muestra
+  // exactamente lo mismo que se cobró (sin desvíos de medio centavo con
+  // cantidades decimales tipo 0.5 kg).
   for (const item of doc.items || []) {
     const qty = Number(item.quantity) || 0;
-    const lineTotal = (Number(item.price) || 0) * qty;
+    const lineTotal = currency.multiply(Number(item.price) || 0, qty);
     let line = `${qty} x ${item.name}  ${money(lineTotal)}`;
     if (item.modifiers && item.modifiers.length > 0) {
       line += `\n   ↳ ${item.modifiers.map(m => m.modifier_name).join(', ')}`;
@@ -57,7 +61,11 @@ export function buildTicketText(
   lines.push(SEP);
 
   // --- Totales ---
-  const itemsSubtotal = (doc.items || []).reduce((s, i) => s + (Number(i.price) || 0) * (Number(i.quantity) || 0), 0);
+  // Suma de las líneas YA redondeadas (igual que el total cobrado por el POS)
+  const itemsSubtotal = (doc.items || []).reduce(
+    (s, i) => currency.add(s, currency.multiply(Number(i.price) || 0, Number(i.quantity) || 0)),
+    0,
+  );
   if (sale && (sale.discount_amount || sale.redeemed_points)) {
     lines.push(`Subtotal: ${money(itemsSubtotal)}`);
   }
