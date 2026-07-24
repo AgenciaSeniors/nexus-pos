@@ -9,7 +9,7 @@ sigue [Semantic Versioning](https://semver.org/lang/es/).
 
 ## [Unreleased] — Endurecimiento de sincronización offline (2026-07-22)
 
-Correcciones de la auditoría de offline/sync (migración `20260722000000_offline_sync_hardening.sql`, **aplicar en el SQL Editor de Supabase**).
+Correcciones de la auditoría de offline/sync (migración `20260722000000_offline_sync_hardening.sql`). **Migración aplicada y verificada en el proyecto de producción** (`ypbajygoqqgaurikuctd`).
 
 ### 🔒 Seguridad
 - **Validación de tenant en `process_sale_transaction` y `add_loyalty_points`**: ambos RPC son `SECURITY DEFINER` (saltan RLS) y aceptaban el `business_id` del payload sin verificar — un usuario autenticado podía crear ventas, descontar stock o alterar puntos de OTRO negocio. Ahora rechazan con `42501` como ya hacían los RPC de restaurante.
@@ -29,6 +29,14 @@ Correcciones de la auditoría de offline/sync (migración `20260722000000_offlin
 
 ### 🗄️ Infraestructura
 - **Consolidación de migraciones**: `processed_mutations` y los RPC críticos de idempotencia ahora también viven en `supabase/migrations/` (antes solo en `db-migrations/` como scripts manuales sueltos).
+
+### ✅ Verificación en producción (base real `ypbajygoqqgaurikuctd`)
+Migración aplicada con `apply_migration` (queda registrada en el historial de migraciones) y comprobada end-to-end simulando un usuario autenticado real (vía claim JWT), con datos de prueba creados y eliminados sin dejar rastro:
+- **`updated_at` server-side**: confirmadas las 18 tablas sincronizadas con trigger `BEFORE INSERT OR UPDATE`.
+- **Aislamiento multi-tenant**: una venta con `business_id` ajeno se rechaza con `42501`; con el propio pasa el guard. Mismo comportamiento verificado en `add_loyalty_points`.
+- **Resolución de `stock_conflict`**: venta que pide 2 con stock 1 → conflicto (stock intacto); tras reponer a 5, el reintento descuenta y completa (stock 3); el tercer reintento es idempotente (sin doble descuento).
+- **Guard del KDS (`set_kitchen_status`)**: una escritura de cocina con timestamp anterior se descarta (no pisa el estado más nuevo); una posterior sí aplica.
+- **Idempotencia de `add_loyalty_points`**: el mismo `idempotency_key` no vuelve a sumar el delta; un key nuevo sí aplica.
 
 ## [Unreleased] — Endurecimiento post-v1.4.0
 
