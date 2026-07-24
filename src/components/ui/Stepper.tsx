@@ -11,13 +11,15 @@ export interface StepperProps {
   /** Etiqueta accesible (ej. "Cantidad de Mojito"). */
   label?: string;
   className?: string;
+  /** Deshabilita ambos botones (edición bloqueada). */
+  disabled?: boolean;
 }
 
 /** Control de cantidad −/N/+ táctil y accesible. Reemplaza los steppers inline. */
-export function Stepper({ value, onDecrement, onIncrement, min, max, size = 'md', label, className }: StepperProps) {
+export function Stepper({ value, onDecrement, onIncrement, min, max, size = 'md', label, className, disabled = false }: StepperProps) {
   const btn = size === 'sm' ? 'w-8 h-8' : 'w-9 h-9';
-  const canDec = min === undefined || value > min;
-  const canInc = max === undefined || value < max;
+  const canDec = !disabled && (min === undefined || value > min);
+  const canInc = !disabled && (max === undefined || value < max);
   return (
     <div className={cn('inline-flex items-center gap-1', className)} role="group" aria-label={label}>
       <button

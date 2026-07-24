@@ -45,3 +45,13 @@ export function saveSplitState(comandaId: string, state: SavedSplitState): void 
 export function clearSplitState(comandaId: string): void {
   try { localStorage.removeItem(splitStateKey(comandaId)); } catch { /* noop */ }
 }
+
+/**
+ * `true` si hay una división EN CURSO para la comanda: existe progreso guardado
+ * con al menos una cuenta ya cobrada. Mientras esté en curso, la comanda no
+ * debe editarse (agregar/quitar ítems recalcularía totales ya cobrados).
+ */
+export function hasSplitInProgress(comandaId: string): boolean {
+  const s = loadSplitState(comandaId);
+  return !!s && Object.keys(s.paid).length > 0;
+}

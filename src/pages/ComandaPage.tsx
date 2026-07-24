@@ -10,7 +10,7 @@ import { logAuditAction } from '../lib/audit';
 import { PaymentModal } from '../components/PaymentModal';
 import { ModifierPickerModal } from '../components/ModifierPickerModal';
 import { SplitBillModal } from '../components/SplitBillModal';
-import { clearSplitState } from '../lib/splitState';
+import { clearSplitState, hasSplitInProgress } from '../lib/splitState';
 import { ArrowLeft, Search, Trash2, Package, CreditCard, ChefHat, Users, ClipboardList, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Input, EmptyState, Stepper, IconButton } from '../components/ui';
@@ -26,6 +26,11 @@ export default function ComandaPage() {
   const [showSplit, setShowSplit] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [pickerProduct, setPickerProduct] = useState<Product | null>(null);
+  // División en curso (progreso guardado con cuentas ya cobradas): mientras
+  // exista, la comanda queda BLOQUEADA para edición — agregar/quitar ítems
+  // recalcularía totales que ya se cobraron a algunos comensales.
+  const [splitInProgress, setSplitInProgress] = useState(() => hasSplitInProgress(comandaId));
+  const refreshSplitState = () => setSplitInProgress(hasSplitInProgress(comandaId));
 
   const comanda = useLiveQuery(() => db.comandas.get(comandaId), [comandaId]);
   const table = useLiveQuery(() => comanda ? db.restaurant_tables.get(comanda.table_id) : undefined, [comanda?.table_id]);
@@ -90,8 +95,17 @@ export default function ComandaPage() {
 
   const total = comandaTotal(items);
 
+  // Guard común: ninguna edición de ítems mientras haya una división en curso.
+  const blockedBySplit = (): boolean => {
+    if (splitInProgress) {
+      toast.error('División en curso: termina o cancela las cuentas antes de editar la comanda.');
+      return true;
+    }
+    return false;
+  };
+
   const createItem = async (product: Product, modifiers?: ComandaItemModifier[], perUnitTotal?: number) => {
-    if (!comanda) return;
+    if (!comanda || blockedBySplit()) return;
     const hasMods = !!modifiers && modifiers.length > 0;
     try {
       // Sin modificadores ni nota: si ya existe una línea idéntica, sumar cantidad.
@@ -123,7 +137,7 @@ export default function ComandaPage() {
   };
 
   const addProduct = async (product: Product) => {
-    if (!comanda) return;
+    if (!comanda || blockedBySplit()) return;
     // Si el producto tiene grupos de modificadores, abrir el selector.
     if (groupsForProduct(product.id).length > 0) {
       setPickerProduct(product);
@@ -133,6 +147,7 @@ export default function ComandaPage() {
   };
 
   const changeQty = async (item: ComandaItem, delta: number) => {
+    if (blockedBySplit()) return;
     const next = item.quantity + delta;
     if (next <= 0) { await removeItem(item); return; }
     const updated: ComandaItem = { ...item, quantity: next, sync_status: 'pending_update' };
@@ -143,6 +158,7 @@ export default function ComandaPage() {
   };
 
   const removeItem = async (item: ComandaItem) => {
+    if (blockedBySplit()) return;
     // Marcamos voided (no borramos): la fila ya pudo sincronizarse a otros dispositivos.
     const updated: ComandaItem = { ...item, voided: true, sync_status: 'pending_update' };
     await db.transaction('rw', [db.comanda_items, db.action_queue], async () => {
@@ -291,12 +307,21 @@ export default function ComandaPage() {
             )}
           </div>
         </div>
+        {splitInProgress && (
+          <div className="mb-4 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 flex items-start gap-2">
+            <Users size={16} className="mt-0.5 shrink-0 text-amber-600" />
+            <span>
+              <strong>División en curso.</strong> La comanda está bloqueada para edición hasta terminar o cancelar las cuentas.
+              Pulsa <strong>Dividir</strong> para retomar el cobro.
+            </span>
+          </div>
+        )}
         <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar producto…"
-          aria-label="Buscar producto" icon={<Search size={18} />} className="mb-4" />
+          aria-label="Buscar producto" icon={<Search size={18} />} className="mb-4" disabled={splitInProgress} />
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
           {filteredProducts.slice(0, 60).map(p => (
-            <button key={p.id} onClick={() => addProduct(p)}
-              className="p-3 rounded-xl border border-gray-200 bg-white text-left shadow-card hover:border-[#7AC142] hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-200 active:scale-95">
+            <button key={p.id} onClick={() => addProduct(p)} disabled={splitInProgress}
+              className="p-3 rounded-xl border border-gray-200 bg-white text-left shadow-card hover:border-[#7AC142] hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:pointer-events-none">
               <p className="font-bold text-sm text-[#1F2937] line-clamp-2">{p.name}</p>
               <p className="text-[#7AC142] font-black text-sm mt-1">${p.price.toFixed(2)}</p>
             </button>
@@ -325,9 +350,9 @@ export default function ComandaPage() {
                 {it.note ? <p className="text-[11px] text-amber-700 truncate">📝 {it.note}</p> : null}
                 <p className="text-xs text-[#6B7280]">${comandaItemTotal(it).toFixed(2)}</p>
               </div>
-              <Stepper size="sm" value={it.quantity} label={`Cantidad de ${it.name}`}
+              <Stepper size="sm" value={it.quantity} label={`Cantidad de ${it.name}`} disabled={splitInProgress}
                 onDecrement={() => changeQty(it, -1)} onIncrement={() => changeQty(it, 1)} />
-              <IconButton size="sm" variant="danger" label={`Quitar ${it.name}`} icon={<Trash2 size={14} />} onClick={() => removeItem(it)} />
+              <IconButton size="sm" variant="danger" label={`Quitar ${it.name}`} icon={<Trash2 size={14} />} disabled={splitInProgress} onClick={() => removeItem(it)} />
             </div>
           ))}
         </div>
@@ -342,16 +367,20 @@ export default function ComandaPage() {
             </Button>
           )}
           <div className="flex gap-2">
-            <Button variant="secondary" size="lg" onClick={() => setShowSplit(true)}
+            <Button variant={splitInProgress ? 'primary' : 'secondary'} size="lg" onClick={() => setShowSplit(true)}
               disabled={liveItems.length === 0 || isClosing || !activeShift}
-              className="border-2 border-[#0B3B68] text-[#0B3B68]" icon={<Users size={18} />}>
-              Dividir
+              className={splitInProgress ? '' : 'border-2 border-[#0B3B68] text-[#0B3B68]'} icon={<Users size={18} />}>
+              {splitInProgress ? 'Retomar división' : 'Dividir'}
             </Button>
-            <Button variant="primary" size="lg" fullWidth onClick={() => setShowPayment(true)}
-              disabled={liveItems.length === 0 || isClosing || !activeShift}
-              loading={isClosing} icon={<CreditCard size={20} />}>
-              {!activeShift ? 'Caja cerrada' : 'Cobrar'}
-            </Button>
+            {/* Con una división en curso, "Cobrar" el total completo duplicaría
+                las cuentas ya cobradas: solo se puede retomar la división. */}
+            {!splitInProgress && (
+              <Button variant="primary" size="lg" fullWidth onClick={() => setShowPayment(true)}
+                disabled={liveItems.length === 0 || isClosing || !activeShift}
+                loading={isClosing} icon={<CreditCard size={20} />}>
+                {!activeShift ? 'Caja cerrada' : 'Cobrar'}
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -372,8 +401,8 @@ export default function ComandaPage() {
           staffName={comanda.staff_name ?? currentStaff?.name}
           staffList={staffList}
           buildSaleItem={buildSaleItem}
-          onCancel={() => setShowSplit(false)}
-          onComplete={(sales) => { setShowSplit(false); finalizeComanda(sales); }}
+          onCancel={() => { setShowSplit(false); refreshSplitState(); }}
+          onComplete={(sales) => { setShowSplit(false); refreshSplitState(); finalizeComanda(sales); }}
         />
       )}
 
