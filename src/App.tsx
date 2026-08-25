@@ -274,11 +274,13 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
       const msg = String((err as { message?: string } | null)?.message ?? '');
 
       if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-          // "Failed to fetch" NO siempre es falta de internet: un 500 del
-          // servidor de correo sin cabeceras CORS llega igual. Si el
-          // dispositivo se ve en línea, culpar a la conexión despista.
+          // "Failed to fetch" NO siempre es falta de internet: también sale
+          // cuando el propio servidor no responde (proyecto de Supabase en
+          // pausa) o cuando un 500 del envío SMTP llega sin cabeceras CORS y
+          // el navegador no deja leer la respuesta. Si el dispositivo se ve
+          // en línea, culpar a la conexión del usuario despista.
           return navigator.onLine
-              ? 'No pudimos enviar el código: el servidor de correo no respondió. Escríbenos por WhatsApp y te ayudamos a restablecerla.'
+              ? 'No pudimos contactar con el servidor para enviar el código. Intenta en unos minutos; si sigue igual, escríbenos por WhatsApp.'
               : 'Sin conexión a internet. Conéctate y vuelve a intentarlo.';
       }
       if (status === 429 || code.includes('rate_limit') || /security purposes|rate limit/i.test(msg)) {

@@ -43,14 +43,20 @@ Después de configurarlo, subir los límites en
 leer la respuesta** del servidor. No siempre significa "sin internet":
 
 - Si el dispositivo está **sin conexión**, es literal.
-- Si el dispositivo está **en línea** (el usuario puede iniciar sesión con
-  normalidad), lo habitual es que `/auth/v1/recover` haya devuelto un `500`
-  del envío SMTP **sin cabeceras CORS**: el navegador bloquea la lectura y la
-  app solo ve `Failed to fetch`. Por fuera parece un problema de red; por
-  dentro es el punto 1 de este documento.
+- Si el dispositivo está **en línea** pero **nada** de la app funciona (ni
+  iniciar sesión ni sincronizar), el servidor no está respondiendo: lo más
+  común es que el **proyecto de Supabase esté en pausa**
+  (Dashboard → estado del proyecto; un proyecto pausado no sirve la API y
+  todas las peticiones fallan así). Se arregla reanudándolo, no en el código.
+- Si el dispositivo está **en línea y el login sí funciona**, lo habitual es
+  que `/auth/v1/recover` haya devuelto un `500` del envío SMTP **sin
+  cabeceras CORS**: el navegador bloquea la lectura y la app solo ve
+  `Failed to fetch`. Por fuera parece un problema de red; por dentro es el
+  punto 1 de este documento.
 
-Cómo distinguirlos: si el login funciona pero el envío del código no, la red
-está bien y el fallo es del servidor de correo. Confírmalo en los Auth Logs.
+Cómo distinguirlos: prueba a iniciar sesión. Si tampoco entra, el servidor
+está caído o en pausa; si entra, el fallo es del envío de correo. Confírmalo
+en los Auth Logs — un proyecto en pausa no genera ninguna línea de log.
 
 ### 2. Límite de un correo cada 60 segundos por usuario
 
