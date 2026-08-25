@@ -122,6 +122,17 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
 
   const [loading, setLoading] = useState(false);
 
+  // Segundos que faltan para poder volver a pedir un código. Supabase solo
+  // acepta una solicitud por usuario cada 60 s: sin este contador el usuario
+  // pulsa "Reenviar código", recibe un 429 y cree que el sistema falla.
+  const [otpCooldown, setOtpCooldown] = useState(0);
+
+  useEffect(() => {
+    if (otpCooldown <= 0) return;
+    const id = setInterval(() => setOtpCooldown(s => (s <= 1 ? 0 : s - 1)), 1000);
+    return () => clearInterval(id);
+  }, [otpCooldown]);
+
   // Estado de rate limit (se actualiza al cambiar el email para mostrar al usuario)
   const [lockoutStatus, setLockoutStatus] = useState(() => checkLockout(''));
 
@@ -249,21 +260,58 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
     }
   };
 
+  // Traduce los fallos de resetPasswordForEmail a algo accionable. Los dos
+  // casos reales en producción son el 429 de Supabase (un correo por usuario
+  // cada 60 s) y el 500 "Error sending recovery email", que ocurre cuando el
+  // proyecto usa el correo integrado de Supabase: solo entrega a las
+  // direcciones del equipo y con un tope de 2 correos/hora. Ver
+  // docs/correo-recuperacion-contrasena.md.
+  const describeResetError = (err: unknown): string => {
+      const status = (err as { status?: number } | null)?.status;
+      const code = String((err as { code?: string } | null)?.code ?? '');
+      const msg = String((err as { message?: string } | null)?.message ?? '');
+
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+          return 'Sin conexión con el servidor. Conéctate a internet e intenta de nuevo.';
+      }
+      if (status === 429 || code.includes('rate_limit') || /security purposes|rate limit/i.test(msg)) {
+          const secs = Number(msg.match(/(\d+)\s*seconds?/i)?.[1] ?? 60);
+          return `Solo puedes pedir un código cada ${secs} segundos. Espera y vuelve a intentarlo.`;
+      }
+      if (status === 500 || /sending .*email|smtp/i.test(msg)) {
+          return 'El servidor de correo no pudo enviar el código. Escríbenos por WhatsApp y te ayudamos a restablecerla.';
+      }
+      if (/invalid.*email|email.*invalid/i.test(msg)) {
+          return 'Ese correo no es válido. Revísalo e intenta de nuevo.';
+      }
+      return msg || 'No se pudo enviar el código. Intenta de nuevo.';
+  };
+
   const handleForgotPassword = async (e?: React.FormEvent) => {
       e?.preventDefault();
-      if (!email) return toast.error("Por favor, ingresa tu correo electrónico");
+      const target = email.trim();
+      if (!target) return toast.error("Por favor, ingresa tu correo electrónico");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target)) {
+          return toast.error("Escribe un correo válido, por ejemplo: nombre@correo.com");
+      }
+      if (otpCooldown > 0) {
+          return toast.error(`Espera ${otpCooldown}s antes de pedir otro código.`);
+      }
       setLoading(true);
       try {
           // Envía un código de 6 dígitos al correo. La plantilla "Reset Password"
           // de Supabase debe incluir {{ .Token }}. No usamos enlace porque la app
           // es solo-APK y no hay sitio web a donde abrir el enlace.
-          const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+          const { error } = await supabase.auth.resetPasswordForEmail(target);
           if (error) throw error;
           setOtpCode('');
+          setOtpCooldown(60);
           toast.success("Te enviamos un código de 6 dígitos a tu correo. Revisa tu bandeja y la carpeta de spam.");
           setMode('otp');
       } catch (err) {
-          toast.error(err instanceof Error ? err.message : "No se pudo enviar el código. Intenta de nuevo.");
+          // El mensaje crudo queda en consola para diagnosticar desde logcat.
+          console.error('[reset-password] fallo al enviar el código:', err);
+          toast.error(describeResetError(err));
       } finally {
           setLoading(false);
       }
@@ -289,7 +337,17 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
           setMode('login');
           toast.success("¡Contraseña actualizada! Ya puedes iniciar sesión con tu nueva contraseña.");
       } catch (err) {
-          toast.error(err instanceof Error ? err.message : "Código inválido o expirado. Pide uno nuevo.");
+          // Si el código era correcto pero falló updateUser, verifyOtp ya dejó
+          // una sesión de recuperación abierta: cerrarla para que la app no
+          // entre sola con la contraseña vieja.
+          await supabase.auth.signOut().catch(() => {});
+          console.error('[reset-password] fallo al verificar el código:', err);
+          const msg = String((err as { message?: string } | null)?.message ?? '');
+          if (/password/i.test(msg)) {
+              toast.error('No se pudo guardar la nueva contraseña: ' + msg);
+          } else {
+              toast.error('Código inválido o expirado. Pide uno nuevo.');
+          }
       } finally {
           onRegistrationEnd();
           setLoading(false);
@@ -455,11 +513,11 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 </div>
               )}
 
-              <button disabled={loading || (mode === 'login' && lockoutStatus.isLocked)} type="submit" className="w-full bg-[#0B3B68] text-white font-bold py-3.5 rounded-xl hover:bg-[#092b4d] transition-all flex items-center justify-center gap-2 mt-6 shadow-xl shadow-[#0B3B68]/20 disabled:opacity-70 disabled:cursor-not-allowed active:scale-95 text-lg">
+              <button disabled={loading || (mode === 'login' && lockoutStatus.isLocked) || (mode === 'forgot' && otpCooldown > 0)} type="submit" className="w-full bg-[#0B3B68] text-white font-bold py-3.5 rounded-xl hover:bg-[#092b4d] transition-all flex items-center justify-center gap-2 mt-6 shadow-xl shadow-[#0B3B68]/20 disabled:opacity-70 disabled:cursor-not-allowed active:scale-95 text-lg">
                 {loading && <Loader2 className="animate-spin w-5 h-5" />}
                 {mode === 'login' && lockoutStatus.isLocked
                   ? `Bloqueado · ${formatLockoutTime(lockoutStatus.secondsLeft)}`
-                  : mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? 'Enviar código' : mode === 'otp' ? 'Cambiar contraseña' : 'Registrar Negocio'}
+                  : mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? (otpCooldown > 0 ? `Enviar código · ${otpCooldown}s` : 'Enviar código') : mode === 'otp' ? 'Cambiar contraseña' : 'Registrar Negocio'}
                 {!loading && mode !== 'forgot' && !(mode === 'login' && lockoutStatus.isLocked) && <ArrowRight className="w-5 h-5" />}
               </button>
             </form>
@@ -472,8 +530,8 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
               )}
 
               {mode === 'otp' && (
-                  <button type="button" onClick={() => handleForgotPassword()} disabled={loading} className="block w-full text-sm font-bold text-[#6B7280] hover:text-[#0B3B68] transition-colors disabled:opacity-50">
-                    Reenviar código
+                  <button type="button" onClick={() => handleForgotPassword()} disabled={loading || otpCooldown > 0} className="block w-full text-sm font-bold text-[#6B7280] hover:text-[#0B3B68] transition-colors disabled:opacity-50">
+                    {otpCooldown > 0 ? `Reenviar código en ${otpCooldown}s` : 'Reenviar código'}
                   </button>
               )}
 
