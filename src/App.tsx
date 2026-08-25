@@ -260,11 +260,13 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
     }
   };
 
-  // Traduce los fallos de resetPasswordForEmail a algo accionable. Los dos
+  // Traduce los fallos de resetPasswordForEmail a algo accionable. Los tres
   // casos reales en producción son el 429 de Supabase (un correo por usuario
-  // cada 60 s) y el 500 "Error sending recovery email", que ocurre cuando el
-  // proyecto usa el correo integrado de Supabase: solo entrega a las
-  // direcciones del equipo y con un tope de 2 correos/hora. Ver
+  // cada 60 s), el 500 "Error sending recovery email" —el proyecto usa el
+  // correo integrado de Supabase, que solo entrega a las direcciones del
+  // equipo y con un tope de 2 correos/hora— y el "Failed to fetch" que
+  // devuelve fetch cuando ese mismo 500 llega sin cabeceras CORS y el
+  // navegador no deja leer la respuesta. Ver
   // docs/correo-recuperacion-contrasena.md.
   const describeResetError = (err: unknown): string => {
       const status = (err as { status?: number } | null)?.status;
@@ -272,7 +274,12 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
       const msg = String((err as { message?: string } | null)?.message ?? '');
 
       if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-          return 'Sin conexión con el servidor. Conéctate a internet e intenta de nuevo.';
+          // "Failed to fetch" NO siempre es falta de internet: un 500 del
+          // servidor de correo sin cabeceras CORS llega igual. Si el
+          // dispositivo se ve en línea, culpar a la conexión despista.
+          return navigator.onLine
+              ? 'No pudimos enviar el código: el servidor de correo no respondió. Escríbenos por WhatsApp y te ayudamos a restablecerla.'
+              : 'Sin conexión a internet. Conéctate y vuelve a intentarlo.';
       }
       if (status === 429 || code.includes('rate_limit') || /security purposes|rate limit/i.test(msg)) {
           const secs = Number(msg.match(/(\d+)\s*seconds?/i)?.[1] ?? 60);

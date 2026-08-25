@@ -37,6 +37,21 @@ Amazon SES…). Hay que dar de alta y verificar el dominio del remitente
 Después de configurarlo, subir los límites en
 `Authentication → Rate Limits → Emails` (por defecto quedan muy bajos).
 
+### 1-bis. El error aparece como `Failed to fetch`
+
+`Failed to fetch` (o `NetworkError`) es lo que lanza `fetch` cuando **no pudo
+leer la respuesta** del servidor. No siempre significa "sin internet":
+
+- Si el dispositivo está **sin conexión**, es literal.
+- Si el dispositivo está **en línea** (el usuario puede iniciar sesión con
+  normalidad), lo habitual es que `/auth/v1/recover` haya devuelto un `500`
+  del envío SMTP **sin cabeceras CORS**: el navegador bloquea la lectura y la
+  app solo ve `Failed to fetch`. Por fuera parece un problema de red; por
+  dentro es el punto 1 de este documento.
+
+Cómo distinguirlos: si el login funciona pero el envío del código no, la red
+está bien y el fallo es del servidor de correo. Confírmalo en los Auth Logs.
+
 ### 2. Límite de un correo cada 60 segundos por usuario
 
 Supabase devuelve `429` con *"For security purposes, you can only request this
