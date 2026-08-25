@@ -16,6 +16,9 @@ sigue [Semantic Versioning](https://semver.org/lang/es/).
 - **Validación del correo antes de llamar al servidor**: evita gastar el límite de envíos con direcciones mal escritas.
 - **`Failed to fetch` ya no se atribuye a la conexión del usuario**: ese error también aparece cuando el servidor no responde (proyecto de Supabase en pausa) o cuando un `500` del envío SMTP llega sin cabeceras CORS. Ahora el mensaje distingue según `navigator.onLine`: sin conexión culpa a internet; en línea dice que no se pudo contactar con el servidor y ofrece WhatsApp.
 
+### ✅ Pruebas
+- **E2E del flujo de recuperación** (`tests/password-reset.spec.ts`, Playwright): interceptan `/auth/v1/recover` y reproducen las respuestas reales —fallo de red, `429`, `500` del servidor de correo y envío correcto— comprobando el mensaje que muestra la app, el bloqueo del reenvío con cuenta atrás y que un correo mal escrito no gasta una petición. `playwright.config.ts` ahora define `baseURL`, levanta Vite con credenciales ficticias (ninguna prueba puede tocar producción) y admite `CHROMIUM_PATH` para contenedores con el navegador preinstalado.
+
 ### 📄 Documentación
 - **`docs/correo-recuperacion-contrasena.md`**: causas reales de que el código no llegue — la principal es que el proyecto siga usando el correo integrado de Supabase, que **solo entrega a las direcciones del equipo** y con tope de 2 correos/hora; se requiere SMTP propio con dominio verificado. Incluye además la plantilla con `{{ .Token }}`, los rate limits y cómo comprobarlo en los Auth Logs.
 
