@@ -1210,11 +1210,12 @@ export function SettingsPage() {
                 title: 'Inventario',
                 steps: [
                   'Crea el producto con nombre, precio y categoría',
-                  'Al crearlo, pon la cantidad disponible (existencia) — si la dejas en 0 el producto NO aparecerá en el POS',
-                  'Para agregar existencia después: toca el producto → "Ajustar Stock" → ingresa la cantidad a sumar',
+                  'Al crearlo, pon la "Cantidad Inicial" y elige dónde entra: Vitrina (lo normal) o Almacén — si la dejas vacía o en 0 el producto NO aparecerá en el POS',
+                  'Para agregar existencia después: toca el producto → "Ajustar Stock" → elige el motivo (Compra, Merma/Daño, Devolución, Corrección) y a dónde se aplica, Vitrina o Almacén',
+                  'Una compra puede entrar directo a la vitrina: ya no hace falta meterla al almacén y trasladarla después',
                   'El stock se descuenta automáticamente con cada venta realizada',
                   'Edita precio, nombre o categoría tocando el lápiz en cualquier momento',
-                  'Transferencia almacén ↔ vitrina: toca el producto → "Transferir" → elige la dirección (al mostrador o de vuelta al almacén) y la cantidad — el movimiento queda registrado en el historial',
+                  'Transferencia almacén ↔ vitrina: toca el producto → "Transferir" → elige la dirección (al mostrador o de vuelta al almacén) y la cantidad — útil solo si manejas almacén aparte; el movimiento queda en el historial',
                 ],
               },
               {
