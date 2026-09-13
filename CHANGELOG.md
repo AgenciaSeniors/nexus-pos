@@ -7,6 +7,25 @@ sigue [Semantic Versioning](https://semver.org/lang/es/).
 
 ---
 
+## [Unreleased] — Recuperación de contraseña: errores claros y diagnóstico (2026-08-25)
+
+### 🐛 Bugs corregidos
+- **"Enviar código" fallaba sin decir por qué**: el toast mostraba el mensaje crudo de Supabase (en inglés) o uno genérico. Ahora los fallos de `resetPasswordForEmail` se traducen: sin internet, límite de 1 correo cada 60 s (429), fallo del servidor de correo/SMTP (500) y correo con formato inválido. El error real queda en consola con el prefijo `[reset-password]` para verlo por `adb logcat`.
+- **Reintentos que provocaban el propio error**: al pulsar "Reenviar código" enseguida, Supabase respondía 429 y parecía que el sistema estaba roto. Tras un envío correcto, el botón queda bloqueado 60 s con cuenta atrás visible (también el de "Enviar código").
+- **Sesión abierta si fallaba el cambio de contraseña**: si `verifyOtp` acertaba pero `updateUser` fallaba, la sesión de recuperación quedaba viva y la app podía entrar sola con la contraseña vieja mostrando "Código inválido". Ahora se cierra sesión en el fallo y el mensaje distingue código inválido de contraseña rechazada.
+- **Validación del correo antes de llamar al servidor**: evita gastar el límite de envíos con direcciones mal escritas.
+- **`Failed to fetch` ya no se atribuye a la conexión del usuario**: ese error también aparece cuando el servidor no responde (proyecto de Supabase en pausa) o cuando un `500` del envío SMTP llega sin cabeceras CORS. Ahora el mensaje distingue según `navigator.onLine`: sin conexión culpa a internet; en línea dice que no se pudo contactar con el servidor y ofrece WhatsApp.
+
+### ✅ Pruebas
+- **E2E del flujo de recuperación** (`tests/password-reset.spec.ts`, Playwright): interceptan `/auth/v1/recover` y reproducen las respuestas reales —fallo de red, `429`, `500` del servidor de correo y envío correcto— comprobando el mensaje que muestra la app, el bloqueo del reenvío con cuenta atrás y que un correo mal escrito no gasta una petición. `playwright.config.ts` ahora define `baseURL`, levanta Vite con credenciales ficticias (ninguna prueba puede tocar producción) y admite `CHROMIUM_PATH` para contenedores con el navegador preinstalado.
+
+### 📄 Documentación
+- **`docs/correo-recuperacion-contrasena.md`**: causas reales de que el código no llegue — la principal es que el proyecto siga usando el correo integrado de Supabase, que **solo entrega a las direcciones del equipo** y con tope de 2 correos/hora; se requiere SMTP propio con dominio verificado. Incluye además la plantilla con `{{ .Token }}`, los rate limits y cómo comprobarlo en los Auth Logs.
+
+> ⚠️ El envío del correo lo hace el servidor de Supabase, no la app: si no hay SMTP propio configurado, ningún cambio en el cliente hará que el código llegue a los clientes.
+
+---
+
 ## [Unreleased] — Auditoría de finanzas e inventario (2026-07-24)
 
 Auditoría completa del flujo de números (reportes, caja, reembolsos, inventario, POS, división de cuenta, tickets) y corrección de todos los errores confirmados. **301 tests en verde** (71 nuevos); `tsc`/`eslint` con paridad exacta contra `main`.
