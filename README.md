@@ -4,8 +4,8 @@
 > Diseñado para negocios cubanos con conectividad inestable.
 
 [![CI](https://github.com/AgenciaSeniors/nexus-pos/actions/workflows/ci.yml/badge.svg)](https://github.com/AgenciaSeniors/nexus-pos/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-110%20passing-brightgreen)]()
-[![Versión](https://img.shields.io/badge/versi%C3%B3n-1.4.0-blue)]()
+[![Tests](https://img.shields.io/badge/tests-302%20passing-brightgreen)]()
+[![Versión](https://img.shields.io/badge/versi%C3%B3n-1.5.0-blue)]()
 [![Licencia](https://img.shields.io/badge/licencia-Propietaria-red)](./LICENSE)
 
 ---
