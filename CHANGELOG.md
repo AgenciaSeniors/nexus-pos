@@ -26,6 +26,58 @@ sigue [Semantic Versioning](https://semver.org/lang/es/).
 
 ---
 
+## [Unreleased] — Auditoría de finanzas e inventario (2026-07-24)
+
+Auditoría completa del flujo de números (reportes, caja, reembolsos, inventario, POS, división de cuenta, tickets) y corrección de todos los errores confirmados. **301 tests en verde** (71 nuevos); `tsc`/`eslint` con paridad exacta contra `main`.
+
+### 🐛 Bugs corregidos — Reportes y caja
+- **CRÍTICO — Las devoluciones parciales no se restaban de NINGÚN reporte**: una venta de $100 con $60 devueltos seguía contando $100 en Ingresos, Ganancia, Reporte Z, categorías, top productos y ficha del cliente. Nuevo `computeSaleNet(sale, periodEndMs)` en `salesStats.ts` que netea respetando la inmutabilidad histórica (una devolución posterior al cierre del periodo no altera su reporte).
+- **CRÍTICO — Reporte de Día/Reporte Z en $0.00 para fechas viejas**: solo se cargaban 3 días (Día) o 30 (cierre) de ventas; elegir una fecha anterior mostraba ceros con total seguridad y sin aviso. Ahora la ventana de carga se ancla a la fecha seleccionada.
+- **CRÍTICO — Encabezado del Reporte Z con el día anterior**: `new Date('YYYY-MM-DD')` se parsea como UTC; en Cuba (UTC-4/-5) el Z impreso llevaba la fecha equivocada. Anclado a medianoche local.
+- **Promedio diario dividía entre un día de más** (rango de 7 días → dividía entre 8).
+- **Ventas de 00:00–06:59 invisibles en "Ventas por Hora"** (el gráfico no sumaba el KPI); ahora todas las horas se incluyen.
+- **Gráfico del turno desaparecía en turnos nocturnos** que cruzan medianoche (longitud negativa del arreglo).
+- **El Cierre del Día heredaba el filtro de rango de "Reportes"**: el Z decía una fecha pero sumaba todo el rango.
+- **`custom_price` ignorado** en ingresos por categoría/top productos (no cuadraban con Ingresos); el ingreso del Top-5 leía el mapa de categorías por nombre (casi siempre $0).
+- **Diferencia del cierre de caja mostraba "-$0.00" en rojo** con un conteo exacto (residuo de float); igual la validación de fondos en retiros. Ahora usan resta a centavos (`currency.subtract`).
+- **Métodos de pago desconocidos desaparecían del desglose** (las tarjetas no sumaban 100%); se agrupan con transferencia como en el Reporte Z.
+- **CSV de ventas** ahora incluye columnas **Reembolsado** y **Total neto**.
+
+### 🐛 Bugs corregidos — Reembolsos y anulaciones
+- **CRÍTICO — El reembolso ignoraba los descuentos de la venta**: con 10% de descuento, devolver un ítem de $50 entregaba $50 en vez de $45. Nuevo `computeRefundQuote` que prorratea por los descuentos (manual + puntos) y nunca devuelve más de lo pagado.
+- **CRÍTICO — Reembolso de venta mixta salía completo de la gaveta**: $100 pagados $40 efectivo + $60 transferencia y un reembolso de $80 sacaba $80 de caja. Nuevo `cashPortionOfRefund` que solo descuenta de efectivo la parte realmente cobrada en efectivo.
+- **CRÍTICO — Devolución total descontaba dos veces del efectivo esperado** (la venta pasaba a anulada Y quedaba el movimiento de salida) → faltante fantasma al cierre.
+- **CRÍTICO — Anular platos con receta restauraba el stock del plato** en vez de los ingredientes (que fue lo que se descontó al cobrar) → inventario fantasma del plato e ingredientes perdidos. Ahora restaura vía receta.
+- **Anular venta con devoluciones previas del mismo turno** no compensaba los movimientos de salida ya registrados (sobrante fantasma); ahora emite el `IN` compensatorio prometido.
+- **Líneas duplicadas del mismo producto** (restaurante, mismo plato con distintos modificadores): `computeVoidDelta` sobrescribía cantidades en vez de acumularlas → se devolvía stock/dinero de más o de menos. Ahora se agregan por producto.
+- La devolución total ahora registra `voided_at`.
+
+### 🐛 Bugs corregidos — Inventario
+- **CRÍTICO — Sync offline perdía stock al reconectar**: la cola subía el stock ABSOLUTO (`PRODUCT_SYNC`) antes que ventas offline más antiguas cuyo RPC lo descuenta en el servidor → unidades perdidas permanentemente al vender y anular/ajustar sin conexión. Nuevo campo estable `enqueued_at` y `sortQueueForUpload` que impone el orden causal por producto (un `PRODUCT_SYNC` va tras las ventas más antiguas que tocan su producto, pero antes de ventas más nuevas por la FK); si la venta bloqueadora falla, el `PRODUCT_SYNC` se pospone.
+- **Deriva de decimales en stock fraccionado** (`0.6000000000000001 kg` en pantalla/CSV/historial): todas las mutaciones de stock redondean a 3 decimales.
+- **Ajustes/transferencias escribían el snapshot viejo del modal** (revertían ventas/syncs concurrentes): ahora releen el producto dentro de la transacción.
+- **Historial por producto truncado por el límite global** de movimientos: ahora consulta por índice del producto.
+- **Fechas de vencimiento corridas un día** en husos negativos (alertas y visualización): ancladas a medianoche local.
+- **Platos con receta ya no disparan siempre la alerta de bajo stock** (su stock vive en los ingredientes).
+- **Costo $0 renderizaba un "0" suelto** en la columna de precio de Inventario.
+
+### 🐛 Bugs corregidos — POS, pagos y tickets
+- **CRÍTICO — Dividir cuenta editable tras cobrar la primera parte**: bajar de 3 a 2 partes después de cobrar 1/3 cerraba la comanda cobrando menos que el total. La división queda fija tras el primer cobro, con totales congelados y aviso si la comanda cambia después.
+- **CRÍTICO — Cobros de división de cuenta se perdían**: cerrar el modal o la app con cuentas cobradas descartaba los cobros (dinero en gaveta sin registro). El progreso se persiste por comanda (`lib/splitState.ts`) y se retoma al reabrir.
+- **Editar la comanda con una división en curso queda BLOQUEADO** (agregar/quitar ítems, cambiar cantidad y el botón "Cobrar" completo): recalcularía totales ya cobrados a algunos comensales. Se muestra un banner y solo se permite "Retomar división". El bloqueo se levanta al completar o cancelar.
+- **Puntos canjeables perdían un punto** por división en float (`total/0.10`: $8.20 → 81 pts en vez de 82); ahora en centavos.
+- **Propina 10%/15%** redondeaba mal el medio centavo.
+- **Ticket**: totales de línea y subtotal ahora usan la misma matemática de centavos que el cobro (sin desvíos de $0.01 con cantidades decimales).
+- **"Total Gastado" de la ficha de cliente** descuenta las devoluciones parciales.
+
+### ✨ Inventario multi-dispositivo
+- **Las ventas ahora registran su movimiento de inventario** (`reason: 'sale'`, ingrediente si el plato tiene receta): el historial del producto explica por fin todas las bajas de stock.
+- **Los movimientos de inventario se descargan del servidor** (antes eran push-only y cada dispositivo solo veía su propio historial): pull incremental por `created_at` cada 30s + carga inicial de 90 días en dispositivos nuevos/reinstalados.
+- **Traslados vitrina↔almacén con insignia neutra** (azul, sin +/−) en el historial: el stock total no cambia en un traslado.
+
+### ✅ Tests
+- 71 tests nuevos: prorrateo de reembolsos y tope por lo pagado, líneas duplicadas, porción de efectivo de la gaveta, neteo de devoluciones en KPIs/desgloses, inmutabilidad histórica, `custom_price`, métodos de pago desconocidos, y orden causal de la cola de sync (bloqueo por producto, `enqueued_at` estable frente a reintentos, FK de producto nuevo, items legados).
+
 ## [Unreleased] — Endurecimiento de sincronización offline (2026-07-22)
 
 Correcciones de la auditoría de offline/sync (migración `20260722000000_offline_sync_hardening.sql`). **Migración aplicada y verificada en el proyecto de producción** (`ypbajygoqqgaurikuctd`).
