@@ -14,6 +14,7 @@ import { logAuditAction } from '../lib/audit';
 import { InventoryHistory } from '../components/InventoryHistory';
 import { downloadCsv, type CsvColumn } from '../lib/csv';
 import { round3 } from '../lib/recipe';
+import { resolveStockTarget, movementReason, parseInitialStock } from '../lib/stockTarget';
 
 export function InventoryPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
@@ -37,14 +38,19 @@ export function InventoryPage() {
   // --- DATOS FORMULARIO PRODUCTO ---
   const [formData, setFormData] = useState({
     name: '', price: '', sku: '', cost: '',
-    category: '', unit: '', expiration_date: '', low_stock_threshold: ''
+    category: '', unit: '', expiration_date: '', low_stock_threshold: '',
+    // Stock inicial al CREAR el producto. Antes siempre nacía en 0 y había que
+    // entrar a "Ajustar stock" aparte; y como "Compra" caía forzosamente en
+    // almacén, para dejarlo en la vitrina hacía falta además un traslado.
+    // El negocio pequeño no tiene almacén: por eso el destino por defecto es vitrina.
+    initial_stock: '', initial_target: 'display' as 'display' | 'warehouse'
   });
 
   // --- DATOS AJUSTE STOCK ---
   const [stockAdjustment, setStockAdjustment] = useState({
       newStock: 0,
       reason: 'restock',
-      target: 'warehouse' as 'display' | 'warehouse',
+      target: 'display' as 'display' | 'warehouse',
       notes: ''
   });
 
@@ -135,22 +141,50 @@ export function InventoryPage() {
             });
             toast.success('Información actualizada');
         } else {
+            const initialQty = parseInitialStock(formData.initial_stock);
+            const toWarehouse = formData.initial_target === 'warehouse';
+
             const newProduct: Product = {
                 id: crypto.randomUUID(),
                 business_id: businessId,
                 ...productData,
-                stock: 0,
+                stock: toWarehouse ? 0 : initialQty,
+                ...(toWarehouse && initialQty > 0 ? { stock_warehouse: initialQty } : {}),
                 sync_status: 'pending_create',
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
             };
 
-            await db.transaction('rw', [db.products, db.action_queue, db.audit_logs], async () => {
+            // Mismos motivos que usa el importador de CSV/Excel, para que el
+            // historial lea igual venga de donde venga el producto.
+            const initialMovement: InventoryMovement | null = initialQty > 0 ? {
+                id: crypto.randomUUID(),
+                business_id: businessId,
+                product_id: newProduct.id,
+                staff_id: currentStaff.id,
+                qty_change: initialQty,
+                reason: toWarehouse ? 'restock_warehouse' : 'initial',
+                created_at: new Date().toISOString(),
+                sync_status: 'pending_create'
+            } : null;
+
+            await db.transaction('rw', [db.products, db.movements, db.action_queue, db.audit_logs], async () => {
                 await db.products.add(newProduct);
                 await addToQueue('PRODUCT_SYNC', newProduct);
-                await logAuditAction('CREATE_PRODUCT', { name: newProduct.name }, currentStaff);
+                if (initialMovement) {
+                    await db.movements.add(initialMovement);
+                    await addToQueue('MOVEMENT', initialMovement);
+                }
+                await logAuditAction('CREATE_PRODUCT', {
+                    name: newProduct.name,
+                    ...(initialQty > 0 ? { stock: initialQty, destino: toWarehouse ? 'almacén' : 'vitrina' } : {})
+                }, currentStaff);
             });
-            toast.success(`"${newProduct.name}" creado correctamente`);
+            toast.success(
+                initialQty > 0
+                    ? `"${newProduct.name}" creado con ${initialQty} en ${toWarehouse ? 'almacén' : 'vitrina'}`
+                    : `"${newProduct.name}" creado correctamente`
+            );
         }
 
         setIsFormOpen(false);
@@ -166,11 +200,7 @@ export function InventoryPage() {
   };
 
   // --- 2. AJUSTE DE STOCK ---
-  const getStockTarget = (reason: string) => {
-    if (reason === 'restock') return 'warehouse';
-    if (reason === 'return') return 'display';
-    return stockAdjustment.target; // damage, correction → user chooses
-  };
+  const getStockTarget = (reason: string) => resolveStockTarget(reason, stockAdjustment.target);
 
   const handleStockAdjustment = async (e: React.FormEvent) => {
       e.preventDefault();
@@ -188,9 +218,7 @@ export function InventoryPage() {
               return;
           }
 
-          const reasonKey = isWarehouse && !['restock'].includes(stockAdjustment.reason)
-            ? `${stockAdjustment.reason}_warehouse`
-            : isWarehouse ? 'restock_warehouse' : stockAdjustment.reason;
+          const reasonKey = movementReason(stockAdjustment.reason, target);
 
           let noChange = false;
           await db.transaction('rw', [db.products, db.movements, db.action_queue, db.audit_logs], async () => {
@@ -649,14 +677,18 @@ export function InventoryPage() {
           name: p.name, price: p.price.toString(), cost: p.cost?.toString() || '',
           sku: p.sku || '', category: p.category || 'General', unit: p.unit || 'un',
           expiration_date: p.expiration_date || '',
-          low_stock_threshold: p.low_stock_threshold !== undefined ? p.low_stock_threshold.toString() : ''
+          low_stock_threshold: p.low_stock_threshold !== undefined ? p.low_stock_threshold.toString() : '',
+          // Editando no se toca el stock (eso va por "Ajustar stock", que deja
+          // movimiento con motivo); los campos van vacíos y el bloque se oculta.
+          initial_stock: '', initial_target: 'display'
       });
       setIsFormOpen(true);
   };
 
   const openStock = (p: Product) => {
       setEditingProduct(p);
-      setStockAdjustment({ newStock: p.stock_warehouse ?? 0, reason: 'restock', target: 'warehouse', notes: '' });
+      // Por defecto vitrina: es donde la mayoría de los negocios mete la compra.
+      setStockAdjustment({ newStock: p.stock, reason: 'restock', target: 'display', notes: '' });
       setIsStockModalOpen(true);
   };
 
@@ -674,7 +706,7 @@ export function InventoryPage() {
 
   const resetForm = () => {
       setEditingProduct(null);
-      setFormData({ name: '', price: '', cost: '', sku: '', category: '', unit: '', expiration_date: '', low_stock_threshold: '' });
+      setFormData({ name: '', price: '', cost: '', sku: '', category: '', unit: '', expiration_date: '', low_stock_threshold: '', initial_stock: '', initial_target: 'display' });
   };
 
   return (
@@ -982,10 +1014,44 @@ export function InventoryPage() {
                    </div>
                    <div>
                      <label className="text-xs font-bold text-[#6B7280] uppercase">Costo (Opcional)</label>
-                     <input type="number" step="0.01" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none" 
+                     <input type="number" step="0.01" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none"
                        value={formData.cost} onChange={e => setFormData({...formData, cost: e.target.value})}/>
                    </div>
                </div>
+
+               {/* ── STOCK INICIAL (solo al crear) ─────────────────────────
+                   Evita el rodeo de crear en 0 → ajustar stock → trasladar.   */}
+               {!editingProduct && (
+                 <div className="bg-[#0B3B68]/[0.03] border border-[#0B3B68]/10 rounded-xl p-3">
+                   <label className="text-xs font-bold text-[#6B7280] uppercase flex items-center gap-1">
+                     <Package size={11} className="text-[#0B3B68]"/> Cantidad Inicial (Opcional)
+                   </label>
+                   <div className="flex gap-2 mt-2">
+                     <input
+                       type="number" min="0" step="0.001" inputMode="decimal"
+                       placeholder="0"
+                       className="flex-1 min-w-0 p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none font-bold"
+                       value={formData.initial_stock}
+                       onChange={e => setFormData({...formData, initial_stock: e.target.value})}
+                     />
+                     <div className="flex gap-1.5 flex-shrink-0">
+                       <button type="button"
+                         onClick={() => setFormData(f => ({...f, initial_target: 'display'}))}
+                         className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all active:scale-95 ${formData.initial_target === 'display' ? 'bg-[#7AC142] text-white border-[#7AC142] shadow-md' : 'bg-white text-[#6B7280] border-gray-200'}`}>
+                         Vitrina
+                       </button>
+                       <button type="button"
+                         onClick={() => setFormData(f => ({...f, initial_target: 'warehouse'}))}
+                         className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all active:scale-95 ${formData.initial_target === 'warehouse' ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white text-[#6B7280] border-gray-200'}`}>
+                         Almacén
+                       </button>
+                     </div>
+                   </div>
+                   <p className="text-[10px] text-[#6B7280] mt-2">
+                     Déjalo vacío si aún no tienes existencias. Puedes cambiarlo después en "Ajustar stock".
+                   </p>
+                 </div>
+               )}
 
                <div className="grid grid-cols-2 gap-4">
                    <div>
@@ -1121,15 +1187,17 @@ export function InventoryPage() {
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-[#6B7280] uppercase">Motivo del Ajuste</label>
                         <div className="grid grid-cols-2 gap-2">
-                            <button type="button" onClick={() => setStockAdjustment({...stockAdjustment, reason: 'restock', target: 'warehouse', newStock: editingProduct.stock_warehouse ?? 0})} className={`p-2 text-xs font-bold rounded-lg border ${stockAdjustment.reason === 'restock' ? 'bg-[#0B3B68]/10 border-[#0B3B68] text-[#0B3B68]' : 'bg-white border-gray-200 text-[#6B7280]'}`}>Compra</button>
+                            <button type="button" onClick={() => setStockAdjustment({...stockAdjustment, reason: 'restock', newStock: stockAdjustment.target === 'warehouse' ? (editingProduct.stock_warehouse ?? 0) : editingProduct.stock})} className={`p-2 text-xs font-bold rounded-lg border ${stockAdjustment.reason === 'restock' ? 'bg-[#0B3B68]/10 border-[#0B3B68] text-[#0B3B68]' : 'bg-white border-gray-200 text-[#6B7280]'}`}>Compra</button>
                             <button type="button" onClick={() => setStockAdjustment({...stockAdjustment, reason: 'damage', newStock: stockAdjustment.target === 'warehouse' ? (editingProduct.stock_warehouse ?? 0) : editingProduct.stock})} className={`p-2 text-xs font-bold rounded-lg border ${stockAdjustment.reason === 'damage' ? 'bg-[#EF4444]/10 border-[#EF4444] text-[#EF4444]' : 'bg-white border-gray-200 text-[#6B7280]'}`}>Merma/Daño</button>
                             <button type="button" onClick={() => setStockAdjustment({...stockAdjustment, reason: 'return', target: 'display', newStock: editingProduct.stock})} className={`p-2 text-xs font-bold rounded-lg border ${stockAdjustment.reason === 'return' ? 'bg-[#F59E0B]/10 border-[#F59E0B] text-[#F59E0B]' : 'bg-white border-gray-200 text-[#6B7280]'}`}>Devolución</button>
                             <button type="button" onClick={() => setStockAdjustment({...stockAdjustment, reason: 'correction', newStock: stockAdjustment.target === 'warehouse' ? (editingProduct.stock_warehouse ?? 0) : editingProduct.stock})} className={`p-2 text-xs font-bold rounded-lg border ${stockAdjustment.reason === 'correction' ? 'bg-gray-100 border-gray-500 text-[#1F2937]' : 'bg-white border-gray-200 text-[#6B7280]'}`}>Corrección</button>
                         </div>
                     </div>
 
-                    {/* TARGET SELECTOR (solo para damage y correction) */}
-                    {(stockAdjustment.reason === 'damage' || stockAdjustment.reason === 'correction') && (
+                    {/* TARGET SELECTOR — también para 'restock': la compra ya no
+                        cae obligatoriamente en almacén. 'return' sigue fijo en
+                        vitrina (mercancía que devuelve un cliente). */}
+                    {(stockAdjustment.reason === 'restock' || stockAdjustment.reason === 'damage' || stockAdjustment.reason === 'correction') && (
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-[#6B7280] uppercase">Aplicar a</label>
                             <div className="grid grid-cols-2 gap-2">
