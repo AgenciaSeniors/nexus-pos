@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff, type InventoryMovement, type RefundedItem, type RecipeIngredient } from '../lib/db';
+import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff, type InventoryMovement, type RefundedItem, type RecipeIngredient, type ShiftCount } from '../lib/db';
 import { addToQueue, syncPull, syncPush, isOnline } from '../lib/sync';
 import { hashPin, verifyPin, needsRehash } from '../lib/pin';
 import { supabase } from '../lib/supabase';
@@ -26,6 +26,8 @@ import { isSaleValidAtTime, endOfLocalDay } from '../lib/shiftStats';
 import { computeProductProfitability, computeSaleNet } from '../lib/salesStats';
 import { computeStockDeductions, round3 } from '../lib/recipe';
 import { BRAND_CHART_COLORS, CHART_TOOLTIP_STYLE } from '../lib/chartTheme';
+import { ShiftCountPanel, type CountDraft } from '../components/ShiftCountPanel';
+import { summarizeCounts, registeredUnitsByProduct, restockedUnitsByProduct, type CountRow } from '../lib/shiftCount';
 
 const EMPTY_ARRAY: never[] = [];
 
@@ -166,6 +168,128 @@ export function FinancePage() {
       .filter(p => !p.deleted_at)
       .toArray();
   }, []) || EMPTY_ARRAY;
+
+  // ── CUADRE POR CONTEO ─────────────────────────────────────────────────────
+  // Apagado por defecto: sin el ajuste activo nada de esto se carga ni se ve.
+  const countMode = !!businessSettings?.count_reconciliation;
+
+  const shiftCounts = useLiveQuery<ShiftCount[]>(async () => {
+    if (!countMode || !activeShift) return EMPTY_ARRAY as ShiftCount[];
+    return await db.shift_counts
+      .where('[business_id+shift_id]').equals([activeShift.business_id, activeShift.id])
+      .toArray();
+  }, [countMode, activeShift]) || (EMPTY_ARRAY as ShiftCount[]);
+
+  // Movimientos de inventario DENTRO del turno: sin esto, reponer a mitad de
+  // turno se leería como mercancía que sobró y el cuadre cobraría de menos.
+  const shiftMovements = useLiveQuery<InventoryMovement[]>(async () => {
+    if (!countMode || !activeShift) return EMPTY_ARRAY as InventoryMovement[];
+    const openedAt = activeShift.opened_at;
+    return await db.movements
+      .where('business_id').equals(activeShift.business_id)
+      .filter(m => m.created_at >= openedAt)
+      .toArray();
+  }, [countMode, activeShift]) || (EMPTY_ARRAY as InventoryMovement[]);
+
+  // Borradores de conteo: apertura y cierre. Texto, no número, para que el
+  // input pueda estar vacío mientras se teclea.
+  const [openingDrafts, setOpeningDrafts] = useState<CountDraft[]>([]);
+  const [closingDrafts, setClosingDrafts] = useState<CountDraft[]>([]);
+
+  const patchDraft = (setter: React.Dispatch<React.SetStateAction<CountDraft[]>>) =>
+    (productId: string, patch: Partial<CountDraft>) =>
+      setter(prev => prev.map(d => (d.product_id === productId ? { ...d, ...patch } : d)));
+
+  /**
+   * Productos que entran al conteo: todo el catálogo activo, menos los
+   * ingredientes (no se venden sueltos, se descuentan por receta).
+   */
+  const countableProducts = useMemo(
+    () => products.filter(p => !p.is_ingredient),
+    [products],
+  );
+
+  /** Unidades ya cobradas en ventas registradas del turno (anuladas fuera). */
+  const registeredByProduct = useMemo(() => {
+    if (!countMode) return {};
+    const valid = (shiftData?.sales || []).filter(s => s.status !== 'voided');
+    return registeredUnitsByProduct(valid);
+  }, [countMode, shiftData]);
+
+  const restockedByProduct = useMemo(
+    () => (countMode ? restockedUnitsByProduct(shiftMovements) : {}),
+    [countMode, shiftMovements],
+  );
+
+  // Semilla del conteo de APERTURA: precargado con el stock del sistema, para
+  // que el dependiente solo toque lo que no cuadra.
+  useEffect(() => {
+    if (!countMode || activeShift) { setOpeningDrafts([]); return; }
+    setOpeningDrafts(prev => {
+      if (prev.length > 0) return prev; // no pisar lo ya tecleado
+      return countableProducts.map(p => ({
+        product_id: p.id,
+        product_name: p.name,
+        unit_price: p.price,
+        opening_qty: p.stock,
+      }));
+    });
+  }, [countMode, activeShift, countableProducts]);
+
+  /** Lo que DEBERÍA quedar de cada producto al cerrar, según el sistema. */
+  const expectedClosingByProduct = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const c of shiftCounts) {
+      out[c.product_id] = round3(
+        c.opening_qty + (restockedByProduct[c.product_id] ?? 0) - (registeredByProduct[c.product_id] ?? 0),
+      );
+    }
+    return out;
+  }, [shiftCounts, restockedByProduct, registeredByProduct]);
+
+  const openingExpectedByProduct = useMemo(
+    () => Object.fromEntries(openingDrafts.map(d => [d.product_id, d.opening_qty])),
+    [openingDrafts],
+  );
+
+  /**
+   * Cuadre en vivo mientras se teclea el cierre.
+   * Una casilla vacía se toma como "lo que el sistema espera" (diferencia 0),
+   * que es lo que dice la ayuda del panel.
+   */
+  const countSummary = useMemo(() => {
+    if (!countMode || closingDrafts.length === 0) return null;
+    const rows: CountRow[] = closingDrafts.map(d => {
+      const typed = d.closing_input;
+      const parsedClosing = typed === undefined || typed === '' ? NaN : parseFloat(typed);
+      const parsedLoss = d.loss_input === undefined || d.loss_input === '' ? NaN : parseFloat(d.loss_input);
+      return {
+        product_id: d.product_id,
+        product_name: d.product_name,
+        unit_price: d.unit_price,
+        opening_qty: d.opening_qty,
+        closing_qty: isNaN(parsedClosing) ? (expectedClosingByProduct[d.product_id] ?? 0) : round3(parsedClosing),
+        loss_qty: isNaN(parsedLoss) || parsedLoss < 0 ? 0 : round3(parsedLoss),
+      };
+    });
+    return summarizeCounts(rows, { registeredByProduct, restockedByProduct });
+  }, [countMode, closingDrafts, expectedClosingByProduct, registeredByProduct, restockedByProduct]);
+
+  // Semilla del conteo de CIERRE al entrar a la pantalla de cierre. Se arma
+  // desde los conteos guardados al abrir, no desde el catálogo actual: si se
+  // creó un producto a mitad de turno, no tiene conteo inicial que cuadrar.
+  useEffect(() => {
+    if (!countMode || !isClosing) { if (!isClosing) setClosingDrafts([]); return; }
+    setClosingDrafts(prev => {
+      if (prev.length > 0) return prev;
+      return shiftCounts.map(c => ({
+        product_id: c.product_id,
+        product_name: c.product_name,
+        unit_price: c.unit_price,
+        opening_qty: c.opening_qty,
+      }));
+    });
+  }, [countMode, isClosing, shiftCounts]);
 
   // Recetas (plato → ingredientes): al anular/devolver una venta de un plato
   // con receta hay que restaurar el stock de los INGREDIENTES (que fue lo que
@@ -684,17 +808,74 @@ export function FinancePage() {
 
         const staffPayload = { id: sId, name: currentStaff?.name || 'Cajero', business_id: bId };
 
-        await db.transaction('rw', [db.cash_shifts, db.action_queue, db.audit_logs], async () => {
+        // Conteo de apertura. Lo que el dependiente corrige respecto al stock
+        // del sistema se aplica al producto con un movimiento de 'correction',
+        // para que el inventario arranque el turno alineado con la realidad.
+        const nowIso = new Date().toISOString();
+        const countsToCreate: ShiftCount[] = countMode
+          ? openingDrafts.map(d => {
+              const typed = d.closing_input;
+              const parsed = typed === undefined || typed === '' ? NaN : parseFloat(typed);
+              const counted = isNaN(parsed) || parsed < 0 ? d.opening_qty : round3(parsed);
+              return {
+                id: crypto.randomUUID(),
+                business_id: bId,
+                shift_id: shiftId,
+                product_id: d.product_id,
+                product_name: d.product_name,
+                unit_price: d.unit_price,
+                opening_qty: counted,
+                created_at: nowIso,
+                sync_status: 'pending_create' as const,
+              };
+            })
+          : [];
+
+        const stockFixes = countsToCreate
+          .map(c => {
+            const before = openingDrafts.find(d => d.product_id === c.product_id)?.opening_qty ?? c.opening_qty;
+            return { product_id: c.product_id, before, after: c.opening_qty, diff: round3(c.opening_qty - before) };
+          })
+          .filter(f => Math.abs(f.diff) >= 0.0005);
+
+        await db.transaction('rw', [db.cash_shifts, db.shift_counts, db.products, db.movements, db.action_queue, db.audit_logs], async () => {
             // Check local también (por si estamos offline)
             const existingOpen = await db.cash_shifts.where({ business_id: bId, status: 'open' }).first();
             if (existingOpen) throw new Error('Ya existe un turno abierto. Ciérralo primero.');
 
             await db.cash_shifts.add(newShift);
             await addToQueue('SHIFT', newShift);
-            await logAuditAction('OPEN_SHIFT', { amount: startAmount }, staffPayload as any);
+
+            for (const c of countsToCreate) {
+                await db.shift_counts.add(c);
+                // Después del SHIFT: shift_counts referencia el turno, y la cola
+                // sube en orden de encolado.
+                await addToQueue('SHIFT_COUNT', c);
+            }
+
+            for (const fix of stockFixes) {
+                const fresh = await db.products.get(fix.product_id);
+                if (!fresh) continue;
+                const updated = { ...fresh, stock: fix.after, updated_at: nowIso, sync_status: 'pending_update' as const };
+                await db.products.put(updated);
+                await addToQueue('PRODUCT_SYNC', updated);
+                const mov: InventoryMovement = {
+                    id: crypto.randomUUID(), business_id: bId, product_id: fix.product_id,
+                    staff_id: sId, qty_change: fix.diff, reason: 'correction',
+                    created_at: nowIso, sync_status: 'pending_create',
+                };
+                await db.movements.add(mov);
+                await addToQueue('MOVEMENT', mov);
+            }
+
+            await logAuditAction('OPEN_SHIFT', {
+                amount: startAmount,
+                ...(countMode ? { productos_contados: countsToCreate.length, ajustes_de_stock: stockFixes.length } : {}),
+            }, staffPayload as any);
         });
 
-        toast.success('¡Caja Abierta!');
+        setOpeningDrafts([]);
+        toast.success(countMode ? `¡Caja abierta! ${countsToCreate.length} productos contados` : '¡Caja Abierta!');
         setAmount('');
         syncPush().catch(err => console.warn("Sync warning:", err));
         
@@ -779,7 +960,12 @@ export function FinancePage() {
     try {
         const { bId, sId } = await getActiveCredentials();
         const safeBid = bId || currentShift.business_id;
-        const cashDiff = currency.subtract(finalCashCount, stats.expectedCash);
+        // El conteo suma a lo esperado en caja: es dinero que entró por ventas
+        // que nadie tecleó. `expected_amount` guarda el total ya sumado, para
+        // que el reporte histórico del turno se lea sin recalcular nada.
+        const countExpected = countMode && countSummary ? countSummary.expected_amount : 0;
+        const expectedCashTotal = currency.add(stats.expectedCash, countExpected);
+        const cashDiff = currency.subtract(finalCashCount, expectedCashTotal);
         const transferDiff = currency.subtract(finalTransferCount, stats.transferSales);
         const closedAt = new Date().toISOString();
         const staffPayload = { id: sId, name: currentStaff?.name || 'Cajero', business_id: safeBid };
@@ -787,10 +973,33 @@ export function FinancePage() {
         // Transacción mínima: SOLO actualizar el turno en IndexedDB
         // addToQueue y logAuditAction se hacen FUERA para evitar conflictos
         // con transacciones paralelas del sync periódico en Electron/IndexedDB
+        // Persistir el conteo de cierre ANTES de cerrar el turno: si algo falla
+        // aquí, el turno sigue abierto y el dependiente puede reintentar sin
+        // haber perdido lo que contó.
+        if (countMode && countSummary) {
+            for (const line of countSummary.lines) {
+                const existing = await db.shift_counts
+                    .where('[shift_id+product_id]').equals([currentShift.id, line.product_id]).first();
+                if (!existing) continue;
+                const draft = closingDrafts.find(d => d.product_id === line.product_id);
+                const updated: ShiftCount = {
+                    ...existing,
+                    closing_qty: line.closing_qty,
+                    loss_qty: line.loss_qty > 0 ? line.loss_qty : undefined,
+                    loss_reason: line.loss_qty > 0 ? (draft?.loss_reason || 'Rotura') : undefined,
+                    updated_at: closedAt,
+                    sync_status: 'pending_update',
+                };
+                await db.shift_counts.put(updated);
+                await addToQueue('SHIFT_COUNT', updated);
+            }
+        }
+
         await db.cash_shifts.update(currentShift.id, {
             end_amount: finalCashCount,
             difference: cashDiff,
-            expected_amount: stats.expectedCash,
+            expected_amount: expectedCashTotal,
+            count_expected: countMode ? countExpected : undefined,
             transfer_expected: stats.transferSales,
             transfer_count: finalTransferCount,
             transfer_difference: transferDiff,
@@ -804,13 +1013,14 @@ export function FinancePage() {
         if (closedShift) await addToQueue('SHIFT', closedShift);
 
         await logAuditAction('CLOSE_SHIFT', {
-          expected_cash: stats.expectedCash, real_cash: finalCashCount, cash_diff: cashDiff,
+          expected_cash: expectedCashTotal, real_cash: finalCashCount, cash_diff: cashDiff,
+          ...(countMode ? { count_expected: countExpected, mermas: countSummary?.loss_amount ?? 0, sobrantes: countSummary?.surplus_count ?? 0 } : {}),
           expected_transfer: stats.transferSales, real_transfer: finalTransferCount, transfer_diff: transferDiff,
         }, staffPayload as any);
 
         const totalDiff = currency.add(cashDiff, transferDiff);
         toast.success(`Caja cerrada. Diferencia total: ${formatMoney(totalDiff)}`);
-        setIsClosing(false); setClosingShiftStats(null); setAmount(''); setTransferCount('');
+        setIsClosing(false); setClosingShiftStats(null); setAmount(''); setTransferCount(''); setClosingDrafts([]);
         syncPush().catch(() => {});
     } catch (error) {
         console.error('Error cerrando turno:', error);
@@ -1225,15 +1435,32 @@ export function FinancePage() {
   if (activeShift === null) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-[#F3F4F6]">
-        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border border-gray-100 text-center animate-in fade-in zoom-in duration-300">
-          <div className="w-16 h-16 bg-[#0B3B68]/10 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner">
+        <div className={`bg-white p-8 rounded-2xl shadow-xl w-full border border-gray-100 text-center animate-in fade-in zoom-in duration-300 ${countMode ? 'max-w-2xl max-h-[92vh] flex flex-col' : 'max-w-md'}`}>
+          <div className="w-16 h-16 bg-[#0B3B68]/10 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner flex-shrink-0">
             <Lock className="text-[#0B3B68] w-8 h-8" />
           </div>
-          <h1 className="text-2xl font-black text-[#0B3B68] mb-2">Apertura de Caja</h1>
-          <p className="text-[#6B7280] mb-6 text-sm">Inicia el turno para habilitar el punto de venta.</p>
+          <h1 className="text-2xl font-black text-[#0B3B68] mb-2 flex-shrink-0">Apertura de Caja</h1>
+          <p className="text-[#6B7280] mb-6 text-sm flex-shrink-0">
+            {countMode
+              ? 'Cuenta los productos y registra el efectivo inicial para habilitar el punto de venta.'
+              : 'Inicia el turno para habilitar el punto de venta.'}
+          </p>
           
-          <div className="w-full text-left">
-            <div className="mb-6 text-left">
+          <div className={`w-full text-left ${countMode ? 'flex flex-col min-h-0 flex-1' : ''}`}>
+            {countMode && (
+              <div className="mb-4 flex flex-col min-h-0 flex-1">
+                <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2 ml-1">
+                  Conteo inicial ({openingDrafts.length} productos)
+                </label>
+                <ShiftCountPanel
+                  mode="open"
+                  drafts={openingDrafts}
+                  expectedByProduct={openingExpectedByProduct}
+                  onChange={patchDraft(setOpeningDrafts)}
+                />
+              </div>
+            )}
+            <div className="mb-6 text-left flex-shrink-0">
               <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2 ml-1">Monto Inicial (Efectivo)</label>
               <div className="relative group">
                 <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5 group-focus-within:text-[#0B3B68] transition-colors"/>
@@ -1256,7 +1483,7 @@ export function FinancePage() {
                 type="button" 
                 onClick={(e) => { e.preventDefault(); handleOpenShift(); }}
                 disabled={isLoading || amount === ''}
-                className="w-full bg-[#7AC142] hover:bg-[#7AC142]/90 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-[#7AC142]/20 flex justify-center items-center gap-2 active:scale-[0.98]"
+                className="w-full flex-shrink-0 bg-[#7AC142] hover:bg-[#7AC142]/90 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-[#7AC142]/20 flex justify-center items-center gap-2 active:scale-[0.98]"
             >
                 {isLoading ? <Loader2 className="animate-spin"/> : 'ABRIR TURNO'}
             </button>
@@ -2487,27 +2714,74 @@ export function FinancePage() {
         const ss = closingShiftStats || shiftStats;
         // currency.subtract redondea a centavos: un conteo exacto muestra $0.00
         // en verde (mismo valor que se guardará al cerrar), sin residuos float.
-        const cashDiffPreview = amount !== '' ? currency.subtract(safeFloat(amount), ss.expectedCash) : null;
+        // El conteo suma a lo esperado: es dinero de ventas que nadie tecleó.
+        const countExp = countMode && countSummary ? countSummary.expected_amount : 0;
+        const expectedCashWithCount = currency.add(ss.expectedCash, countExp);
+        const cashDiffPreview = amount !== '' ? currency.subtract(safeFloat(amount), expectedCashWithCount) : null;
         const transferDiffPreview = transferCount !== '' ? currency.subtract(safeFloat(transferCount), ss.transferSales) : null;
         const totalDiffPreview = cashDiffPreview !== null && transferDiffPreview !== null
           ? currency.add(cashDiffPreview, transferDiffPreview)
           : null;
         return (
         <div className="fixed inset-0 bg-[#0B3B68]/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-            <div className="bg-white rounded-2xl p-0 max-w-md w-full shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
+            <div className={`bg-white rounded-2xl p-0 w-full shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto ${countMode ? 'max-w-2xl' : 'max-w-md'}`}>
                 <div className="bg-[#0B3B68] p-6 text-white flex justify-between items-center sticky top-0 z-10">
                     <h2 className="text-xl font-black flex items-center gap-2"><Lock className="text-[#7AC142]"/> CIERRE DE CAJA</h2>
-                    <button onClick={() => { setIsClosing(false); setClosingShiftStats(null); setAmount(''); setTransferCount(''); }}><X className="text-gray-400 hover:text-white"/></button>
+                    <button onClick={() => { setIsClosing(false); setClosingShiftStats(null); setAmount(''); setTransferCount(''); setClosingDrafts([]); }}><X className="text-gray-400 hover:text-white"/></button>
                 </div>
                 <div className="p-6 space-y-5">
+                    {/* SECCIÓN CONTEO DE PRODUCTOS (solo en modo cuadre por conteo) */}
+                    {countMode && countSummary && (
+                      <div>
+                        <div className="bg-[#7AC142]/10 p-4 rounded-xl border border-[#7AC142]/30 mb-3">
+                          <div className="flex justify-between items-center">
+                            <span className="text-xs font-bold text-[#5a9130] uppercase flex items-center gap-1.5">
+                              <Package size={14}/> Vendido según conteo
+                            </span>
+                            <span className="text-lg font-black text-[#5a9130]">{formatMoney(countSummary.expected_amount)}</span>
+                          </div>
+                          <p className="text-[10px] text-[#5a9130]/70 mt-1">
+                            Inicial + reposiciones − mermas − final − ventas ya registradas
+                          </p>
+                          {(countSummary.loss_amount > 0 || countSummary.surplus_count > 0) && (
+                            <div className="flex flex-wrap gap-3 mt-2 text-[10px] font-bold">
+                              {countSummary.loss_amount > 0 && (
+                                <span className="text-[#EF4444]">Mermas: {formatMoney(countSummary.loss_amount)} (no se cobran)</span>
+                              )}
+                              {countSummary.surplus_count > 0 && (
+                                <span className="text-[#F59E0B]">
+                                  {countSummary.surplus_count} producto{countSummary.surplus_count > 1 ? 's' : ''} con sobrante
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <div className="max-h-72 flex flex-col">
+                          <ShiftCountPanel
+                            mode="close"
+                            drafts={closingDrafts}
+                            expectedByProduct={expectedClosingByProduct}
+                            onChange={patchDraft(setClosingDrafts)}
+                            lines={countSummary.lines}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* SEPARADOR */}
+                    {countMode && <div className="border-t border-dashed border-gray-200" />}
+
                     {/* SECCIÓN EFECTIVO */}
                     <div>
                       <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mb-3">
                           <div className="flex justify-between items-center">
                               <span className="text-xs font-bold text-blue-600 uppercase flex items-center gap-1.5"><Wallet size={14}/> Efectivo Esperado</span>
-                              <span className="text-lg font-black text-[#0B3B68]">{formatMoney(ss.expectedCash)}</span>
+                              <span className="text-lg font-black text-[#0B3B68]">{formatMoney(expectedCashWithCount)}</span>
                           </div>
-                          <p className="text-[10px] text-blue-400 mt-1">Apertura {formatMoney(ss.startAmount)} + Ventas {formatMoney(ss.cashSales)} + Ingresos {formatMoney(ss.cashIn)} − Retiros {formatMoney(ss.cashOut)}</p>
+                          <p className="text-[10px] text-blue-400 mt-1">
+                            Apertura {formatMoney(ss.startAmount)} + Ventas {formatMoney(ss.cashSales)} + Ingresos {formatMoney(ss.cashIn)} − Retiros {formatMoney(ss.cashOut)}
+                            {countMode && <> + <strong>Conteo {formatMoney(countExp)}</strong></>}
+                          </p>
                       </div>
                       <div className="flex items-center justify-between mb-2">
                         <label className="block text-xs font-bold text-[#6B7280] uppercase">Conteo real de efectivo</label>

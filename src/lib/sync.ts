@@ -23,7 +23,8 @@ import {
   type ModifierGroup,
   type Modifier,
   type ProductModifierGroup,
-  type RecipeIngredient
+  type RecipeIngredient,
+  type ShiftCount
 } from './db';
 import { supabase } from './supabase';
 import { fetchServerTime, getTrustedNow, getServerNow } from './licenseClock';
@@ -226,7 +227,8 @@ async function processItem(item: QueueItem) {
           phone: config.phone,
           receipt_message: config.receipt_message,
           master_pin: config.master_pin,
-          business_type: config.business_type
+          business_type: config.business_type,
+          count_reconciliation: config.count_reconciliation
       };
       const { error } = await supabase.from('businesses').update(updateData).eq('id', config.id);
       if (error) throw new Error(`Error negocio: ${error.message}`);
@@ -431,6 +433,17 @@ async function processItem(item: QueueItem) {
       const { error } = await supabase.from('recipe_ingredients').upsert(clean);
       throwUnlessDuplicate(error, 'Error receta', recipe.id);
       await db.recipe_ingredients.update(recipe.id, { sync_status: 'synced' });
+      break;
+    }
+    case 'SHIFT_COUNT': {
+      const count = payload as ShiftCount;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { sync_status, ...clean } = count;
+      // upsert y no insert: la fila nace al ABRIR el turno (opening_qty) y se
+      // completa al CERRAR (closing_qty, mermas). Son dos subidas de la misma id.
+      const { error } = await supabase.from('shift_counts').upsert(clean);
+      if (error) throw new Error(`Error conteo de turno: ${error.message}`);
+      await db.shift_counts.update(count.id, { sync_status: 'synced' });
       break;
     }
     default:
@@ -826,6 +839,12 @@ export async function syncCriticalData(businessId: string) {
           ? localSettings.master_pin
           : remoteBiz.master_pin,
         business_type: remoteBiz.business_type ?? 'retail',
+        // Igual que master_pin: si hay una edición local sin subir, gana la
+        // local — si no, el pull revertiría el interruptor que el dueño acaba
+        // de mover estando sin conexión.
+        count_reconciliation: localIsDirty && localSettings?.count_reconciliation !== undefined
+          ? localSettings.count_reconciliation
+          : remoteBiz.count_reconciliation ?? false,
         subscription_expires_at: remoteBiz.subscription_expires_at,
         status: remoteBiz.status as any,
         last_check: new Date().toISOString(),

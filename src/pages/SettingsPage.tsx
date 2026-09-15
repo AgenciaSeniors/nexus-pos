@@ -113,7 +113,8 @@ export function SettingsPage() {
     phone: '',
     receipt_message: '¡Gracias por su compra!',
     master_pin: '',
-    business_type: 'retail' as 'retail' | 'restaurant'
+    business_type: 'retail' as 'retail' | 'restaurant',
+    count_reconciliation: false
   });
 
   const [showResetDbConfirm, setShowResetDbConfirm] = useState(false);
@@ -264,7 +265,8 @@ export function SettingsPage() {
         // Si el PIN almacenado ya es un hash, no lo cargamos en el campo:
         // el admin ingresa un nuevo PIN solo si quiere cambiarlo.
         master_pin: isPinHashed(settings.master_pin || '') ? '' : (settings.master_pin || ''),
-        business_type: settings.business_type === 'restaurant' ? 'restaurant' : 'retail'
+        business_type: settings.business_type === 'restaurant' ? 'restaurant' : 'retail',
+        count_reconciliation: !!settings.count_reconciliation
       });
     }
   }, [settings]);
@@ -293,6 +295,7 @@ export function SettingsPage() {
             receipt_message: businessForm.receipt_message,
             master_pin: pinFinal,
             business_type: businessForm.business_type,
+            count_reconciliation: businessForm.count_reconciliation,
             status: 'active',
             sync_status: 'pending_update'
         };
@@ -521,6 +524,29 @@ export function SettingsPage() {
                             </div>
                             <p className="text-[10px] text-[#6B7280] mt-2">
                                 El modo restaurante cambia la pantalla principal por el plano de mesas. Cambiarlo no afecta tus datos de productos ni ventas.
+                            </p>
+                        </div>
+
+                        {/* ── CUADRE POR CONTEO ─────────────────────────────── */}
+                        <div className="pt-4">
+                            <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Forma de Cuadrar el Turno</label>
+                            <button type="button"
+                                onClick={() => setBusinessForm({ ...businessForm, count_reconciliation: !businessForm.count_reconciliation })}
+                                className={`w-full text-left p-4 rounded-xl border-2 transition-all flex items-start gap-3 ${businessForm.count_reconciliation ? 'border-[#7AC142] bg-[#7AC142]/5' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                                <div className={`mt-0.5 w-10 h-6 rounded-full flex-shrink-0 transition-colors relative ${businessForm.count_reconciliation ? 'bg-[#7AC142]' : 'bg-gray-300'}`}>
+                                    <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${businessForm.count_reconciliation ? 'left-[18px]' : 'left-0.5'}`} />
+                                </div>
+                                <div>
+                                    <p className={`font-bold ${businessForm.count_reconciliation ? 'text-[#0B3B68]' : 'text-[#6B7280]'}`}>Contar productos al abrir y cerrar</p>
+                                    <p className="text-[11px] text-[#6B7280] mt-0.5">
+                                        Para negocios que no registran venta por venta. Se cuenta al abrir, se cuenta al cerrar,
+                                        y lo que falta es lo que se vendió.
+                                    </p>
+                                </div>
+                            </button>
+                            <p className="text-[10px] text-[#6B7280] mt-2">
+                                Puedes seguir registrando ventas normales cuando haga falta: el cierre descuenta lo ya cobrado
+                                para no cobrarlo dos veces. Las roturas y el consumo propio se declaran al cerrar y no se cobran.
                             </p>
                         </div>
 
@@ -1223,6 +1249,10 @@ export function SettingsPage() {
                 title: 'Finanzas y Reportes',
                 steps: [
                   'Abre un turno al inicio del día indicando el efectivo inicial en caja',
+                  'Cuadre por conteo (opcional, se activa en Negocio → "Forma de Cuadrar el Turno"): al abrir cuentas los productos y al cerrar los vuelves a contar — lo que falta es lo que se vendió, sin tener que registrar venta por venta',
+                  'En el conteo las casillas vienen con lo que el sistema espera: solo cambias lo que no cuadra, y el botón "Todo conforme" llena el resto',
+                  'Al cerrar puedes declarar mermas por producto (rotura, consumo propio, regalo, vencido) — esas unidades NO se le cobran a quien atendió',
+                  'Si durante el turno registras alguna venta normal (transferencia, cliente con puntos), el cierre la descuenta del conteo para no cobrarla dos veces',
                   'Durante el turno puedes registrar entradas y salidas de efectivo (ej: gastos, depósitos) — no puedes retirar más de lo disponible en caja',
                   'El resumen separa ventas en efectivo, transferencia y mixto — el efectivo de ventas mixtas se suma al efectivo total',
                   'Cierra el turno al final del día para cuadrar la caja — si hay ventas con conflicto de stock sin resolver, el cierre se bloqueará hasta que las atiendas',
