@@ -7,7 +7,7 @@
 --
 -- 1. Tabla shift_counts (un conteo por producto y turno) + RLS multi-tenant.
 -- 2. Columna count_expected en cash_shifts (lo que el conteo espera en caja).
--- 3. Columna count_reconciliation en business_settings (interruptor del modo).
+-- 3. Columna count_reconciliation en businesses (interruptor del modo).
 --
 -- No-op para quien no active el modo: toda columna nueva es NULL/false.
 -- Aplicar con confirmación al proyecto REAL de nexus-pos (NO a TriciGo).
