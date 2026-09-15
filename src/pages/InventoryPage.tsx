@@ -1030,6 +1030,7 @@ export function InventoryPage() {
                      <input
                        type="number" min="0" step="0.001" inputMode="decimal"
                        placeholder="0"
+                       aria-label="Cantidad inicial"
                        className="flex-1 min-w-0 p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none font-bold"
                        value={formData.initial_stock}
                        onChange={e => setFormData({...formData, initial_stock: e.target.value})}

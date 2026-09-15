@@ -137,6 +137,7 @@ export function ShiftCountPanel({ mode, drafts, expectedByProduct, onChange, lin
                   step="0.001"
                   inputMode="decimal"
                   placeholder={String(round3(expected))}
+                  aria-label={`Conteo de ${d.product_name}`}
                   value={typed ?? ''}
                   onChange={e => onChange(d.product_id, { closing_input: e.target.value })}
                   className="w-24 flex-shrink-0 p-2.5 border-2 border-gray-200 rounded-xl text-center font-bold outline-none focus:border-[#0B3B68]"
@@ -153,6 +154,7 @@ export function ShiftCountPanel({ mode, drafts, expectedByProduct, onChange, lin
                     step="0.001"
                     inputMode="decimal"
                     placeholder="0"
+                    aria-label={`Merma de ${d.product_name}`}
                     value={d.loss_input ?? ''}
                     onChange={e => onChange(d.product_id, { loss_input: e.target.value })}
                     className="w-16 p-1.5 border border-gray-200 rounded-lg text-center text-sm outline-none focus:border-[#EF4444]"
