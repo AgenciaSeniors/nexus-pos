@@ -128,7 +128,13 @@ export function InventoryPage() {
             sku: formData.sku.trim() || null,
             category: formData.category.trim() || 'General',
             unit: formData.unit.trim() || 'un',
-            expiration_date: formData.expiration_date,
+            // Sin fecha el input devuelve '', y Postgres rechaza la cadena vacía
+            // en una columna de fecha ("invalid input syntax for type timestamp
+            // with time zone"). El producto se guardaba local pero su
+            // PRODUCT_SYNC fallaba para siempre, y el MOVEMENT que lo sigue
+            // moría después por clave foránea. El importador de CSV ya mandaba
+            // undefined; el formulario manual no.
+            expiration_date: formData.expiration_date || undefined,
             low_stock_threshold: !isNaN(thresholdVal) && thresholdVal >= 0 ? thresholdVal : undefined
         };
 
@@ -1210,7 +1216,11 @@ export function InventoryPage() {
 
                     {/* INFO: a dónde va el ajuste */}
                     {stockAdjustment.reason === 'restock' && (
-                        <p className="text-[10px] text-blue-600 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 font-bold text-center">Se ingresará al almacén</p>
+                        // El destino ya no está fijado: el texto tiene que seguir al
+                        // selector, o contradice lo que el usuario acaba de elegir.
+                        <p className={`text-[10px] rounded-lg px-3 py-2 font-bold text-center border ${getStockTarget('restock') === 'warehouse' ? 'text-blue-600 bg-blue-50 border-blue-100' : 'text-[#7AC142] bg-[#7AC142]/10 border-[#7AC142]/20'}`}>
+                            {getStockTarget('restock') === 'warehouse' ? 'Se ingresará al almacén' : 'Se ingresará a la vitrina'}
+                        </p>
                     )}
                     {stockAdjustment.reason === 'return' && (
                         <p className="text-[10px] text-[#7AC142] bg-[#7AC142]/10 border border-[#7AC142]/20 rounded-lg px-3 py-2 font-bold text-center">Se regresa a vitrina (producto vendido)</p>
