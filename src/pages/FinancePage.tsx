@@ -138,10 +138,27 @@ export function FinancePage() {
         if (settings.length > 0) bId = settings[0].id;
     }
     if (!bId) return null;
-    
-    const shift = await db.cash_shifts.where({ business_id: bId, status: 'open' }).first();
-    return shift || null; 
+
+    // No debería haber más de uno, pero se han visto turnos abiertos acumulados
+    // (apertura offline en dos dispositivos, o el check remoto fallando). Con
+    // `.first()` sobre un índice sin orden la app elegía uno indeterminado y
+    // los demás quedaban invisibles para siempre. Se toma SIEMPRE el más
+    // reciente, y los otros se exponen para poder avisar (ver staleOpenShifts).
+    const abiertos = await db.cash_shifts.where({ business_id: bId, status: 'open' }).toArray();
+    if (abiertos.length === 0) return null;
+    abiertos.sort((a, b) => (b.opened_at || '').localeCompare(a.opened_at || ''));
+    return abiertos[0];
   }, []);
+
+  /** Turnos abiertos que NO son el activo: residuo que hay que cerrar a mano. */
+  const staleOpenShifts = useLiveQuery(async () => {
+    const bId = localStorage.getItem('nexus_business_id');
+    if (!bId) return EMPTY_ARRAY as CashShift[];
+    const abiertos = await db.cash_shifts.where({ business_id: bId, status: 'open' }).toArray();
+    if (abiertos.length <= 1) return EMPTY_ARRAY as CashShift[];
+    abiertos.sort((a, b) => (b.opened_at || '').localeCompare(a.opened_at || ''));
+    return abiertos.slice(1);
+  }, []) || (EMPTY_ARRAY as CashShift[]);
 
   const shiftData = useLiveQuery(async () => {
     if (activeShift === undefined) return undefined;
@@ -1495,7 +1512,22 @@ export function FinancePage() {
 
   return (
     <div className="p-4 md:p-6 pb-24 md:pb-6 min-h-screen bg-[#F3F4F6] print:bg-white print:p-0">
-      
+
+      {/* Más de un turno abierto: antes quedaban invisibles y se acumulaban. */}
+      {staleOpenShifts.length > 0 && (
+        <div className="mb-4 p-4 rounded-xl border border-[#F59E0B]/40 bg-[#F59E0B]/10 print:hidden">
+          <p className="font-bold text-[#B45309] flex items-center gap-2 text-sm">
+            <AlertTriangle size={16} /> Hay {staleOpenShifts.length + 1} turnos abiertos a la vez
+          </p>
+          <p className="text-xs text-[#B45309]/90 mt-1">
+            Se está trabajando sobre el más reciente. Los otros quedaron abiertos sin cerrar
+            {staleOpenShifts.length === 1 ? ' (uno del ' : ' (desde el '}
+            {new Date(staleOpenShifts[staleOpenShifts.length - 1].opened_at).toLocaleDateString()})
+            y no entran en ningún cuadre. Ciérralos desde Historial para que las cuentas queden limpias.
+          </p>
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4 print:hidden">
         <div>
           <h1 className="text-2xl font-bold text-[#0B3B68] flex items-center gap-2">
