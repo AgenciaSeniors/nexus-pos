@@ -7,7 +7,29 @@ sigue [Semantic Versioning](https://semver.org/lang/es/).
 
 ---
 
-## [Unreleased] — Recuperación de contraseña: errores claros y diagnóstico (2026-08-25)
+## [1.6.0] — Cuadre por conteo y stock directo a vitrina (2026-09-15)
+
+### ✨ Features
+- **Cuadre por conteo de productos** (opcional, se activa en Ajustes → Negocio → "Forma de Cuadrar el Turno"). Para negocios que no registran venta por venta: se cuenta al abrir, se cuenta al cerrar, y lo que falta es lo vendido. Fórmula: `inicial + reposiciones − mermas − final − ya registrado en ventas`. Los dos últimos términos evitan cobrarle de más al dependiente: las mermas (rotura, consumo propio, regalo) se declaran al cerrar con motivo y no se cobran, y lo ya vendido con ticket no se cobra dos veces. Un sobrante NO se cobra en negativo: se reporta aparte como señal de que entró mercancía sin registrar. Eje independiente de `business_type`: retail y restaurante pueden usarlo por igual. Lógica pura en `lib/shiftCount.ts` con 27 tests; tabla `shift_counts` (Dexie v16 + migración con RLS multi-tenant).
+- **Stock inicial al crear un producto**, con destino Vitrina o Almacén (vitrina por defecto). Antes nacía siempre en 0 y había que ajustar stock aparte.
+- **La "Compra" ya no cae forzosamente en almacén**: muestra selector de destino, igual que Merma y Corrección. Dejar mercancía en la vitrina ya no exige un traslado extra. Reglas en `lib/stockTarget.ts` con 13 tests.
+
+### 🐛 Bugs corregidos
+- **CRÍTICO — Un producto creado a mano sin fecha de vencimiento NUNCA subía a la nube**: el input devuelve `''` y se enviaba tal cual a una columna de fecha; Postgres respondía `invalid input syntax for type timestamp with time zone` y el `PRODUCT_SYNC` quedaba fallando para siempre. El `MOVEMENT` encolado detrás moría después por clave foránea. Silencioso: el producto se veía perfecto en el dispositivo y no existía en el servidor. El importador de CSV ya mandaba `undefined`; solo el formulario manual no.
+- **CRÍTICO — El servidor duplicaba el stock**: el trigger `on_inventory_movement` volvía a aplicar el `qty_change` sobre `products.stock`, encima del stock ABSOLUTO que el cliente ya sube por `PRODUCT_SYNC`. Medido: ajuste a 20 → Supabase quedaba en 28. Y ese valor inflado bajaba en el pull siguiente y **sobrescribía el stock correcto del dispositivo**. Se desactiva en la migración `20260915000100` (DISABLE, no DROP: reversible). El trigger no estaba en ninguna migración del repositorio.
+- **Turno activo indeterminado**: con más de un turno abierto, `.first()` sobre un índice sin orden elegía uno al azar y los demás quedaban invisibles, fuera de todo cuadre. Ahora se toma siempre el más reciente y se avisa en pantalla.
+- **El aviso "Se ingresará al almacén"** seguía fijo tras permitir elegir destino, contradiciendo el selector.
+
+### 🏗 Infraestructura
+- **Build de Android reparado**: moría en "Setup Android SDK" porque la acción instala el paquete `tools`, retirado por Google del repositorio del SDK. Se pide `packages: ''`; el paso siguiente ya instala lo necesario.
+
+### ✅ Tests
+- **342 tests unitarios** (40 nuevos) y **6 E2E de Playwright** que manejan la interfaz real en navegador sin credenciales ni tocar Supabase, comprobando lo que queda guardado en IndexedDB.
+- Verificado además de punta a punta contra el Supabase de producción: abrir turno con conteo, vender, declarar merma y cerrar → `count_expected 1500`, `difference 0`.
+
+---
+
+## [1.6.0] — Recuperación de contraseña: errores claros y diagnóstico (2026-08-25)
 
 ### 🐛 Bugs corregidos
 - **"Enviar código" fallaba sin decir por qué**: el toast mostraba el mensaje crudo de Supabase (en inglés) o uno genérico. Ahora los fallos de `resetPasswordForEmail` se traducen: sin internet, límite de 1 correo cada 60 s (429), fallo del servidor de correo/SMTP (500) y correo con formato inválido. El error real queda en consola con el prefijo `[reset-password]` para verlo por `adb logcat`.
@@ -26,7 +48,7 @@ sigue [Semantic Versioning](https://semver.org/lang/es/).
 
 ---
 
-## [Unreleased] — Auditoría de finanzas e inventario (2026-07-24)
+## [1.6.0] — Auditoría de finanzas e inventario (2026-07-24)
 
 Auditoría completa del flujo de números (reportes, caja, reembolsos, inventario, POS, división de cuenta, tickets) y corrección de todos los errores confirmados. **301 tests en verde** (71 nuevos); `tsc`/`eslint` con paridad exacta contra `main`.
 
@@ -78,7 +100,7 @@ Auditoría completa del flujo de números (reportes, caja, reembolsos, inventari
 ### ✅ Tests
 - 71 tests nuevos: prorrateo de reembolsos y tope por lo pagado, líneas duplicadas, porción de efectivo de la gaveta, neteo de devoluciones en KPIs/desgloses, inmutabilidad histórica, `custom_price`, métodos de pago desconocidos, y orden causal de la cola de sync (bloqueo por producto, `enqueued_at` estable frente a reintentos, FK de producto nuevo, items legados).
 
-## [Unreleased] — Endurecimiento de sincronización offline (2026-07-22)
+## [1.6.0] — Endurecimiento de sincronización offline (2026-07-22)
 
 Correcciones de la auditoría de offline/sync (migración `20260722000000_offline_sync_hardening.sql`). **Migración aplicada y verificada en el proyecto de producción** (`ypbajygoqqgaurikuctd`).
 
@@ -109,7 +131,7 @@ Migración aplicada con `apply_migration` (queda registrada en el historial de m
 - **Guard del KDS (`set_kitchen_status`)**: una escritura de cocina con timestamp anterior se descarta (no pisa el estado más nuevo); una posterior sí aplica.
 - **Idempotencia de `add_loyalty_points`**: el mismo `idempotency_key` no vuelve a sumar el delta; un key nuevo sí aplica.
 
-## [Unreleased] — Endurecimiento post-v1.4.0
+## [1.5.0] — Endurecimiento post-v1.4.0 (2026-07-08)
 
 ### 🔒 Seguridad
 - **Android `allowBackup=false`** + nueva `data_extraction_rules.xml`: bloquea exfiltración de IndexedDB vía `adb backup` o transferencia D2D.
