@@ -114,6 +114,15 @@ export interface BusinessConfig {
    * Si está ausente se asume 'retail' para compatibilidad con tenants existentes.
    */
   business_type?: 'retail' | 'restaurant';
+  /**
+   * Cuadre por conteo: en vez de (o además de) registrar cada venta, el turno
+   * se cuadra contando productos al abrir y al cerrar.
+   *
+   * Es un eje INDEPENDIENTE de `business_type`: una tienda retail o un
+   * restaurante pueden usarlo por igual. Ausente/false = comportamiento de
+   * siempre, así que ningún negocio existente nota el cambio.
+   */
+  count_reconciliation?: boolean;
   subscription_expires_at?: string;
   last_check?: string;
   status?: 'active' | 'suspended' | 'pending' | 'trial';
@@ -177,6 +186,43 @@ export interface CashShift {
   opened_at: string;
   closed_at?: string;
   status: 'open' | 'closed';
+  /**
+   * Dinero que el cuadre por conteo suma a lo esperado en caja (ver ShiftCount).
+   * Ausente en turnos que no usaron conteo, y en todos los turnos anteriores a
+   * la función — por eso es opcional y se lee como 0.
+   */
+  count_expected?: number;
+  sync_status: 'synced' | 'pending_create' | 'pending_update';
+}
+
+/**
+ * Conteo de un producto dentro de un turno — modo "cuadre por conteo".
+ *
+ * Para los negocios que no teclean venta por venta: se cuenta al abrir, se
+ * cuenta al cerrar, y lo que falta es lo que se vendió. Es la misma mecánica
+ * que ya hace el turno con el efectivo (start_amount/end_amount), aplicada a
+ * productos.
+ *
+ * `product_name` y `unit_price` son FOTOS del momento de abrir: si mañana
+ * cambia el precio o el nombre, el cuadre de este turno tiene que seguir
+ * leyéndose como se hizo. Misma razón por la que las ventas guardan sus items.
+ */
+export interface ShiftCount {
+  id: string;
+  business_id: string;
+  shift_id: string;
+  product_id: string;
+  product_name: string;
+  unit_price: number;
+  /** Contado al abrir el turno. */
+  opening_qty: number;
+  /** Contado al cerrar. Ausente mientras el turno sigue abierto. */
+  closing_qty?: number;
+  /** Unidades perdidas declaradas al cerrar (rotura, consumo propio, regalo). */
+  loss_qty?: number;
+  loss_reason?: string;
+  created_at: string;
+  updated_at?: string;
   sync_status: 'synced' | 'pending_create' | 'pending_update';
 }
 
@@ -422,11 +468,12 @@ export type QueuePayload =
     | ModifierGroup
     | Modifier
     | ProductModifierGroup
-    | RecipeIngredient;
+    | RecipeIngredient
+    | ShiftCount;
 
 export interface QueueItem {
   id: string;
-  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT' | 'STAFF_SYNC' | 'VOID_SALE' | 'PARTIAL_REFUND' | 'LOYALTY_CHANGE' | 'AREA_SYNC' | 'TABLE_SYNC' | 'COMANDA_SYNC' | 'COMANDA_ITEM_SYNC' | 'COMANDA_CLOSE' | 'KITCHEN_STATUS' | 'MODIFIER_GROUP_SYNC' | 'MODIFIER_SYNC' | 'PRODUCT_MODIFIER_SYNC' | 'RECIPE_SYNC';
+  type: 'SALE' | 'MOVEMENT' | 'AUDIT' | 'PRODUCT_SYNC' | 'CUSTOMER_SYNC' | 'SETTINGS_SYNC' | 'SHIFT' | 'CASH_MOVEMENT' | 'STAFF_SYNC' | 'VOID_SALE' | 'PARTIAL_REFUND' | 'LOYALTY_CHANGE' | 'AREA_SYNC' | 'TABLE_SYNC' | 'COMANDA_SYNC' | 'COMANDA_ITEM_SYNC' | 'COMANDA_CLOSE' | 'KITCHEN_STATUS' | 'MODIFIER_GROUP_SYNC' | 'MODIFIER_SYNC' | 'PRODUCT_MODIFIER_SYNC' | 'RECIPE_SYNC' | 'SHIFT_COUNT';
   payload: QueuePayload;
   timestamp: number;
   /**
@@ -462,6 +509,7 @@ export class NexusDB extends Dexie {
   modifiers!: Table<Modifier>;
   product_modifier_groups!: Table<ProductModifierGroup>;
   recipe_ingredients!: Table<RecipeIngredient>;
+  shift_counts!: Table<ShiftCount>;
 
   constructor() {
     super('NexusPOS_DB');
@@ -548,10 +596,18 @@ export class NexusDB extends Dexie {
       recipe_ingredients: 'id, business_id, dish_product_id, ingredient_product_id, sync_status, [business_id+dish_product_id]',
     });
 
+    // v16: CUADRE POR CONTEO — conteo de productos al abrir y cerrar turno.
+    // No-op para quien no active `count_reconciliation`.
+    // El índice [shift_id+product_id] es el que usa el cierre: carga los conteos
+    // del turno y busca producto a producto sin recorrer toda la tabla.
+    this.version(16).stores({
+      shift_counts: 'id, business_id, shift_id, product_id, sync_status, [business_id+shift_id], [shift_id+product_id]',
+    });
+
     // Backup pre-migración: si la versión del schema cambió, crear backup de seguridad
     this.on('ready', () => {
       const SCHEMA_KEY = 'nexus_db_schema_version';
-      const currentVersion = 15; // Debe coincidir con la última versión declarada arriba
+      const currentVersion = 16; // Debe coincidir con la última versión declarada arriba
       const savedVersion = parseInt(localStorage.getItem(SCHEMA_KEY) || '0');
 
       if (savedVersion > 0 && savedVersion < currentVersion) {
