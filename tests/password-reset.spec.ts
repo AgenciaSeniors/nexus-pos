@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 
 /**
- * E2E del flujo "¿Olvidaste tu contraseña?" (código de 6 dígitos).
+ * E2E del flujo "¿Olvidaste tu contraseña?".
  *
  * El envío del correo lo hace el servidor de Supabase, así que aquí
  * interceptamos `/auth/v1/recover` y reproducimos cada respuesta que se ve en

@@ -1,4 +1,6 @@
-# Correo de recuperación de contraseña (código de 6 dígitos)
+# Correo de recuperación de contraseña (código numérico)
+
+> **La longitud la fija el proyecto en Supabase** (Auth → Email OTP length) y en este proyecto es de **8 dígitos**, comprobado el 2026-09-22 pidiendo un código real. No lo des por 6: la app estuvo cortando el input a 6 y por eso era imposible teclear el código completo.
 
 Esta guía explica por qué el código de recuperación puede **no llegar** aunque
 la app lo pida correctamente, y cómo dejarlo funcionando en producción.
@@ -8,7 +10,7 @@ la app lo pida correctamente, y cómo dejarlo funcionando en producción.
 1. El usuario entra en **¿Olvidaste tu contraseña?** y escribe su correo.
 2. La app llama a `supabase.auth.resetPasswordForEmail(email)` (`src/App.tsx`).
 3. Supabase envía el correo con la plantilla **Reset Password**, que debe
-   contener la variable `{{ .Token }}` — el código de 6 dígitos.
+   contener la variable `{{ .Token }}` — el código numérico (8 dígitos en este proyecto).
    La plantilla lista para pegar está en
    `supabase/email-templates/reset-password.html`.
 4. El usuario escribe el código + la nueva contraseña y la app llama a
