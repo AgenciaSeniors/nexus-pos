@@ -75,7 +75,9 @@ test.describe('Recuperar contraseña', () => {
     await irARecuperar(page);
     await pedirCodigo(page);
 
-    await expect(page.getByText(/Te enviamos un código de 6 dígitos/)).toBeVisible();
+    // El mensaje ya no promete una cantidad de digitos: la longitud del OTP la
+    // fija el proyecto en Supabase y no siempre es 6 (en julio se vio de 8).
+    await expect(page.getByText(/Te enviamos un código a tu correo/)).toBeVisible();
     // Ya en la pantalla del código, con la nueva contraseña.
     await expect(page.getByRole('textbox', { name: '••••••', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Cambiar contraseña' })).toBeVisible();

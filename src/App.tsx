@@ -95,6 +95,18 @@ interface LoginScreenProps {
   onEnterApp: (userId: string) => void;
 }
 
+/**
+ * Longitud del código de recuperación. La fija el proyecto en Supabase
+ * (Auth → Email OTP length) y NO es siempre 6: en julio se observó de 8, y el
+ * input lo cortaba a 6, así que era imposible teclearlo completo y `verifyOtp`
+ * fallaba con "Código inválido" sin salida posible para el usuario.
+ *
+ * Se acepta el rango que Supabase permite en vez de fijar un número —que ya
+ * falló una vez— y se deja que el servidor decida si el código es correcto.
+ */
+const OTP_MIN_LENGTH = 6;
+const OTP_MAX_LENGTH = 10;
+
 function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: LoginScreenProps) {
   const [mode, setMode] = useState<'login' | 'register' | 'forgot' | 'otp'>('login');
   const navigate = useNavigate();
@@ -308,14 +320,14 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
       }
       setLoading(true);
       try {
-          // Envía un código de 6 dígitos al correo. La plantilla "Reset Password"
+          // Envía un código al correo. La plantilla "Reset Password"
           // de Supabase debe incluir {{ .Token }}. No usamos enlace porque la app
           // es solo-APK y no hay sitio web a donde abrir el enlace.
           const { error } = await supabase.auth.resetPasswordForEmail(target);
           if (error) throw error;
           setOtpCode('');
           setOtpCooldown(60);
-          toast.success("Te enviamos un código de 6 dígitos a tu correo. Revisa tu bandeja y la carpeta de spam.");
+          toast.success("Te enviamos un código a tu correo. Revisa tu bandeja y la carpeta de spam.");
           setMode('otp');
       } catch (err) {
           // El mensaje crudo queda en consola para diagnosticar desde logcat.
@@ -331,7 +343,13 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
   // verifyOtp no haga que la app entre sola antes de cambiar la clave.
   const handleVerifyOtp = async (e?: React.FormEvent) => {
       e?.preventDefault();
-      if (otpCode.trim().length < 6) return toast.error("Ingresa el código de 6 dígitos que te llegó al correo");
+      // La longitud del OTP la fija el proyecto en Supabase (Auth → Email OTP
+      // length) y no es siempre 6: en julio se observó de 8, y con el input
+      // cortando a 6 era IMPOSIBLE teclearlo completo, asi que verifyOtp
+      // fallaba con "Código inválido" sin que se pudiera hacer nada. En vez de
+      // fijar el numero —que ya fallo una vez— se acepta el rango que Supabase
+      // permite y se deja que el servidor decida si el código es correcto.
+      if (otpCode.trim().length < OTP_MIN_LENGTH) return toast.error(`Ingresa el código completo que te llegó al correo (al menos ${OTP_MIN_LENGTH} dígitos)`);
       if (password.length < 8) return toast.error("La nueva contraseña debe tener al menos 8 caracteres");
       setLoading(true);
       onRegistrationStart();
@@ -483,15 +501,15 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
 
               {mode === 'otp' && (
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Código de 6 dígitos</label>
+                  <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Código del correo</label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
                     <input
-                      type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} required
+                      type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={OTP_MAX_LENGTH} required
                       className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-mono tracking-[0.5em] text-center text-lg text-[#1F2937]"
-                      placeholder="••••••"
+                      placeholder={'•'.repeat(OTP_MIN_LENGTH)}
                       value={otpCode}
-                      onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, OTP_MAX_LENGTH))}
                     />
                   </div>
                 </div>
