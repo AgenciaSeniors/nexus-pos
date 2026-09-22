@@ -7,11 +7,11 @@ name: Desktop Build (Windows)
 on:
   workflow_dispatch:
   push:
+    # Solo tags de version. Las ramas de trabajo que habia aqui ya no existen
+    # (se borraron por estar mergeadas); para probar un build desde una rama
+    # esta workflow_dispatch, que no exige tocar este archivo.
     tags:
       - 'v*'
-    branches:
-      - build/restaurant-installer
-      - claude/reset-fix-v1.5.0
 
 permissions:
   contents: write
