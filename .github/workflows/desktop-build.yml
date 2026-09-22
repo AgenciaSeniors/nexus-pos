@@ -53,19 +53,24 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish GitHub Release (v1.5.0 - Modo Restaurante)
+      - name: Publish GitHub Release
         # Solo publica el Release oficial desde un tag v* (no desde ramas de
-        # trabajo como claude/reset-fix-v1.5.0, que solo generan el artefacto).
+        # trabajo, que solo generan el artefacto).
+        #
+        # tag_name SIGUE AL TAG QUE DISPARO EL WORKFLOW. Estaba fijo en v1.5.0,
+        # asi que empujar v1.6.0 subio su instalador DENTRO del release v1.5.0:
+        # el release viejo quedaba con los dos .exe y el nuevo sin publicar.
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.5.0
-          name: Nexus POS v1.5.0 — Modo Restaurante
+          tag_name: ${{ github.ref_name }}
+          name: Nexus POS ${{ github.ref_name }}
           target_commitish: ${{ github.sha }}
           body: |
-            Instalador de escritorio para Windows (NSIS) de Nexus POS v1.5.0.
-            Incluye el Modo Restaurante (mesas, KDS, modificadores, dividir cuenta, recetas).
-            Descarga `Bisne con Talla Setup 1.5.0.exe` más abajo.
+            Instalador de escritorio para Windows (NSIS) de Nexus POS ${{ github.ref_name }}.
+
+            Descarga el `.exe` de abajo y ejecutalo. Las notas de esta version
+            estan en el CHANGELOG del repositorio.
           files: |
             release/*.exe
             release/*.blockmap
