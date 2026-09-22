@@ -36,7 +36,13 @@ jobs:
         run: npm ci
 
       - name: Build web bundle + Windows installer
-        run: npm run electron:build
+        # `-p never`: electron-builder SOLO compila, no publica. Con GH_TOKEN
+        # presente publicaba por su cuenta un release en borrador, y el paso
+        # "Publish GitHub Release" de mas abajo subia el MISMO instalador otra
+        # vez con distinto nombre: el release quedaba con dos .exe de 104MB
+        # (uno con guiones, otro con puntos) y un latest.yml inservible, porque
+        # el proyecto no usa electron-updater. Un solo publicador: el de abajo.
+        run: npm run electron:build -- -p never
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://placeholder.supabase.co' }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder' }}
