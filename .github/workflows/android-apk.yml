@@ -9,10 +9,11 @@ name: Android APK
 # el APK abrirá la pantalla de configuración en vez de conectarse a Supabase.
 
 on:
-  # Disparo automático al subir cambios a la rama de trabajo: genera el APK
-  # descargable sin necesidad de fusionar a main ni pulsar botones.
+  # Genera el APK descargable en cada cambio de main. Las ramas de trabajo
+  # que habia aqui ya no existen; para compilar desde una rama esta
+  # workflow_dispatch, que no exige tocar este archivo.
   push:
-    branches: [main, claude/chat-session-gjji9a, claude/reset-fix-v1.5.0]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
