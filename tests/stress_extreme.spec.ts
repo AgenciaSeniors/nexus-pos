@@ -12,7 +12,18 @@ const ADMIN = {
   pass: process.env.ADMIN_PASS!
 };
 
+// Esta suite es de INTEGRACIÓN REAL: registra un negocio, lo aprueba con una
+// cuenta de super-admin, inicia sesión y persiste inventario contra Supabase.
+// Necesita credenciales (ADMIN_EMAIL / ADMIN_PASS) y un backend de verdad.
+//
+// Sin ellas se OMITE en vez de fallar. Fallando no aportaba información —el
+// error era siempre el mismo— y ensuciaba el resultado de toda la suite, que
+// es justo lo que hace que un fallo real pase desapercibido. Para ejecutarla,
+// define esas variables en el entorno (ver .env.test.example).
+const HAS_ADMIN_CREDS = Boolean(process.env.ADMIN_EMAIL && process.env.ADMIN_PASS);
+
 test.describe.serial('NEXUS POS – STRESS v2', () => {
+  test.skip(!HAS_ADMIN_CREDS, 'Requiere ADMIN_EMAIL/ADMIN_PASS y un backend Supabase real');
 
   test('SETUP: crear negocio e inventario', async ({ browser }) => {
     const page = await browser.newPage();
