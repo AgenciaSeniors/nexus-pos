@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { getPlatform } from './platform';
 
 export interface AppVersionInfo {
   version: string;
@@ -61,11 +62,6 @@ export async function isVersionBlocked(currentVersion: string): Promise<AppVersi
   }
 }
 
-function getPlatform(): string {
-  if (typeof window !== 'undefined' && (window as any).electronAPI) return 'windows';
-  if (/Android/i.test(navigator.userAgent)) return 'android';
-  return 'all';
-}
 
 /**
  * Comparación semver simplificada: retorna >0 si a > b, <0 si a < b, 0 si iguales
@@ -80,3 +76,4 @@ function compareVersions(a: string, b: string): number {
   }
   return 0;
 }
+
