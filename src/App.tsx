@@ -127,6 +127,19 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [otpCode, setOtpCode] = useState('');
+  /**
+   * El camino self-service (código al correo) queda DETRÁS de un enlace.
+   *
+   * El correo integrado de Supabase solo entrega a direcciones del equipo,
+   * cae en spam y topa en 2/hora, así que a un cliente real NO le llega: la
+   * pantalla lo mandaba a un callejón sin salida. Mientras no haya SMTP
+   * propio, el camino que funciona es escribir a soporte con el nombre del
+   * negocio y que se restablezca desde el Super Panel.
+   *
+   * No se borra el flujo por correo: el día que haya SMTP vuelve a servir y
+   * basta con invertir cuál se muestra primero.
+   */
+  const [mostrarCodigoPorCorreo, setMostrarCodigoPorCorreo] = useState(false);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [businessName, setBusinessName] = useState('');
@@ -382,8 +395,10 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
   };
 
   // ✅ MENSAJE DINÁMICO DE WHATSAPP
-  const defaultWhatsAppMessage = mode === 'register' 
+  const defaultWhatsAppMessage = mode === 'register'
         ? "Hola administrador, acabo de registrar mi negocio en Bisne con Talla y necesito que aprueben mi cuenta."
+        : mode === 'forgot'
+        ? "Hola soporte de Bisne con Talla, olvidé mi contraseña y necesito restablecerla. Mi negocio se llama: "
         : "Hola soporte de Bisne con Talla, necesito ayuda para acceder a mi cuenta.";
   const whatsappUrl = `https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=${encodeURIComponent(defaultWhatsAppMessage)}`;
 
@@ -415,7 +430,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
               {mode === 'login' ? 'Bienvenido' : (mode === 'forgot' || mode === 'otp') ? 'Recupera tu acceso' : 'Comienza tu negocio'}
             </h1>
             <p className="text-slate-300 text-lg font-medium leading-relaxed drop-shadow-md">
-              {mode === 'login' ? 'Gestiona tus ventas, inventario y clientes desde un solo lugar.' : (mode === 'forgot' || mode === 'otp') ? 'Te enviaremos un código a tu correo para restablecer tu contraseña.' : 'Únete a los negocios que confían en nuestro sistema.'}
+              {mode === 'login' ? 'Gestiona tus ventas, inventario y clientes desde un solo lugar.' : (mode === 'forgot' || mode === 'otp') ? 'Te ayudamos a recuperar el acceso a tu cuenta.' : 'Únete a los negocios que confían en nuestro sistema.'}
             </p>
           </div>
 
@@ -453,7 +468,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 {mode === 'login' ? 'Iniciar Sesión' : (mode === 'forgot' || mode === 'otp') ? 'Recuperar Contraseña' : 'Crear Cuenta'}
             </h2>
             <p className="text-[#6B7280] mb-8 text-sm hidden md:block">
-                {mode === 'login' ? 'Ingresa tus credenciales para acceder' : mode === 'forgot' ? 'Escribe tu correo y te enviaremos un código para restablecerla.' : mode === 'otp' ? 'Escribe el código que te enviamos y tu nueva contraseña.' : 'Completa los datos de tu negocio'}
+                {mode === 'login' ? 'Ingresa tus credenciales para acceder' : mode === 'forgot' ? 'Escríbenos por WhatsApp con el nombre de tu negocio y te la restablecemos.' : mode === 'otp' ? 'Escribe el código que te enviamos y tu nueva contraseña.' : 'Completa los datos de tu negocio'}
             </p>
 
             <form onSubmit={mode === 'login' ? handleLogin : mode === 'register' ? handleRegister : mode === 'otp' ? handleVerifyOtp : handleForgotPassword} className="space-y-4">
@@ -491,6 +506,35 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 </div>
               )}
 
+              {/* RECUPERACIÓN POR SOPORTE — el camino que de verdad funciona hoy. */}
+              {mode === 'forgot' && !mostrarCodigoPorCorreo && (
+                <div className="space-y-4 animate-in fade-in duration-300">
+                  <div className="bg-[#7AC142]/10 border border-[#7AC142]/30 rounded-xl p-4">
+                    <p className="text-sm font-bold text-[#0B3B68]">Escríbenos y te restablecemos la contraseña</p>
+                    <p className="text-xs text-[#6B7280] mt-1">
+                      Dinos el <strong className="text-[#0B3B68]">nombre de tu negocio</strong> y te damos una
+                      contraseña nueva en el momento. Es la vía más rápida.
+                    </p>
+                  </div>
+                  <a
+                    href={whatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full bg-[#25D366] text-white font-bold py-3.5 rounded-xl hover:bg-[#1da851] transition-all flex items-center justify-center gap-2 shadow-xl shadow-[#25D366]/20 active:scale-95 text-lg"
+                  >
+                    <Phone className="w-5 h-5" /> Escribir por WhatsApp
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setMostrarCodigoPorCorreo(true)}
+                    className="block w-full text-center text-xs font-bold text-[#6B7280] hover:text-[#0B3B68] transition-colors"
+                  >
+                    Prefiero recibir un código por correo
+                  </button>
+                </div>
+              )}
+
+              {(mode !== 'forgot' || mostrarCodigoPorCorreo) && (
               <div className="space-y-1">
                 <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Correo Electrónico</label>
                 <div className="relative">
@@ -498,6 +542,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                   <input type="email" required readOnly={mode === 'otp'} className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937] read-only:opacity-70" placeholder="correo@ejemplo.com" value={email} onChange={e => setEmail(e.target.value)} />
                 </div>
               </div>
+              )}
 
               {mode === 'otp' && (
                 <div className="space-y-1">
@@ -540,6 +585,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 </div>
               )}
 
+              {(mode !== 'forgot' || mostrarCodigoPorCorreo) && (
               <button disabled={loading || (mode === 'login' && lockoutStatus.isLocked) || (mode === 'forgot' && otpCooldown > 0)} type="submit" className="w-full bg-[#0B3B68] text-white font-bold py-3.5 rounded-xl hover:bg-[#092b4d] transition-all flex items-center justify-center gap-2 mt-6 shadow-xl shadow-[#0B3B68]/20 disabled:opacity-70 disabled:cursor-not-allowed active:scale-95 text-lg">
                 {loading && <Loader2 className="animate-spin w-5 h-5" />}
                 {mode === 'login' && lockoutStatus.isLocked
@@ -547,11 +593,12 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                   : mode === 'login' ? 'Entrar al Sistema' : mode === 'forgot' ? (otpCooldown > 0 ? `Enviar código · ${otpCooldown}s` : 'Enviar código') : mode === 'otp' ? 'Cambiar contraseña' : 'Registrar Negocio'}
                 {!loading && mode !== 'forgot' && !(mode === 'login' && lockoutStatus.isLocked) && <ArrowRight className="w-5 h-5" />}
               </button>
+              )}
             </form>
 
             <div className="mt-6 text-center space-y-3">
               {mode === 'login' && (
-                  <button type="button" onClick={() => setMode('forgot')} className="text-sm font-bold text-[#6B7280] hover:text-[#0B3B68] transition-colors">
+                  <button type="button" onClick={() => { setMostrarCodigoPorCorreo(false); setMode('forgot'); }} className="text-sm font-bold text-[#6B7280] hover:text-[#0B3B68] transition-colors">
                     ¿Olvidaste tu contraseña?
                   </button>
               )}
@@ -579,6 +626,9 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
             </div>
 
             {/* ✅ BOTÓN DE WHATSAPP INTEGRADO OFICIALMENTE */}
+            {/* En 'forgot' el WhatsApp ya es el boton principal: repetirlo aqui
+                deja dos botones verdes iguales y confunde cual pulsar. */}
+            {!(mode === 'forgot' && !mostrarCodigoPorCorreo) && (
             <div className="mt-8 pt-6 border-t border-gray-100">
                 <p className="text-center text-[10px] text-gray-400 font-black uppercase tracking-widest mb-3">¿Problemas con tu cuenta?</p>
                 <a 
@@ -593,6 +643,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                     Contactar Soporte por WhatsApp
                 </a>
             </div>
+            )}
 
             <div className="mt-4 pt-4 flex justify-center">
                 <button onClick={() => navigate('/admin-login')} className="flex items-center gap-1.5 text-gray-400 hover:text-[#0B3B68] transition-colors text-[10px] font-bold uppercase tracking-wider">
