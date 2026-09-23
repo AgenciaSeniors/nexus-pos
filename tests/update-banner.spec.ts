@@ -113,4 +113,21 @@ test.describe('Aviso de nueva versión', () => {
     await expect(page.getByText(/Buenos días|Buenas tardes|Buenas noches/)).toBeVisible({ timeout: 20000 });
     await expect(page.getByText(/Nueva versión/)).toHaveCount(0);
   });
+
+  test('en web, Ajustes ya no remata con "contacta a soporte"', async ({ page }) => {
+    // En un navegador de escritorio getPlatform() es 'all': no hay APK que
+    // bajar, el PWA se actualiza solo al recargar. Lo que NO debe seguir
+    // apareciendo es el "contacta a soporte", que dejaba la actualizacion en
+    // manos de una llamada. Los enlaces por plataforma se cubren en
+    // src/lib/version.test.ts, que no depende del navegador.
+    await versionRemota(page, '9.9.9');
+    await abrirApp(page);
+    await page.goto('/#/configuracion');
+    // El bloque de version vive en la pestaña "Datos y Respaldo".
+    await page.getByRole('button', { name: /Datos y Respaldo/ }).click();
+
+    await expect(page.getByText(/Nueva versión disponible: v9\.9\.9/)).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText(/Recarga la página para aplicar la actualización/)).toBeVisible();
+    await expect(page.getByText(/Contacta a soporte para recibir la actualización/)).toHaveCount(0);
+  });
 });

@@ -17,7 +17,7 @@ import {
   ScrollText, Phone, Mail, MapPin, Info
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { checkForUpdate, type AppVersionInfo } from '../lib/version';
+import { checkForUpdate, downloadUrlForPlatform, type AppVersionInfo } from '../lib/version';
 import { RestaurantAdmin } from '../components/RestaurantAdmin';
 import { MenuModifiersAdmin } from '../components/MenuModifiersAdmin';
 import { RecipeAdmin } from '../components/RecipeAdmin';
@@ -933,7 +933,29 @@ export function SettingsPage() {
                                 <div className="flex-1">
                                   <p className="font-bold text-[#0B3B68]">Nueva versión disponible: v{updateInfo.version}</p>
                                   {updateInfo.release_notes && <p className="text-sm text-[#6B7280] mt-1">{updateInfo.release_notes}</p>}
-                                  <p className="text-xs text-[#6B7280] mt-2">Contacta a soporte para recibir la actualización.</p>
+                                  {(() => {
+                                    const descarga = downloadUrlForPlatform();
+                                    // En web/PWA no hay nada que bajar: se actualiza sola al recargar.
+                                    if (!descarga.url) {
+                                      return <p className="text-xs text-[#6B7280] mt-2">Recarga la página para aplicar la actualización.</p>;
+                                    }
+                                    return (
+                                      <>
+                                        <a
+                                          href={descarga.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-2 mt-3 px-4 py-2 bg-[#7AC142] hover:bg-[#7AC142]/90 text-white text-sm font-bold rounded-xl transition-colors active:scale-95"
+                                        >
+                                          <Download size={15} /> {descarga.label}
+                                        </a>
+                                        <p className="text-xs text-[#6B7280] mt-2">
+                                          Antes de instalar, <strong className="text-[#0B3B68]">espera a que la sincronización termine</strong>.
+                                          Instala encima, sin desinstalar.
+                                        </p>
+                                      </>
+                                    );
+                                  })()}
                                 </div>
                               </div>
                             </div>
@@ -947,6 +969,11 @@ export function SettingsPage() {
                             <ul className="text-xs text-[#6B7280] space-y-1.5">
                               <li>Al instalar una actualización, <strong className="text-[#0B3B68]">tus datos se mantienen intactos</strong>.</li>
                               <li><strong className="text-[#EF4444]">No desinstales la app</strong> antes de actualizar. Instala encima.</li>
+                              <li>
+                                Si Android dice <em>"Aplicación no instalada"</em>, es que el instalador viene firmado
+                                distinto. Entonces sí hay que desinstalar, pero <strong className="text-[#0B3B68]">primero
+                                espera a que la sincronización termine</strong>: al reinstalar y entrar, la nube devuelve tus datos.
+                              </li>
                               <li>El sistema crea backups automáticos cada 15 minutos como protección extra.</li>
                             </ul>
                           </div>
