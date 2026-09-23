@@ -106,12 +106,15 @@ jobs:
           ./gradlew assembleDebug --no-daemon
         working-directory: android
 
+      # El nombre NO dice "debug": con el keystore configurado el APK es de
+      # release firmado, y un archivo llamado "-debug" hace dudar a quien lo
+      # recibe de si es la version buena. Neutro sirve para los dos caminos.
       - name: Rename APK
         run: |
           if [ "${{ steps.keystore.outputs.hay }}" = "true" ]; then
-            cp android/app/build/outputs/apk/release/app-release.apk bisne-con-talla-debug.apk
+            cp android/app/build/outputs/apk/release/app-release.apk bisne-con-talla.apk
           else
-            cp android/app/build/outputs/apk/debug/app-debug.apk bisne-con-talla-debug.apk
+            cp android/app/build/outputs/apk/debug/app-debug.apk bisne-con-talla.apk
           fi
 
       - name: Borrar el keystore del runner
@@ -121,8 +124,8 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v5
         with:
-          name: bisne-con-talla-debug-apk
-          path: bisne-con-talla-debug.apk
+          name: bisne-con-talla-apk
+          path: bisne-con-talla.apk
           if-no-files-found: error
 
       - name: Publish to "android-latest" prerelease
@@ -132,9 +135,11 @@ jobs:
           name: APK Android (última build)
           prerelease: true
           body: |
-            APK de depuración de **Bisne con Talla** para instalar en dispositivos propios
-            (Android 7.0+). Descarga `bisne-con-talla-debug.apk`, ábrelo en el teléfono y
-            permite "instalar apps de orígenes desconocidos".
+            APK de **Bisne con Talla** para Android 7.0+. Descarga `bisne-con-talla.apk`,
+            ábrelo en el teléfono y permite "instalar apps de orígenes desconocidos".
 
-            Generado automáticamente desde el workflow *Android APK*.
-          files: bisne-con-talla-debug.apk
+            **Actualizar:** instala encima, sin desinstalar. Antes de hacerlo, abre la app
+            con internet y espera a que termine de sincronizar.
+
+            Generado automáticamente desde el workflow *Android APK* en cada cambio de `main`.
+          files: bisne-con-talla.apk
