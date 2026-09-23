@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { downloadUrlForPlatform } from './version';
+import { downloadUrlForPlatform } from './platform';
 
 /**
  * A dónde se manda al usuario a bajar la actualización.

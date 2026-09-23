@@ -17,7 +17,8 @@ import {
   ScrollText, Phone, Mail, MapPin, Info
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { checkForUpdate, downloadUrlForPlatform, type AppVersionInfo } from '../lib/version';
+import { checkForUpdate, type AppVersionInfo } from '../lib/version';
+import { downloadUrlForPlatform } from '../lib/platform';
 import { RestaurantAdmin } from '../components/RestaurantAdmin';
 import { MenuModifiersAdmin } from '../components/MenuModifiersAdmin';
 import { RecipeAdmin } from '../components/RecipeAdmin';

@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { getPlatform } from './platform';
 
 export interface AppVersionInfo {
   version: string;
@@ -61,11 +62,6 @@ export async function isVersionBlocked(currentVersion: string): Promise<AppVersi
   }
 }
 
-export function getPlatform(): string {
-  if (typeof window !== 'undefined' && (window as any).electronAPI) return 'windows';
-  if (/Android/i.test(navigator.userAgent)) return 'android';
-  return 'all';
-}
 
 /**
  * Comparación semver simplificada: retorna >0 si a > b, <0 si a < b, 0 si iguales
@@ -81,21 +77,3 @@ function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-/**
- * A dónde mandar al usuario para bajar la actualización.
- *
- * La app avisaba de la versión nueva y decía "Contacta a soporte", que en la
- * práctica dejaba la actualización en manos de una llamada. Estos enlaces son
- * los mismos que publica el CI en cada build.
- */
-export function downloadUrlForPlatform(platform = getPlatform()): { url: string; label: string } {
-  const REPO = 'https://github.com/AgenciaSeniors/nexus-pos/releases';
-  if (platform === 'android') {
-    return { url: `${REPO}/tag/android-latest`, label: 'Descargar APK para Android' };
-  }
-  if (platform === 'windows') {
-    return { url: `${REPO}/latest`, label: 'Descargar instalador para Windows' };
-  }
-  // Web/PWA: no hay nada que bajar, se actualiza sola al recargar.
-  return { url: '', label: '' };
-}
