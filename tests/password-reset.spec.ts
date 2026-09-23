@@ -16,6 +16,11 @@ const RECOVER = '**/auth/v1/recover*';
 async function irARecuperar(page: Page) {
   await page.goto('/');
   await page.getByRole('button', { name: '¿Olvidaste tu contraseña?' }).click();
+  // El camino por correo quedó detrás de un enlace: lo primero que se ofrece
+  // es escribir a soporte, porque el correo de Supabase no llega a clientes
+  // reales. Estas pruebas cubren el camino por correo, que sigue existiendo
+  // para cuando haya SMTP propio.
+  await page.getByRole('button', { name: /Prefiero recibir un código por correo/ }).click();
   await expect(page.getByRole('button', { name: /Enviar código/ })).toBeVisible();
 }
 
@@ -104,5 +109,39 @@ test.describe('Recuperar contraseña', () => {
 
     await expect(page.getByText(/Escribe un correo válido/)).toBeVisible();
     expect(peticiones).toBe(0);
+  });
+});
+
+test.describe('Recuperar contraseña — camino por soporte', () => {
+  test('lo primero que se ofrece es escribir a soporte, no el correo', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: '¿Olvidaste tu contraseña?' }).click();
+
+    await expect(page.getByRole('link', { name: /Escribir por WhatsApp/ })).toBeVisible();
+    // La frase completa vive solo en el <p>; un regex suelto casaria tambien
+    // con el <strong> anidado y Playwright falla en modo estricto.
+    await expect(page.getByText(/Dinos el nombre de tu negocio/)).toBeVisible();
+    // El formulario de correo NO debe aparecer solo: lleva a un correo que
+    // hoy no le llega a un cliente real.
+    await expect(page.getByRole('button', { name: /Enviar código/ })).toHaveCount(0);
+  });
+
+  test('el enlace de WhatsApp ya trae escrito lo que hay que pedir', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: '¿Olvidaste tu contraseña?' }).click();
+
+    const href = await page.getByRole('link', { name: /Escribir por WhatsApp/ }).getAttribute('href');
+    expect(href).toContain('wa.me');
+    // El mensaje pide el nombre del negocio, que es lo que se busca en el panel.
+    expect(decodeURIComponent(href || '')).toMatch(/negocio se llama/i);
+  });
+
+  test('quien prefiera el correo puede llegar al formulario', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: '¿Olvidaste tu contraseña?' }).click();
+    await page.getByRole('button', { name: /Prefiero recibir un código por correo/ }).click();
+
+    await expect(page.getByPlaceholder('correo@ejemplo.com')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Enviar código/ })).toBeVisible();
   });
 });
