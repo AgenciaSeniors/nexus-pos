@@ -68,14 +68,55 @@ jobs:
       - name: Sync Capacitor (Android)
         run: npx cap sync android
 
-      - name: Build debug APK
+      # ── FIRMA ────────────────────────────────────────────────────────────
+      # assembleDebug firma con el keystore de depuracion, que cada runner de
+      # GitHub genera NUEVO. Eso cambia la firma en cada build y Android
+      # rechaza instalar encima ("Aplicacion no instalada"): el usuario tiene
+      # que desinstalar, y ahi pierde todo lo que no estuviera sincronizado.
+      #
+      # Con los secrets puestos se compila un APK de release firmado SIEMPRE
+      # con la misma clave, y actualizar encima funciona. Sin ellos se sigue
+      # generando el de depuracion, para no romper el build de quien no los
+      # tenga configurados.
+      - name: ¿Hay keystore configurado?
+        id: keystore
+        run: |
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "hay=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "hay=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Sin ANDROID_KEYSTORE_BASE64: se compila un APK de depuracion y NO se podra instalar encima de una version anterior."
+          fi
+
+      - name: Restaurar keystore
+        if: steps.keystore.outputs.hay == 'true'
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/release.keystore
+
+      - name: Build APK firmado (release)
+        if: steps.keystore.outputs.hay == 'true'
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --no-daemon             -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/android/app/release.keystore"             -Pandroid.injected.signing.store.password="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"             -Pandroid.injected.signing.key.alias="${{ secrets.ANDROID_KEY_ALIAS }}"             -Pandroid.injected.signing.key.password="${{ secrets.ANDROID_KEY_PASSWORD }}"
+        working-directory: android
+
+      - name: Build APK de depuracion (sin keystore)
+        if: steps.keystore.outputs.hay != 'true'
         run: |
           chmod +x ./gradlew
           ./gradlew assembleDebug --no-daemon
         working-directory: android
 
       - name: Rename APK
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk bisne-con-talla-debug.apk
+        run: |
+          if [ "${{ steps.keystore.outputs.hay }}" = "true" ]; then
+            cp android/app/build/outputs/apk/release/app-release.apk bisne-con-talla-debug.apk
+          else
+            cp android/app/build/outputs/apk/debug/app-debug.apk bisne-con-talla-debug.apk
+          fi
+
+      - name: Borrar el keystore del runner
+        if: always()
+        run: rm -f android/app/release.keystore
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v5
