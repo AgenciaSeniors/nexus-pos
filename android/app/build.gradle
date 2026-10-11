@@ -28,15 +28,26 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
+    // La clave de firma NO vive en el repositorio. Dos caminos:
+    //  - CI: el workflow pasa -Pandroid.injected.signing.* desde los secrets de
+    //    GitHub, que Gradle aplica sobre el build de release.
+    //  - Local: define las cuatro BISNE_* en android/local.properties (ignorado
+    //    por git) apuntando a un keystore fuera del repo.
+    // Sin ninguno de los dos, assembleRelease produce un APK SIN FIRMAR.
+    def signingProps = new Properties()
+    def localPropsFile = rootProject.file('local.properties')
+    if (localPropsFile.exists()) localPropsFile.withInputStream { signingProps.load(it) }
+    def hasLocalSigning = ['BISNE_STORE_FILE', 'BISNE_STORE_PASSWORD', 'BISNE_KEY_ALIAS', 'BISNE_KEY_PASSWORD']
+            .every { signingProps[it] }
+
     signingConfigs {
-        release {
-            def props = new Properties()
-            def localPropsFile = rootProject.file('local.properties')
-            if (localPropsFile.exists()) props.load(new FileInputStream(localPropsFile))
-            storeFile file(props['BISNE_STORE_FILE'] ?: 'bisne-key.jks')
-            storePassword props['BISNE_STORE_PASSWORD'] ?: '123456'
-            keyAlias props['BISNE_KEY_ALIAS'] ?: 'bisne-alias'
-            keyPassword props['BISNE_KEY_PASSWORD'] ?: '123456'
+        if (hasLocalSigning) {
+            release {
+                storeFile file(signingProps['BISNE_STORE_FILE'])
+                storePassword signingProps['BISNE_STORE_PASSWORD']
+                keyAlias signingProps['BISNE_KEY_ALIAS']
+                keyPassword signingProps['BISNE_KEY_PASSWORD']
+            }
         }
     }
 
@@ -45,7 +56,7 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.release
+            if (hasLocalSigning) signingConfig signingConfigs.release
         }
     }
 }

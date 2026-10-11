@@ -1,2 +1,6 @@
 /build/*
 !/build/.npmkeep
+
+# Claves de firma de Android: nunca al repositorio
+*.jks
+*.keystore
