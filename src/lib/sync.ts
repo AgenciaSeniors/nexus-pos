@@ -794,6 +794,82 @@ async function pullInventoryMovements(businessId: string, since: number): Promis
     return movementsData.length;
 }
 
+// ─── PULL DE VENTAS (TODOS LOS DISPOSITIVOS) ─────────────────────────────────
+// Antes las ventas de otro dispositivo solo se bajaban si pertenecían al turno
+// abierto que devolvía la nube. Con varios turnos abiertos, o con una venta
+// atada a otro turno, una venta llegaba al servidor y aun así NO aparecía en el
+// otro teléfono — mientras el stock (que sí se baja siempre) ya estaba al día.
+// Ahora cada dispositivo descarga todas las ventas del negocio, sea cual sea el
+// turno.
+//
+// La tabla no mantiene updated_at, así que el incremental usa dos marcas:
+//  - created_at: ventas nuevas (lo fija el servidor al RECIBIRLA, no al cobrar:
+//    una venta hecha offline y subida después cae igualmente después del
+//    watermark del otro dispositivo).
+//  - voided_at: anulaciones hechas desde otro dispositivo.
+// Las devoluciones parciales no dejan marca de tiempo: las recoge el barrido de
+// estados (syncHeavyData, y el primer pull), que re-descarga lo no completado.
+const SALES_INITIAL_PULL_DAYS = 60;
+const SALES_SWEEP_DAYS = 30;
+const SALES_NON_COMPLETED = ['voided', 'partial_refund', 'stock_conflict'];
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchSalesPaged(build: (q: any) => any): Promise<any[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const all: any[] = [];
+    let page = 0;
+    const size = 1000;
+    while (true) {
+        // order('id'): paginación estable (ver fetchAll)
+        const { data, error } = await build(supabase.from('sales').select('*'))
+            .order('id')
+            .range(page * size, (page + 1) * size - 1);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        all.push(...data);
+        if (data.length < size) break;
+        page++;
+    }
+    return all;
+}
+
+/**
+ * Baja las ventas del negocio hechas (o anuladas) en cualquier dispositivo.
+ * @param since watermark en ms; 0 = primer pull (últimos SALES_INITIAL_PULL_DAYS días)
+ * @param sweepStatuses re-descargar también las ventas no completadas recientes
+ *        (anuladas / devueltas / en conflicto) para recoger cambios sin marca de tiempo
+ */
+export async function pullRemoteSales(
+    businessId: string,
+    since: number,
+    sweepStatuses = false,
+): Promise<number> {
+    const isInitial = since === 0;
+    const sinceIso = new Date(Math.max(0, since - WATERMARK_OVERLAP_MS)).toISOString();
+    const initialIso = new Date(Date.now() - SALES_INITIAL_PULL_DAYS * 86400000).toISOString();
+
+    const fresh = await fetchSalesPaged(q =>
+        isInitial
+            ? q.eq('business_id', businessId).gte('date', initialIso)
+            : q.eq('business_id', businessId).or(`created_at.gt.${sinceIso},voided_at.gt.${sinceIso}`),
+    );
+
+    let swept: unknown[] = [];
+    if (sweepStatuses || isInitial) {
+        const sweepIso = new Date(Date.now() - SALES_SWEEP_DAYS * 86400000).toISOString();
+        swept = await fetchSalesPaged(q =>
+            q.eq('business_id', businessId).in('status', SALES_NON_COMPLETED).gte('date', sweepIso),
+        );
+    }
+
+    // Sin duplicar ids entre ambas listas
+    const byId = new Map<string, unknown>();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const s of [...fresh, ...swept] as any[]) byId.set(s.id, { ...s, sync_status: 'synced' as const });
+    if (byId.size > 0) await safeBulkPut(db.sales as never, [...byId.values()] as never[]);
+    return byId.size;
+}
+
 export async function syncCriticalData(businessId: string) {
   if (!isOnline()) return;
 
@@ -940,6 +1016,14 @@ export async function syncHeavyData(businessId: string): Promise<{ products: num
     }
   }
 
+  // Barrido de ventas anuladas/devueltas/en conflicto recientes: recoge los
+  // cambios de estado que no dejan marca de tiempo (devolución parcial).
+  try {
+    await pullRemoteSales(businessId, getSyncWatermark(), true);
+  } catch (err) {
+    console.warn('Barrido de ventas falló (se reintenta en el próximo sync completo):', err);
+  }
+
   // Marcar éxito de la verificación de tombstones / orphan cleanup
   setLastHeavySyncTimestamp();
   return results;
@@ -1030,21 +1114,28 @@ export async function syncLiveData() {
         // ancla (primer ciclo tras abrir la app, antes de fetchServerTime).
         const watermarkCandidate = getServerNow() ?? Date.now();
 
-        // 1. Turno abierto actual (puede haber sido abierto/cerrado desde otro dispositivo)
+        // 1. Turnos abiertos (pueden haberse abierto/cerrado desde otro dispositivo).
+        // Se piden TODOS y el más reciente primero: con `.limit(1)` sin orden, si
+        // había varios abiertos cada dispositivo podía quedarse con uno distinto.
+        // Traerlos todos también hace visibles los turnos huérfanos para poder
+        // cerrarlos (staleOpenShifts en Finanzas).
         const { data: shiftData } = await supabase
             .from('cash_shifts')
             .select('*')
             .eq('business_id', businessId)
             .eq('status', 'open')
-            .limit(1);
+            .order('opened_at', { ascending: false });
 
         if (shiftData && shiftData.length > 0) {
-            const remoteShift = { ...shiftData[0], sync_status: 'synced' as const };
-            // Solo actualizar si no tenemos cambios pendientes en este turno
-            const localShift = await db.cash_shifts.get(remoteShift.id);
-            if (!localShift || localShift.sync_status === 'synced') {
-                await db.cash_shifts.put(remoteShift);
+            for (const row of shiftData) {
+                // Solo actualizar si no tenemos cambios pendientes en ese turno
+                const localRow = await db.cash_shifts.get(row.id);
+                if (!localRow || localRow.sync_status === 'synced') {
+                    await db.cash_shifts.put({ ...row, sync_status: 'synced' as const });
+                }
             }
+            // El turno activo es el más reciente (mismo criterio que el POS y Finanzas)
+            const remoteShift = { ...shiftData[0], sync_status: 'synced' as const };
 
             // 2. Ventas de este turno (las que hicieron otros dispositivos)
             const { data: salesData } = await supabase
@@ -1069,11 +1160,17 @@ export async function syncLiveData() {
                 const cleanMovs = cashMovData.map((m: any) => ({ ...m, sync_status: 'synced' as const }));
                 await safeBulkPut(db.cash_movements as never, cleanMovs);
             }
-        } else {
-            // No hay turno abierto en la nube: si tenemos uno local marcado como synced, cerrarlo
+        }
+
+        {
+            // Turnos locales marcados como synced que la nube YA NO tiene abiertos
+            // (cerrados desde otro dispositivo): ponerlos al día. Antes solo se hacía
+            // si la nube no tenía NINGÚN turno abierto, y con varios abiertos los
+            // cerrados se quedaban abiertos para siempre en local.
+            const remoteOpenIds = new Set((shiftData ?? []).map((r: { id: string }) => r.id));
             const localOpenShifts = await db.cash_shifts
                 .where({ business_id: businessId, status: 'open' })
-                .filter(s => s.sync_status === 'synced')
+                .filter(s => s.sync_status === 'synced' && !remoteOpenIds.has(s.id))
                 .toArray();
             for (const s of localOpenShifts) {
                 // El turno fue cerrado desde otro dispositivo — buscar el estado real
@@ -1142,6 +1239,11 @@ export async function syncLiveData() {
         // que el historial de TODOS los dispositivos sea visible en cada uno
         // (antes era push-only y cada dispositivo solo veía el suyo).
         await pullInventoryMovements(businessId, lastSync);
+
+        // 5b-bis. Ventas de TODOS los dispositivos, sea cual sea su turno (ver
+        // pullRemoteSales). Sin esto una venta podía existir en el servidor y no
+        // verse en el otro teléfono.
+        await pullRemoteSales(businessId, lastSync);
 
         // 5c. Cada 24h: forzar fetchAll (orphan cleanup) para detectar items
         // que fueron borrados FÍSICAMENTE en el servidor. El pull incremental

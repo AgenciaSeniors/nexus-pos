@@ -1277,6 +1277,8 @@ export function SettingsPage() {
                 title: 'Finanzas y Reportes',
                 steps: [
                   'Abre un turno al inicio del día indicando el efectivo inicial en caja',
+                  'Abre el turno en UN solo teléfono, con internet, y espera a que el otro lo reciba antes de vender ahí. No abras turno en dos teléfonos a la vez: las ventas quedan repartidas en turnos distintos',
+                  'Para consultar ventas y ganancias NO hace falta tener un turno abierto: entra a Finanzas → Reportes, Historial o Tendencias. El turno solo se necesita para vender y para la caja',
                   'Cuadre por conteo (opcional, se activa en Negocio → "Forma de Cuadrar el Turno"): al abrir cuentas los productos y al cerrar los vuelves a contar — lo que falta es lo que se vendió, sin tener que registrar venta por venta',
                   'En el conteo las casillas vienen con lo que el sistema espera: solo cambias lo que no cuadra, y el botón "Todo conforme" llena el resto',
                   'Al cerrar puedes declarar mermas por producto (rotura, consumo propio, regalo, vencido) — esas unidades NO se le cobran a quien atendió',

@@ -7,6 +7,21 @@ sigue [Semantic Versioning](https://semver.org/lang/es/).
 
 ---
 
+## [Sin publicar] — Sincronización de ventas entre dispositivos y Finanzas sin turno
+
+### 🐛 Bugs corregidos
+- **Una venta llegaba al servidor y no aparecía en el otro teléfono** (mientras el stock sí se actualizaba). Las ventas de otros dispositivos solo se bajaban si pertenecían al turno abierto que devolvía la nube (`.limit(1)` sin orden). Con varios turnos abiertos, o una venta atada a otro turno, el otro dispositivo nunca la veía y las ventas y ganancias dejaban de coincidir. Ahora cada dispositivo baja TODAS las ventas del negocio (incremental por `created_at`/`voided_at`, primer pull de 60 días, barrido de ventas anuladas/devueltas/en conflicto cada sincronización completa).
+- **El POS y Finanzas podían trabajar sobre turnos distintos** cuando había varios abiertos: el POS usaba `.first()` (indeterminado) y Finanzas el más reciente. Ahora todas las pantallas (POS, Inicio, Comandas, Finanzas) eligen el turno abierto más reciente (`lib/activeShift.ts`).
+- **Turnos cerrados desde otro dispositivo seguían abiertos en local** si la nube aún tenía otro turno abierto. Ahora se ponen al día siempre, y se bajan todos los turnos abiertos para poder verlos y cerrarlos.
+
+### ✨ Features
+- **Finanzas ya no exige turno abierto para consultar el negocio.** Sin turno, el admin entra directo a Reportes y puede ver Historial, Reportes, Tendencias y Cierre del día; la pestaña Control ofrece abrir la caja. El vendedor sin turno sigue viendo la pantalla de apertura.
+
+### ✅ Tests
+- 4 tests de regresión de sincronización (venta de otro turno, primer pull, anulación remota, varios turnos abiertos) que fallan con el código anterior, y 6 de `activeShift`.
+
+---
+
 ## [1.6.0] — Cuadre por conteo y stock directo a vitrina (2026-09-15)
 
 ### ✨ Features

@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useParams, useNavigate, useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type ComandaItem, type ComandaItemModifier, type Product, type Sale, type SaleItem, type Staff } from '../lib/db';
+import { pickActiveShift } from '../lib/activeShift';
 import { addToQueue, syncPush } from '../lib/sync';
 import { comandaItemTotal, comandaTotal } from '../lib/comanda';
 import { computeStockDeductions, round3 } from '../lib/recipe';
@@ -57,7 +58,9 @@ export default function ComandaPage() {
   }, [businessId]) || new Map();
 
   const activeShift = useLiveQuery(
-    () => businessId ? db.cash_shifts.where({ business_id: businessId, status: 'open' }).first() : undefined,
+    async () => businessId
+      ? (pickActiveShift(await db.cash_shifts.where({ business_id: businessId, status: 'open' }).toArray()) ?? undefined)
+      : undefined,
     [businessId],
   );
 

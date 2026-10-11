@@ -3,6 +3,7 @@ import { Link, useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff, type Sale, type Product, type CashShift } from '../lib/db';
 import { isRestaurantMode } from '../lib/businessType';
+import { pickActiveShift } from '../lib/activeShift';
 import { currency } from '../lib/currency';
 import {
   computeDayKpis,
@@ -89,9 +90,9 @@ export function HomePage() {
   ) ?? [];
 
   const activeShift = useLiveQuery<CashShift | undefined>(
-    () => (businessId
-      ? db.cash_shifts.where('business_id').equals(businessId).filter(s => s.status === 'open').first()
-      : Promise.resolve(undefined)),
+    async () => (businessId
+      ? (pickActiveShift(await db.cash_shifts.where('business_id').equals(businessId).filter(s => s.status === 'open').toArray()) ?? undefined)
+      : undefined),
     [businessId],
   );
 

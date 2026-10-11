@@ -6,6 +6,7 @@ import { addToQueue, syncPush, syncPull, isOnline, getLastSyncTimestamp } from '
 import { currency } from '../lib/currency';
 import { logAuditAction } from '../lib/audit';
 import { round3 } from '../lib/recipe';
+import { pickActiveShift } from '../lib/activeShift';
 import { TicketModal } from '../components/TicketModal';
 import { PaymentModal } from '../components/PaymentModal';
 import { ParkedOrdersModal } from '../components/ParkedOrdersModal';
@@ -120,8 +121,10 @@ export function PosPage() {
   const activeShift = useLiveQuery(async () => {
     const bId = await getTargetId();
     if (!bId) return null;
-    const shift = await db.cash_shifts.where({ business_id: bId, status: 'open' }).first();
-    return shift || null;
+    // El MISMO criterio que Finanzas (el abierto más reciente). Con `.first()` el
+    // POS podía registrar la venta en un turno y Finanzas enseñar otro.
+    const abiertos = await db.cash_shifts.where({ business_id: bId, status: 'open' }).toArray();
+    return pickActiveShift(abiertos);
   }, []);
 
   const parkedCount = useLiveQuery(async () => {

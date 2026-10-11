@@ -23,6 +23,7 @@ import { BillCounter } from '../components/BillCounter';
 import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
 import { computeVoidDelta, computeRefundQuote, cashPortionOfRefund } from '../lib/saleRefund';
 import { isSaleValidAtTime, endOfLocalDay } from '../lib/shiftStats';
+import { pickActiveShift, sortOpenShifts } from '../lib/activeShift';
 import { computeProductProfitability, computeSaleNet } from '../lib/salesStats';
 import { computeStockDeductions, round3 } from '../lib/recipe';
 import { BRAND_CHART_COLORS, CHART_TOOLTIP_STYLE } from '../lib/chartTheme';
@@ -144,19 +145,15 @@ export function FinancePage() {
     // `.first()` sobre un índice sin orden la app elegía uno indeterminado y
     // los demás quedaban invisibles para siempre. Se toma SIEMPRE el más
     // reciente, y los otros se exponen para poder avisar (ver staleOpenShifts).
-    const abiertos = await db.cash_shifts.where({ business_id: bId, status: 'open' }).toArray();
-    if (abiertos.length === 0) return null;
-    abiertos.sort((a, b) => (b.opened_at || '').localeCompare(a.opened_at || ''));
-    return abiertos[0];
+    return pickActiveShift(await db.cash_shifts.where({ business_id: bId, status: 'open' }).toArray());
   }, []);
 
   /** Turnos abiertos que NO son el activo: residuo que hay que cerrar a mano. */
   const staleOpenShifts = useLiveQuery(async () => {
     const bId = localStorage.getItem('nexus_business_id');
     if (!bId) return EMPTY_ARRAY as CashShift[];
-    const abiertos = await db.cash_shifts.where({ business_id: bId, status: 'open' }).toArray();
+    const abiertos = sortOpenShifts(await db.cash_shifts.where({ business_id: bId, status: 'open' }).toArray());
     if (abiertos.length <= 1) return EMPTY_ARRAY as CashShift[];
-    abiertos.sort((a, b) => (b.opened_at || '').localeCompare(a.opened_at || ''));
     return abiertos.slice(1);
   }, []) || (EMPTY_ARRAY as CashShift[]);
 
@@ -393,6 +390,16 @@ export function FinancePage() {
       setIsInitialLoad(false);
     }
   }, [activeShift]);
+
+  // Admin entrando sin turno abierto: abrir directamente en Reportes. Antes la
+  // pantalla entera era "Apertura de Caja" y no se podía ver nada del negocio
+  // sin abrir turno. Solo la primera vez: después puede ir a Control a abrirlo.
+  const initialViewPicked = useRef(false);
+  useEffect(() => {
+    if (initialViewPicked.current || activeShift === undefined) return;
+    initialViewPicked.current = true;
+    if (activeShift === null && isAdmin) setViewMode('daily');
+  }, [activeShift, isAdmin]);
 
   // Vendedores solo pueden ver 'control' y 'closing'
   useEffect(() => {
@@ -1449,63 +1456,70 @@ export function FinancePage() {
     );
   }
 
-  if (activeShift === null) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-[#F3F4F6]">
-        <div className={`bg-white p-8 rounded-2xl shadow-xl w-full border border-gray-100 text-center animate-in fade-in zoom-in duration-300 ${countMode ? 'max-w-2xl max-h-[92vh] flex flex-col' : 'max-w-md'}`}>
-          <div className="w-16 h-16 bg-[#0B3B68]/10 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner flex-shrink-0">
-            <Lock className="text-[#0B3B68] w-8 h-8" />
+  // Tarjeta de apertura de caja. Solo el POS y la caja la necesitan: consultar
+  // ventas y ganancias NO exige turno abierto (ver más abajo).
+  const openShiftCard = (
+    <div className={`bg-white p-8 rounded-2xl shadow-xl w-full border border-gray-100 text-center animate-in fade-in zoom-in duration-300 ${countMode ? 'max-w-2xl max-h-[92vh] flex flex-col' : 'max-w-md'}`}>
+      <div className="w-16 h-16 bg-[#0B3B68]/10 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner flex-shrink-0">
+        <Lock className="text-[#0B3B68] w-8 h-8" />
+      </div>
+      <h1 className="text-2xl font-black text-[#0B3B68] mb-2 flex-shrink-0">Apertura de Caja</h1>
+      <p className="text-[#6B7280] mb-6 text-sm flex-shrink-0">
+        {countMode
+          ? 'Cuenta los productos y registra el efectivo inicial para habilitar el punto de venta.'
+          : 'Inicia el turno para habilitar el punto de venta.'}
+      </p>
+      
+      <div className={`w-full text-left ${countMode ? 'flex flex-col min-h-0 flex-1' : ''}`}>
+        {countMode && (
+          <div className="mb-4 flex flex-col min-h-0 flex-1">
+            <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2 ml-1">
+              Conteo inicial ({openingDrafts.length} productos)
+            </label>
+            <ShiftCountPanel
+              mode="open"
+              drafts={openingDrafts}
+              expectedByProduct={openingExpectedByProduct}
+              onChange={patchDraft(setOpeningDrafts)}
+            />
           </div>
-          <h1 className="text-2xl font-black text-[#0B3B68] mb-2 flex-shrink-0">Apertura de Caja</h1>
-          <p className="text-[#6B7280] mb-6 text-sm flex-shrink-0">
-            {countMode
-              ? 'Cuenta los productos y registra el efectivo inicial para habilitar el punto de venta.'
-              : 'Inicia el turno para habilitar el punto de venta.'}
-          </p>
-          
-          <div className={`w-full text-left ${countMode ? 'flex flex-col min-h-0 flex-1' : ''}`}>
-            {countMode && (
-              <div className="mb-4 flex flex-col min-h-0 flex-1">
-                <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2 ml-1">
-                  Conteo inicial ({openingDrafts.length} productos)
-                </label>
-                <ShiftCountPanel
-                  mode="open"
-                  drafts={openingDrafts}
-                  expectedByProduct={openingExpectedByProduct}
-                  onChange={patchDraft(setOpeningDrafts)}
-                />
-              </div>
-            )}
-            <div className="mb-6 text-left flex-shrink-0">
-              <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2 ml-1">Monto Inicial (Efectivo)</label>
-              <div className="relative group">
-                <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5 group-focus-within:text-[#0B3B68] transition-colors"/>
-                <input 
-                    type="number" step="0.01" autoFocus
-                    className="w-full pl-10 pr-4 py-3 text-lg font-bold text-[#1F2937] border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none transition-all" 
-                    placeholder="0.00" 
-                    value={amount} 
-                    onChange={e => setAmount(e.target.value)} 
-                    onKeyDown={(e) => { 
-                        if (e.key === 'Enter') {
-                            e.preventDefault();
-                            if(!isLoading && amount !== '') handleOpenShift(); 
-                        }
-                    }}
-                />
-              </div>
-            </div>
-            <button 
-                type="button" 
-                onClick={(e) => { e.preventDefault(); handleOpenShift(); }}
-                disabled={isLoading || amount === ''}
-                className="w-full flex-shrink-0 bg-[#7AC142] hover:bg-[#7AC142]/90 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-[#7AC142]/20 flex justify-center items-center gap-2 active:scale-[0.98]"
-            >
-                {isLoading ? <Loader2 className="animate-spin"/> : 'ABRIR TURNO'}
-            </button>
+        )}
+        <div className="mb-6 text-left flex-shrink-0">
+          <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2 ml-1">Monto Inicial (Efectivo)</label>
+          <div className="relative group">
+            <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5 group-focus-within:text-[#0B3B68] transition-colors"/>
+            <input 
+                type="number" step="0.01" autoFocus
+                className="w-full pl-10 pr-4 py-3 text-lg font-bold text-[#1F2937] border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none transition-all" 
+                placeholder="0.00" 
+                value={amount} 
+                onChange={e => setAmount(e.target.value)} 
+                onKeyDown={(e) => { 
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if(!isLoading && amount !== '') handleOpenShift(); 
+                    }
+                }}
+            />
           </div>
         </div>
+        <button 
+            type="button" 
+            onClick={(e) => { e.preventDefault(); handleOpenShift(); }}
+            disabled={isLoading || amount === ''}
+            className="w-full flex-shrink-0 bg-[#7AC142] hover:bg-[#7AC142]/90 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-[#7AC142]/20 flex justify-center items-center gap-2 active:scale-[0.98]"
+        >
+            {isLoading ? <Loader2 className="animate-spin"/> : 'ABRIR TURNO'}
+        </button>
+      </div>
+    </div>
+  );
+
+  // El vendedor sin turno solo puede abrirlo (no tiene reportes que consultar).
+  if (activeShift === null && !isAdmin) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-[#F3F4F6]">
+        {openShiftCard}
       </div>
     );
   }
@@ -1530,12 +1544,25 @@ export function FinancePage() {
 
       <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4 print:hidden">
         <div>
-          <h1 className="text-2xl font-bold text-[#0B3B68] flex items-center gap-2">
-            <Unlock className="text-[#7AC142]" /> Caja Abierta
-          </h1>
-          <p className="text-[#6B7280] text-xs font-mono mt-1 bg-white px-2 py-1 rounded inline-block border border-gray-200 shadow-sm">
-            ID: {activeShift.id.slice(0,8).toUpperCase()} | Inicio: {new Date(activeShift.opened_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-          </p>
+          {activeShift ? (
+            <>
+              <h1 className="text-2xl font-bold text-[#0B3B68] flex items-center gap-2">
+                <Unlock className="text-[#7AC142]" /> Caja Abierta
+              </h1>
+              <p className="text-[#6B7280] text-xs font-mono mt-1 bg-white px-2 py-1 rounded inline-block border border-gray-200 shadow-sm">
+                ID: {activeShift.id.slice(0,8).toUpperCase()} | Inicio: {new Date(activeShift.opened_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+              </p>
+            </>
+          ) : (
+            <>
+              <h1 className="text-2xl font-bold text-[#0B3B68] flex items-center gap-2">
+                <Lock className="text-[#6B7280]" /> Caja cerrada
+              </h1>
+              <p className="text-[#6B7280] text-xs mt-1">
+                Puedes consultar ventas y ganancias sin abrir turno. El turno solo hace falta para vender.
+              </p>
+            </>
+          )}
         </div>
 
         <div className="flex bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm overflow-x-auto max-w-full scrollbar-hide">
@@ -1563,6 +1590,10 @@ export function FinancePage() {
           </button>
         </div>
       </div>
+
+      {viewMode === 'control' && !activeShift && (
+        <div className="flex justify-center py-6">{openShiftCard}</div>
+      )}
 
       {viewMode === 'control' && shiftStats && (
         <div className="animate-in slide-in-from-bottom-4 duration-300 space-y-6">

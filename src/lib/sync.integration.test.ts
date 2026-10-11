@@ -47,6 +47,8 @@ vi.mock('./supabase', () => {
       gt: () => obj,
       lt: () => obj,
       gte: () => obj,
+      or: () => obj,
+      in: () => obj,
       order: () => obj,
       range: () => obj,
       limit: () => obj,
@@ -399,6 +401,72 @@ describe('syncLiveData — pull de fondo multi-dispositivo', () => {
 
     expect(await db.sales.get('r1')).toBeDefined();
     expect(await db.sales.get('r2')).toBeDefined();
+  });
+
+  // ── Regresión: "la venta existe en el servidor pero no sale en el otro teléfono" ──
+  // Las ventas solo se bajaban si pertenecían al turno abierto que devolvía la
+  // nube. Con otro turno de por medio (o varios abiertos), el stock se
+  // actualizaba pero la venta nunca llegaba.
+  it('baja una venta de OTRO turno aunque no haya turno abierto en la nube', async () => {
+    await seedSettings();
+    mockState.responses['cash_shifts:select'] = { data: [] };
+    mockState.responses['sales:select'] = {
+      data: [{ id: 'rOtroTurno', business_id: 'b1', shift_id: 'shAjeno', date: '', total: 30,
+        items: [], payment_method: 'efectivo', status: 'completed' }],
+    };
+
+    await syncLiveData();
+
+    const venta = await db.sales.get('rOtroTurno');
+    expect(venta).toBeDefined();
+    expect(venta?.sync_status).toBe('synced');
+  });
+
+  it('baja ventas ajenas también en el primer pull (sin watermark)', async () => {
+    await seedSettings();
+    localStorage.removeItem('nexus_last_sync_at');
+    localStorage.removeItem('nexus_sync_watermark');
+    mockState.responses['cash_shifts:select'] = { data: [] };
+    mockState.responses['sales:select'] = {
+      data: [{ id: 'rViejaAjena', business_id: 'b1', shift_id: 'shAjeno', date: '', total: 12,
+        items: [], payment_method: 'efectivo', status: 'completed' }],
+    };
+
+    await syncLiveData();
+
+    expect(await db.sales.get('rViejaAjena')).toBeDefined();
+  });
+
+  it('refleja una anulación hecha desde otro dispositivo', async () => {
+    await seedSettings();
+    await db.sales.add({
+      id: 'sAnulada', business_id: 'b1', shift_id: 'sh1', date: '', total: 40,
+      items: [], payment_method: 'efectivo', status: 'completed', sync_status: 'synced',
+    } as never);
+    mockState.responses['cash_shifts:select'] = { data: [] };
+    mockState.responses['sales:select'] = {
+      data: [{ id: 'sAnulada', business_id: 'b1', shift_id: 'sh1', date: '', total: 40,
+        items: [], payment_method: 'efectivo', status: 'voided', voided_at: '2026-10-11T05:00:00Z' }],
+    };
+
+    await syncLiveData();
+
+    expect((await db.sales.get('sAnulada'))?.status).toBe('voided');
+  });
+
+  it('con varios turnos abiertos en la nube baja TODOS (ninguno queda invisible)', async () => {
+    await seedSettings();
+    mockState.responses['cash_shifts:select'] = {
+      data: [
+        { id: 'shNuevo', business_id: 'b1', staff_id: 'v1', start_amount: 0, opened_at: '2026-10-11T04:08:04Z', status: 'open' },
+        { id: 'shViejo', business_id: 'b1', staff_id: 'v1', start_amount: 0, opened_at: '2026-02-02T20:17:17Z', status: 'open' },
+      ],
+    };
+
+    await syncLiveData();
+
+    expect(await db.cash_shifts.get('shNuevo')).toBeDefined();
+    expect(await db.cash_shifts.get('shViejo')).toBeDefined();
   });
 
   it('NO pisa una venta local con cambios pendientes', async () => {
