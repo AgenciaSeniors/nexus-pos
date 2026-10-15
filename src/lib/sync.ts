@@ -36,6 +36,7 @@ import {
   sortQueueForUpload,
   computeStockSyncBlockers,
   decideQueueItemOutcome,
+  decideStaffPinMerge,
   QUEUE_TYPE_LABELS,
 } from './syncResolution';
 
@@ -875,6 +876,50 @@ export async function pullRemoteSales(
     return byId.size;
 }
 
+// ─── PIN DE EMPLEADOS Y ADMIN ────────────────────────────────────────────────
+// Ver decideStaffPinMerge. El registro del admin (id = usuario autenticado) no se
+// baja como los demás para que no desaparezca del selector, así que su PIN se
+// mezcla aparte: solo el campo `pin`.
+
+/** Encola la subida de un empleado (con su PIN) sin duplicar una ya pendiente. */
+export async function queueStaffUpload(staff: Staff): Promise<void> {
+    const queued = await db.action_queue
+        .where('status').anyOf('pending', 'processing')
+        .filter(i => i.type === 'STAFF_SYNC' && (i.payload as Staff)?.id === staff.id)
+        .count();
+    if (queued > 0) return;
+    const record: Staff = { ...staff, sync_status: 'pending_update' };
+    await db.staff.update(staff.id, { sync_status: 'pending_update' });
+    await addToQueue('STAFF_SYNC', record);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function mergeStaffFromCloud(businessId: string, remoteRows: any[], adminId: string | undefined) {
+    const locals = await db.staff.where('business_id').equals(businessId).toArray();
+    const localById = new Map(locals.map(l => [l.id, l]));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const toPut: any[] = [];
+    for (const r of remoteRows) {
+        if (adminId && r.id === adminId) continue; // el admin se mezcla aparte
+        const local = localById.get(r.id);
+        if (decideStaffPinMerge(local, r) === 'upload_local_pin' && local) {
+            await queueStaffUpload(local); // el PIN local gana: no pisarlo con el vacío de la nube
+            continue;
+        }
+        toPut.push({ ...r, sync_status: 'synced' as const });
+    }
+    if (toPut.length > 0) await safeBulkPut(db.staff as never, toPut);
+
+    if (adminId) {
+        const localAdmin = localById.get(adminId);
+        const remoteAdmin = remoteRows.find(r => r.id === adminId);
+        const decision = decideStaffPinMerge(localAdmin, remoteAdmin);
+        if (decision === 'upload_local_pin' && localAdmin) await queueStaffUpload(localAdmin);
+        else if (decision === 'adopt_remote_pin') await db.staff.update(adminId, { pin: remoteAdmin.pin });
+    }
+}
+
 /** ¿Este dispositivo ya hizo el relleno único del historial de ventas? */
 export function isSalesBackfillDone(businessId: string): boolean {
     return localStorage.getItem(`${SALES_BACKFILL_KEY}_${businessId}`) === '1';
@@ -983,16 +1028,11 @@ export async function syncCriticalData(businessId: string) {
     }
 
     if (staffResult.data) {
-      // Excluir el registro del usuario autenticado: su staff record se gestiona
-      // desde fetchProfileAndSync (basado en profiles), no desde la tabla staff.
-      // Si se permite sobreescribir, el admin puede desaparecer del selector.
+      // El registro del usuario autenticado (admin) se gestiona desde
+      // fetchProfileAndSync (basado en profiles): no se sobreescribe entero o
+      // podría desaparecer del selector. De él solo se mezcla el PIN.
       const { data: { user } } = await supabase.auth.getUser();
-      const adminId = user?.id;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cleanStaff = staffResult.data
-        .filter((s: any) => !adminId || s.id !== adminId)
-        .map((s: any) => ({ ...s, sync_status: 'synced' }));
-      await safeBulkPut(db.staff as never, cleanStaff);
+      await mergeStaffFromCloud(businessId, staffResult.data, user?.id);
     }
 
     if (registersResult.data) {
@@ -1318,15 +1358,10 @@ export async function syncLiveData() {
             .select('*')
             .eq('business_id', businessId);
 
-        if (staffData && staffData.length > 0) {
+        if (staffData) {
             const { data: { user } } = await supabase.auth.getUser();
-            const adminId = user?.id;
-            // Excluir admin (su registro se gestiona desde profiles, no desde staff)
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const cleanStaff = staffData
-                .filter((s: any) => !adminId || s.id !== adminId)
-                .map((s: any) => ({ ...s, sync_status: 'synced' as const }));
-            await safeBulkPut(db.staff as never, cleanStaff);
+            // Admin: solo se mezcla su PIN (su registro lo gestiona profiles).
+            await mergeStaffFromCloud(businessId, staffData, user?.id);
         }
 
         // 6b. MODO RESTAURANTE: pull de áreas/mesas y comandas abiertas + sus ítems.

@@ -1338,6 +1338,7 @@ export function SettingsPage() {
                 title: 'Seguridad y acceso',
                 steps: [
                   'Cada empleado tiene un PIN de 4 dígitos para acceder — si es la primera vez, la app te pedirá crear uno',
+                  'El PIN se crea una sola vez y vale en todos tus teléfonos: se sincroniza solo (necesita internet). Si en otro teléfono aún te lo pide, abre la app con internet y espera a que sincronice antes de crear uno nuevo',
                   'Después de 5 intentos incorrectos de PIN, el acceso se bloquea por 5 minutos automáticamente',
                   'El PIN maestro protege operaciones sensibles: anular ventas, salidas de caja y cierre de turno',
                   'Los vendedores solo ven POS y Clientes — Finanzas, Inventario y Configuración son exclusivos del administrador',

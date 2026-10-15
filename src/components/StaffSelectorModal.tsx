@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff } from '../lib/db';
 import { verifyPin, hashPin } from '../lib/pin';
+import { persistStaffPin } from '../lib/staffPin';
 import { Users, Delete, Shield, UserCircle2, Lock, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -133,11 +134,13 @@ export function StaffSelectorModal({ businessId, onSelect, onClose }: Props) {
     }
     // Hash y guardar
     const hashed = await hashPin(pinA, selected.id);
-    await db.staff.update(selected.id, { pin: hashed });
+    // Guardar Y encolar la subida: así el PIN existe también en la nube y los
+    // demás teléfonos no vuelven a pedir crearlo.
+    const saved = await persistStaffPin(selected.id, hashed);
     toast.success('PIN configurado exitosamente');
     // Continuar con login
     localStorage.setItem('nexus_staff_id', selected.id);
-    onSelect({ ...selected, pin: hashed });
+    onSelect({ ...selected, pin: saved.pin });
   };
 
   const validatePin = async (enteredPin: string) => {

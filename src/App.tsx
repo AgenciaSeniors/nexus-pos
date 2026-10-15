@@ -769,7 +769,10 @@ function BusinessApp() {
           role: 'admin',
           pin: existingAdmin?.pin || '',
           active: true,
-          business_id: data.business_id
+          business_id: data.business_id,
+          // Conservar el estado de sincronización: un PIN recién creado y aún sin
+          // subir no debe parecer ya sincronizado.
+          sync_status: existingAdmin?.sync_status,
         };
 
         // Poner admin en DB local

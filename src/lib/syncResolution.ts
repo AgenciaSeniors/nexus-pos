@@ -446,3 +446,32 @@ export function isStuckInProcessing(
 ): boolean {
   return status === 'processing' && (now - timestamp) >= staleMs;
 }
+
+/**
+ * Qué hacer con el PIN de un empleado al compararlo con el que hay en la nube.
+ *
+ * El PIN solo se guardaba en el dispositivo donde se creaba: la nube lo tenía
+ * vacío, así que otro teléfono volvía a pedir crearlo, y cada sincronización
+ * pisaba el PIN local con el vacío de la nube.
+ *
+ *  - 'upload_local_pin': hay PIN local y la nube no tiene → subirlo (migra los PIN
+ *    ya creados en teléfonos que corrían la versión anterior).
+ *  - 'adopt_remote_pin': la nube tiene un PIN distinto al local → gana la nube
+ *    (así un PIN creado o cambiado en otro teléfono llega a este).
+ *  - 'keep': nada que hacer. También cuando el registro local tiene cambios sin
+ *    subir: esos ya van en la cola y no se deben pisar.
+ */
+export type StaffPinDecision = 'keep' | 'adopt_remote_pin' | 'upload_local_pin';
+
+export function decideStaffPinMerge(
+  local: { pin?: string; sync_status?: string } | undefined,
+  remote: { pin?: string } | undefined,
+): StaffPinDecision {
+  if (!local) return 'keep';
+  if (local.sync_status && local.sync_status !== 'synced') return 'keep';
+  const localPin = local.pin || '';
+  const remotePin = remote?.pin || '';
+  if (localPin && !remotePin) return 'upload_local_pin';
+  if (remotePin && remotePin !== localPin) return 'adopt_remote_pin';
+  return 'keep';
+}

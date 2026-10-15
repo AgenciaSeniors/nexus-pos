@@ -92,6 +92,7 @@ vi.mock('./supabase', () => {
 // Importar DESPUÉS del mock para que sync.ts use el supabase mockeado
 const { db } = await import('./db');
 const { addToQueue, processQueue, syncLiveData, pullSalesRange, isSalesBackfillDone } = await import('./sync');
+const { persistStaffPin } = await import('./staffPin');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 async function clearDb() {
@@ -511,6 +512,94 @@ describe('syncLiveData — pull de fondo multi-dispositivo', () => {
 
     expect(n).toBe(2);
     expect((await db.sales.get('vieja2'))?.sync_status).toBe('synced');
+  });
+
+  // ── Regresión: "creo el PIN en un teléfono y en el otro me lo vuelve a pedir" ──
+  // El PIN se guardaba solo en local (sin encolar), la nube lo tenía vacío y cada
+  // sincronización lo pisaba. El admin, además, nunca se bajaba de la nube.
+  describe('PIN entre dispositivos', () => {
+    const ADMIN = 'admin-test-id'; // = auth.getUser() del mock
+    const HASH = 'pbkdf2$100000$aa$11';
+    const staffEnCola = async () =>
+      (await db.action_queue.toArray()).filter(i => i.type === 'STAFF_SYNC');
+
+    it('crear un PIN lo guarda como pendiente y lo encola para subir', async () => {
+      await db.staff.put({ id: 'v1', business_id: 'b1', name: 'Vendedora', role: 'vendedor', pin: '', active: true, sync_status: 'synced' } as never);
+
+      const saved = await persistStaffPin('v1', HASH);
+
+      expect(saved.pin).toBe(HASH);
+      const local = await db.staff.get('v1');
+      expect(local?.pin).toBe(HASH);
+      expect(local?.sync_status).toBe('pending_update');
+      const cola = await staffEnCola();
+      expect(cola).toHaveLength(1);
+      expect((cola[0].payload as { pin: string }).pin).toBe(HASH);
+    });
+
+    it('un vendedor con PIN local y la nube vacía: el PIN local NO se pisa y se sube', async () => {
+      await seedSettings();
+      await db.staff.put({ id: 'v1', business_id: 'b1', name: 'Vendedora', role: 'vendedor', pin: HASH, active: true, sync_status: 'synced' } as never);
+      mockState.responses['staff:select'] = {
+        data: [{ id: 'v1', business_id: 'b1', name: 'Vendedora', role: 'vendedor', pin: '', active: true }],
+      };
+
+      await syncLiveData();
+
+      expect((await db.staff.get('v1'))?.pin).toBe(HASH); // antes: se borraba
+      expect(await staffEnCola()).toHaveLength(1);
+    });
+
+    it('otro teléfono recibe el PIN del vendedor y no vuelve a pedir crearlo', async () => {
+      await seedSettings();
+      await db.staff.put({ id: 'v1', business_id: 'b1', name: 'Vendedora', role: 'vendedor', pin: '', active: true, sync_status: 'synced' } as never);
+      mockState.responses['staff:select'] = {
+        data: [{ id: 'v1', business_id: 'b1', name: 'Vendedora', role: 'vendedor', pin: HASH, active: true }],
+      };
+
+      await syncLiveData();
+
+      expect((await db.staff.get('v1'))?.pin).toBe(HASH);
+      expect(await staffEnCola()).toHaveLength(0);
+    });
+
+    it('el ADMIN en otro teléfono recibe su PIN de la nube (antes nunca se bajaba)', async () => {
+      await seedSettings();
+      await db.staff.put({ id: ADMIN, business_id: 'b1', name: 'Dueño', role: 'admin', pin: '', active: true } as never);
+      mockState.responses['staff:select'] = {
+        data: [{ id: ADMIN, business_id: 'b1', name: 'Dueño', role: 'admin', pin: HASH, active: true }],
+      };
+
+      await syncLiveData();
+
+      const admin = await db.staff.get(ADMIN);
+      expect(admin?.pin).toBe(HASH);
+      expect(admin?.name).toBe('Dueño'); // el registro no se reemplaza entero, solo el PIN
+    });
+
+    it('el ADMIN con PIN local que la nube no tiene lo sube (aunque la nube no tenga ni su fila)', async () => {
+      await seedSettings();
+      await db.staff.put({ id: ADMIN, business_id: 'b1', name: 'Dueño', role: 'admin', pin: HASH, active: true, sync_status: 'synced' } as never);
+      mockState.responses['staff:select'] = { data: [] };
+
+      await syncLiveData();
+
+      const cola = await staffEnCola();
+      expect(cola).toHaveLength(1);
+      expect((cola[0].payload as { id: string }).id).toBe(ADMIN);
+    });
+
+    it('no encola la subida dos veces si ya hay una pendiente', async () => {
+      await seedSettings();
+      await db.staff.put({ id: ADMIN, business_id: 'b1', name: 'Dueño', role: 'admin', pin: HASH, active: true, sync_status: 'synced' } as never);
+      mockState.responses['staff:select'] = { data: [] };
+
+      await syncLiveData();
+      await db.staff.update(ADMIN, { sync_status: 'synced' }); // simula un segundo ciclo antes de que suba
+      await syncLiveData();
+
+      expect(await staffEnCola()).toHaveLength(1);
+    });
   });
 
   it('NO pisa una venta local con cambios pendientes', async () => {

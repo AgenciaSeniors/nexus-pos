@@ -13,6 +13,7 @@ import {
   QUEUE_TYPE_PRIORITY,
   QUEUE_TYPE_LABELS,
   RETRY_CONFIG,
+  decideStaffPinMerge,
 } from './syncResolution';
 
 // =============================================================================
@@ -614,5 +615,36 @@ describe('sortQueueForUpload', () => {
     expect(enqueueOrderOf(queue[0])).toBe(100);
     const order = sortQueueForUpload(queue).map(i => i.id);
     expect(order).toEqual(['sale1', 'ps1']);
+  });
+});
+
+describe('decideStaffPinMerge — el PIN viaja entre teléfonos', () => {
+  const HASH_A = 'pbkdf2$100000$aa$11';
+  const HASH_B = 'pbkdf2$100000$bb$22';
+
+  it('PIN creado aquí y la nube vacía: se sube (migra teléfonos de la versión anterior)', () => {
+    expect(decideStaffPinMerge({ pin: HASH_A, sync_status: 'synced' }, { pin: '' })).toBe('upload_local_pin');
+    expect(decideStaffPinMerge({ pin: HASH_A, sync_status: 'synced' }, undefined)).toBe('upload_local_pin');
+  });
+
+  it('teléfono nuevo sin PIN y la nube con PIN: lo adopta, no pide crearlo', () => {
+    expect(decideStaffPinMerge({ pin: '', sync_status: 'synced' }, { pin: HASH_A })).toBe('adopt_remote_pin');
+  });
+
+  it('PIN distinto en la nube (cambiado en otro teléfono): gana la nube', () => {
+    expect(decideStaffPinMerge({ pin: HASH_A, sync_status: 'synced' }, { pin: HASH_B })).toBe('adopt_remote_pin');
+  });
+
+  it('mismo PIN en los dos lados: nada que hacer', () => {
+    expect(decideStaffPinMerge({ pin: HASH_A, sync_status: 'synced' }, { pin: HASH_A })).toBe('keep');
+  });
+
+  it('con cambios locales sin subir NO se pisa nada', () => {
+    expect(decideStaffPinMerge({ pin: HASH_A, sync_status: 'pending_update' }, { pin: HASH_B })).toBe('keep');
+    expect(decideStaffPinMerge({ pin: '', sync_status: 'pending_create' }, { pin: HASH_B })).toBe('keep');
+  });
+
+  it('sin registro local no hay nada que mezclar', () => {
+    expect(decideStaffPinMerge(undefined, { pin: HASH_A })).toBe('keep');
   });
 });
