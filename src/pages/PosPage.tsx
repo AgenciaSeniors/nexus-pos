@@ -588,10 +588,15 @@ export function PosPage() {
 
   // --- UI RENDER ---
   return (
-    <div className="flex flex-col md:flex-row h-[calc(100vh-60px)] md:h-screen bg-background overflow-hidden font-body">
+    // En móvil la altura es la de <main> (h-full), no `100vh - 60px`: ese cálculo solo
+    // descontaba la cabecera y se olvidaba de la barra de navegación inferior y de
+    // las zonas seguras, así que la parte baja de la rejilla quedaba tapada.
+    <div className="flex flex-col md:flex-row h-full md:h-screen bg-background overflow-hidden font-body">
 
       {/* COLUMNA IZQUIERDA: CATÁLOGO */}
-      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ${mobileView === 'cart' ? 'hidden md:flex' : 'flex'}`}>
+      {/* min-h-0: sin él, en móvil (columna) este contenedor crece hasta el alto de
+          TODOS los productos y la rejilla de abajo nunca llega a desplazarse. */}
+      <div className={`flex-1 flex flex-col min-w-0 min-h-0 transition-all duration-300 ${mobileView === 'cart' ? 'hidden md:flex' : 'flex'}`}>
 
         {/* Mejora 3: Banner de datos potencialmente desactualizados */}
         {showStaleWarning && (
@@ -692,7 +697,7 @@ export function PosPage() {
         </div>
 
         {/* Rejilla de Productos */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-background scroll-smooth">
+        <div data-testid="pos-product-grid" className="flex-1 overflow-y-auto p-4 md:p-6 bg-background scroll-smooth">
             {filteredProducts.length === 0 ? (
                 products.length === 0 ? (
                     /* Onboarding: negocio sin productos todavía */
