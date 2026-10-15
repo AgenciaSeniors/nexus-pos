@@ -91,7 +91,7 @@ vi.mock('./supabase', () => {
 
 // Importar DESPUÉS del mock para que sync.ts use el supabase mockeado
 const { db } = await import('./db');
-const { addToQueue, processQueue, syncLiveData } = await import('./sync');
+const { addToQueue, processQueue, syncLiveData, pullSalesRange, isSalesBackfillDone } = await import('./sync');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 async function clearDb() {
@@ -467,6 +467,50 @@ describe('syncLiveData — pull de fondo multi-dispositivo', () => {
 
     expect(await db.cash_shifts.get('shNuevo')).toBeDefined();
     expect(await db.cash_shifts.get('shViejo')).toBeDefined();
+  });
+
+  // ── Regresión: "ayer vendí y hoy no me sale el corte Z" ──
+  // Un teléfono que ya estaba al día (watermark reciente) nunca recibía las
+  // ventas hechas ANTES de actualizar la app. El relleno único las trae.
+  it('relleno único: un dispositivo con watermark reciente recibe el historial anterior', async () => {
+    await seedSettings();
+    localStorage.removeItem('nexus_sales_backfill_v1_b1');
+    expect(isSalesBackfillDone('b1')).toBe(false);
+    mockState.responses['cash_shifts:select'] = { data: [] };
+    mockState.responses['sales:select'] = {
+      data: [{ id: 'ventaDeAyer', business_id: 'b1', shift_id: 'shAyer', date: '2026-10-14T20:00:00.000Z',
+        total: 80, items: [], payment_method: 'efectivo', status: 'completed' }],
+    };
+
+    await syncLiveData();
+
+    expect((await db.sales.get('ventaDeAyer'))?.total).toBe(80);
+    expect(isSalesBackfillDone('b1')).toBe(true);
+  });
+
+  it('si el relleno falla no se marca como hecho (se reintenta)', async () => {
+    await seedSettings();
+    localStorage.removeItem('nexus_sales_backfill_v1_b1');
+    mockState.responses['cash_shifts:select'] = { data: [] };
+    mockState.responses['sales:select'] = { data: null, error: { message: 'boom' } };
+
+    await syncLiveData().catch(() => { /* el ciclo puede abortar: lo que importa es la marca */ });
+
+    expect(isSalesBackfillDone('b1')).toBe(false);
+  });
+
+  it('pullSalesRange guarda en local las ventas de un rango lejano', async () => {
+    mockState.responses['sales:select'] = {
+      data: [
+        { id: 'vieja1', business_id: 'b1', shift_id: 'shX', date: '2026-03-02T15:00:00.000Z', total: 15, items: [], payment_method: 'efectivo', status: 'completed' },
+        { id: 'vieja2', business_id: 'b1', shift_id: 'shX', date: '2026-03-02T16:00:00.000Z', total: 25, items: [], payment_method: 'efectivo', status: 'completed' },
+      ],
+    };
+
+    const n = await pullSalesRange('b1', '2026-03-01T00:00:00.000Z', '2026-03-04T00:00:00.000Z');
+
+    expect(n).toBe(2);
+    expect((await db.sales.get('vieja2'))?.sync_status).toBe('synced');
   });
 
   it('NO pisa una venta local con cambios pendientes', async () => {

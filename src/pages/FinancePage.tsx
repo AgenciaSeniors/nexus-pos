@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff, type InventoryMovement, type RefundedItem, type RecipeIngredient, type ShiftCount } from '../lib/db';
-import { addToQueue, syncPull, syncPush, isOnline } from '../lib/sync';
+import { addToQueue, syncPull, syncPush, isOnline, pullSalesRange, isSalesBackfillDone, SALES_BACKFILL_DAYS } from '../lib/sync';
 import { hashPin, verifyPin, needsRehash } from '../lib/pin';
 import { supabase } from '../lib/supabase';
 import { logAuditAction } from '../lib/audit';
@@ -24,6 +24,7 @@ import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
 import { computeVoidDelta, computeRefundQuote, cashPortionOfRefund } from '../lib/saleRefund';
 import { isSaleValidAtTime, endOfLocalDay } from '../lib/shiftStats';
 import { pickActiveShift, sortOpenShifts } from '../lib/activeShift';
+import { salesWindow, isWindowCoveredByBackfill } from '../lib/salesWindow';
 import { computeProductProfitability, computeSaleNet } from '../lib/salesStats';
 import { computeStockDeductions, round3 } from '../lib/recipe';
 import { BRAND_CHART_COLORS, CHART_TOOLTIP_STYLE } from '../lib/chartTheme';
@@ -354,27 +355,11 @@ export function FinancePage() {
     if (!bId) return [];
     if (viewMode !== 'history' && viewMode !== 'daily' && viewMode !== 'trends' && viewMode !== 'closing') return [];
 
-    const isDayScope = (viewMode === 'daily' && reportMode === 'day') || viewMode === 'closing';
-    const cutoff = new Date();
-    let upper = '￿'; // max char Unicode → "todo lo posterior al cutoff"
-    if (viewMode === 'daily' && reportMode === 'range' && dateFrom) {
-      // En modo rango, cargar desde la fecha inicial del rango (T00:00 = local,
-      // sin la 'T' se parsearía como UTC y en husos positivos faltarían horas)
-      cutoff.setTime(new Date(dateFrom + 'T00:00').getTime());
-    } else if (isDayScope) {
-      // En modo día, cargar alrededor de la FECHA SELECCIONADA (no de hoy: si
-      // el usuario elige un día viejo, el reporte saldría vacío). ±2 días de
-      // margen cubren cualquier desfase huso local ↔ UTC del campo `date`.
-      const anchor = new Date(selectedDate + 'T00:00');
-      const base = isNaN(anchor.getTime()) ? new Date() : anchor;
-      cutoff.setTime(base.getTime());
-      cutoff.setDate(cutoff.getDate() - 2);
-      const upperDate = new Date(base.getTime());
-      upperDate.setDate(upperDate.getDate() + 2);
-      upper = upperDate.toISOString();
-    } else {
-      cutoff.setDate(cutoff.getDate() - 30);
-    }
+    // Ventana de ventas de la pestaña actual (lib/salesWindow): la misma que se
+    // pide a la nube si este dispositivo no tiene guardada esa fecha.
+    const { from, to } = salesWindow({ viewMode, reportMode, selectedDate, dateFrom });
+    const cutoff = from;
+    const upper = to ? to.toISOString() : '￿'; // max char Unicode → "todo lo posterior al cutoff"
 
     // Usa índice compuesto [business_id+date] para evitar full scan + filter en JS.
     return await db.sales
@@ -390,6 +375,33 @@ export function FinancePage() {
       setIsInitialLoad(false);
     }
   }, [activeShift]);
+
+  // Consultar un día/mes lejano: si este dispositivo no lo tiene guardado (las
+  // ventas más viejas que el relleno automático no se bajan solas), se piden a la
+  // nube para esa ventana y llegan a la base local, de donde esta pantalla lee.
+  // Sin esto, "el corte Z de ayer" salía vacío en un teléfono que no lo había
+  // vivido, y nadie podía mirar un día antiguo.
+  const fetchedWindowsRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (viewMode === 'control') return;
+    const bId = localStorage.getItem('nexus_business_id');
+    if (!bId || !isOnline()) return;
+    const { from, to } = salesWindow({ viewMode, reportMode, selectedDate, dateFrom });
+    // Lo reciente ya lo trae el relleno automático (si ya se hizo en este dispositivo).
+    if (isSalesBackfillDone(bId) && isWindowCoveredByBackfill(from, SALES_BACKFILL_DAYS)) return;
+    const upper = to ?? new Date(Date.now() + 2 * 86400000);
+    const key = `${bId}|${from.toISOString().slice(0, 10)}|${upper.toISOString().slice(0, 10)}`;
+    if (fetchedWindowsRef.current.has(key)) return;
+    fetchedWindowsRef.current.add(key);
+    toast.promise(pullSalesRange(bId, from.toISOString(), upper.toISOString()), {
+      loading: 'Descargando ventas de esas fechas…',
+      success: 'Ventas actualizadas',
+      error: () => {
+        fetchedWindowsRef.current.delete(key); // permitir reintento
+        return 'No se pudieron descargar las ventas de esas fechas. Revisa la conexión.';
+      },
+    });
+  }, [viewMode, reportMode, selectedDate, dateFrom]);
 
   // Admin entrando sin turno abierto: abrir directamente en Reportes. Antes la
   // pantalla entera era "Apertura de Caja" y no se podía ver nada del negocio

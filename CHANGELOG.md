@@ -14,11 +14,15 @@ sigue [Semantic Versioning](https://semver.org/lang/es/).
 - **El POS y Finanzas podían trabajar sobre turnos distintos** cuando había varios abiertos: el POS usaba `.first()` (indeterminado) y Finanzas el más reciente. Ahora todas las pantallas (POS, Inicio, Comandas, Finanzas) eligen el turno abierto más reciente (`lib/activeShift.ts`).
 - **Turnos cerrados desde otro dispositivo seguían abiertos en local** si la nube aún tenía otro turno abierto. Ahora se ponen al día siempre, y se bajan todos los turnos abiertos para poder verlos y cerrarlos.
 
+- **El Corte Z / reportes de un día anterior salían vacíos** en un teléfono que no había vivido ese día: las ventas de otros dispositivos solo se bajaban si eran del turno abierto, y tras actualizar la app el watermark ya era reciente, así que el pull incremental nunca traía lo anterior. Ahora cada dispositivo hace UNA VEZ un relleno de los últimos 90 días (`SALES_BACKFILL_DAYS`), y al elegir en Finanzas una fecha fuera de esa ventana la app descarga ese rango de la nube (`pullSalesRange`, misma ventana que lee la pantalla: `lib/salesWindow.ts`). Así cualquier día del mes o del año se puede consultar con internet.
+- **El punto de venta no hacía scroll en el teléfono** (solo se veían los primeros productos). En móvil el contenedor del catálogo era un hijo flex en columna sin `min-h-0`, así que crecía hasta el alto de TODOS los productos y la rejilla de abajo nunca llegaba a desplazarse; además la altura era `100vh - 60px`, que no descontaba la barra de navegación inferior y dejaba tapado el botón "Mostrar más".
+
 ### ✨ Features
 - **Finanzas ya no exige turno abierto para consultar el negocio.** Sin turno, el admin entra directo a Reportes y puede ver Historial, Reportes, Tendencias y Cierre del día; la pestaña Control ofrece abrir la caja. El vendedor sin turno sigue viendo la pantalla de apertura.
 
 ### ✅ Tests
-- 4 tests de regresión de sincronización (venta de otro turno, primer pull, anulación remota, varios turnos abiertos) que fallan con el código anterior, y 6 de `activeShift`.
+- 4 tests de regresión de sincronización (venta de otro turno, primer pull, anulación remota, varios turnos abiertos) que fallan con el código anterior, y 6 de `activeShift`; 3 más (relleno único, relleno fallido, rango lejano) y 9 de `salesWindow`.
+- 3 E2E nuevos de Playwright: scroll del POS en viewport de teléfono y reportes de días anteriores (con y sin las ventas guardadas). Los E2E de cuadre por conteo se actualizaron: el admin sin turno ahora aterriza en Reportes y abre la caja desde la pestaña Control.
 
 ---
 

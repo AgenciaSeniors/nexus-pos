@@ -109,6 +109,9 @@ async function abrirCierre(page: Page) {
 
 async function irAFinanzas(page: Page) {
   await page.goto('/#/finanzas');
+  // El admin sin turno abierto aterriza en Reportes (consultar el negocio no exige
+  // turno); la apertura de caja está en la pestaña Control.
+  await page.getByRole('button', { name: 'Control' }).click();
   await expect(page.getByText('Apertura de Caja')).toBeVisible({ timeout: 20000 });
 }
 

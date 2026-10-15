@@ -809,8 +809,13 @@ async function pullInventoryMovements(businessId: string, since: number): Promis
 //  - voided_at: anulaciones hechas desde otro dispositivo.
 // Las devoluciones parciales no dejan marca de tiempo: las recoge el barrido de
 // estados (syncHeavyData, y el primer pull), que re-descarga lo no completado.
-const SALES_INITIAL_PULL_DAYS = 60;
+// Ventana que se descarga de una vez en cada dispositivo (primer pull y relleno
+// único tras actualizar la app). Lo más viejo se pide a demanda desde Finanzas
+// (pullSalesRange) cuando alguien consulta una fecha fuera de esta ventana: bajar
+// años de ventas a un teléfono modesto por una red inestable castigaría a todos.
+export const SALES_BACKFILL_DAYS = 90;
 const SALES_SWEEP_DAYS = 30;
+const SALES_BACKFILL_KEY = 'nexus_sales_backfill_v1';
 const SALES_NON_COMPLETED = ['voided', 'partial_refund', 'stock_conflict'];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -846,7 +851,7 @@ export async function pullRemoteSales(
 ): Promise<number> {
     const isInitial = since === 0;
     const sinceIso = new Date(Math.max(0, since - WATERMARK_OVERLAP_MS)).toISOString();
-    const initialIso = new Date(Date.now() - SALES_INITIAL_PULL_DAYS * 86400000).toISOString();
+    const initialIso = new Date(Date.now() - SALES_BACKFILL_DAYS * 86400000).toISOString();
 
     const fresh = await fetchSalesPaged(q =>
         isInitial
@@ -868,6 +873,53 @@ export async function pullRemoteSales(
     for (const s of [...fresh, ...swept] as any[]) byId.set(s.id, { ...s, sync_status: 'synced' as const });
     if (byId.size > 0) await safeBulkPut(db.sales as never, [...byId.values()] as never[]);
     return byId.size;
+}
+
+/** ¿Este dispositivo ya hizo el relleno único del historial de ventas? */
+export function isSalesBackfillDone(businessId: string): boolean {
+    return localStorage.getItem(`${SALES_BACKFILL_KEY}_${businessId}`) === '1';
+}
+
+/**
+ * Relleno ÚNICO del historial de ventas. Antes de que se bajaran las ventas de
+ * todos los dispositivos, un teléfono solo tenía las suyas y las del turno
+ * abierto; al actualizar la app su watermark ya es reciente, así que el pull
+ * incremental jamás traería lo anterior ("ayer vendí y hoy no sale el corte").
+ * Con este relleno cada dispositivo recibe una sola vez los últimos
+ * SALES_BACKFILL_DAYS días. Si falla (sin red, timeout) no se marca y se
+ * reintenta en el siguiente ciclo.
+ */
+async function ensureSalesBackfill(businessId: string): Promise<boolean> {
+    if (isSalesBackfillDone(businessId)) return false;
+    try {
+        await pullRemoteSales(businessId, 0, true);
+        localStorage.setItem(`${SALES_BACKFILL_KEY}_${businessId}`, '1');
+        return true;
+    } catch (err) {
+        console.warn('Relleno de ventas falló (se reintenta en el próximo ciclo):', err);
+        return false;
+    }
+}
+
+/**
+ * Baja las ventas de un rango de fechas concreto, sea cual sea el dispositivo o
+ * el turno. Es lo que permite consultar un día/mes/año lejano en Finanzas aunque
+ * este teléfono no lo tenga guardado: la pantalla pide su ventana y las ventas
+ * llegan a Dexie, de donde la propia pantalla las lee.
+ * @param fromIso inicio (incluido) · toIso fin (excluido)
+ */
+export async function pullSalesRange(businessId: string, fromIso: string, toIso: string): Promise<number> {
+    const rows = await fetchSalesPaged(q =>
+        q.eq('business_id', businessId).gte('date', fromIso).lt('date', toIso),
+    );
+    if (rows.length > 0) {
+        await safeBulkPut(
+            db.sales as never,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            rows.map((s: any) => ({ ...s, sync_status: 'synced' as const })) as never[],
+        );
+    }
+    return rows.length;
 }
 
 export async function syncCriticalData(businessId: string) {
@@ -1243,7 +1295,10 @@ export async function syncLiveData() {
         // 5b-bis. Ventas de TODOS los dispositivos, sea cual sea su turno (ver
         // pullRemoteSales). Sin esto una venta podía existir en el servidor y no
         // verse en el otro teléfono.
-        await pullRemoteSales(businessId, lastSync);
+        // La primera vez en este dispositivo: relleno del historial (ya cubre lo nuevo).
+        if (!(await ensureSalesBackfill(businessId))) {
+            await pullRemoteSales(businessId, lastSync);
+        }
 
         // 5c. Cada 24h: forzar fetchAll (orphan cleanup) para detectar items
         // que fueron borrados FÍSICAMENTE en el servidor. El pull incremental
