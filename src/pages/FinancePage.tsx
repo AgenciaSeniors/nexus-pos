@@ -17,7 +17,7 @@ import {
   Calendar, CalendarRange, TrendingUp, ArrowLeft, ArrowRight, RefreshCw,
   BarChart3, DollarSign, Wallet, PieChart as PieChartIcon, ClipboardCheck,
   Printer, Trophy, Lock, Unlock, PlusCircle, MinusCircle, ShoppingBag, Loader2, X,
-  ArrowRightLeft, History, Ban, TrendingDown, Users, Hash, Download, RotateCcw, Package, AlertTriangle, ChevronRight, Calculator, Clock
+  ArrowRightLeft, History, Ban, TrendingDown, Users, Hash, Download, RotateCcw, Package, AlertTriangle, ChevronRight, Calculator, Clock, Share2, Copy
 } from 'lucide-react';
 import { BillCounter } from '../components/BillCounter';
 import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
@@ -25,6 +25,7 @@ import { computeVoidDelta, computeRefundQuote, cashPortionOfRefund } from '../li
 import { isSaleValidAtTime, endOfLocalDay } from '../lib/shiftStats';
 import { pickActiveShift, sortOpenShifts } from '../lib/activeShift';
 import { salesWindow, isWindowCoveredByBackfill } from '../lib/salesWindow';
+import { buildShiftRecaps, buildZReportText, describeDifference } from '../lib/zReport';
 import { computeProductProfitability, computeSaleNet } from '../lib/salesStats';
 import { computeStockDeductions, round3 } from '../lib/recipe';
 import { BRAND_CHART_COLORS, CHART_TOOLTIP_STYLE } from '../lib/chartTheme';
@@ -695,6 +696,70 @@ export function FinancePage() {
     const staffList = Object.entries(staffSummary).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.total - a.total);
     return { cashTotal, transferTotal, cardTotal, productsList, staffList, ticketCount: dailyStats.sales.length };
   }, [dailyStats.sales, dailyStats.periodEnd]);
+
+  // ── CUADRE DE CAJA DEL DÍA (parte del Corte Z) ──
+  // Los turnos que cierran ese día, con lo esperado, lo contado y la diferencia.
+  // Antes el resultado del cuadre solo salía en un aviso al cerrar.
+  const businessShifts = useLiveQuery(async () => {
+    const bId = localStorage.getItem('nexus_business_id');
+    if (!bId || viewMode !== 'closing') return EMPTY_ARRAY as CashShift[];
+    return await db.cash_shifts.where('business_id').equals(bId).toArray();
+  }, [viewMode]) || (EMPTY_ARRAY as CashShift[]);
+
+  const dayShiftIds = useMemo(
+    () => buildShiftRecaps({ shifts: businessShifts, movements: [], staffNames: new Map(), day: selectedDate, localDay: localDateStr }).map(r => r.id),
+    [businessShifts, selectedDate],
+  );
+
+  const dayCashMovements = useLiveQuery(
+    async () => (dayShiftIds.length === 0 ? [] : await db.cash_movements.where('shift_id').anyOf(dayShiftIds).toArray()),
+    [dayShiftIds.join('|')],
+  ) || EMPTY_ARRAY;
+
+  const allStaffRows = useLiveQuery(() => db.staff.toArray(), []) || EMPTY_ARRAY;
+
+  const shiftRecaps = useMemo(() => buildShiftRecaps({
+    shifts: businessShifts,
+    movements: dayCashMovements,
+    staffNames: new Map((allStaffRows as Staff[]).map(st => [st.id, st.name])),
+    day: selectedDate,
+    localDay: localDateStr,
+  }), [businessShifts, dayCashMovements, allStaffRows, selectedDate]);
+
+  const voidedStats = useMemo(() => {
+    const voided = allSales.filter(sale => sale.status === 'voided' && saleMatchesLocalDate(sale.date, selectedDate));
+    return { count: voided.length, total: voided.reduce((acc, sale) => acc + safeFloat(sale.total), 0) };
+  }, [allSales, selectedDate]);
+
+  /** Texto del Corte Z completo (ventas + cuadre) para WhatsApp / copiar. */
+  const buildZText = () => buildZReportText({
+    businessName: businessSettings?.name || '',
+    dateLabel: new Date(selectedDate + 'T00:00').toLocaleDateString(),
+    ticketCount: closingStats.ticketCount,
+    cashTotal: closingStats.cashTotal,
+    cardTotal: closingStats.cardTotal,
+    transferTotal: closingStats.transferTotal,
+    netTotal: closingStats.cashTotal + closingStats.transferTotal + closingStats.cardTotal,
+    voided: voidedStats,
+    shifts: shiftRecaps,
+    products: closingStats.productsList,
+    staff: closingStats.staffList,
+    fmt: formatMoney,
+  });
+
+  // Android no ejecuta window.print(): el texto por WhatsApp es la forma de
+  // sacar el Corte Z del teléfono (igual que el ticket).
+  const handleShareZ = () => {
+    window.open(`https://wa.me/?text=${encodeURIComponent(buildZText())}`, '_blank');
+  };
+  const handleCopyZ = async () => {
+    try {
+      await navigator.clipboard.writeText(buildZText());
+      toast.success('Reporte copiado');
+    } catch {
+      toast.error('No se pudo copiar el reporte');
+    }
+  };
 
   const trendStats = useMemo(() => {
     const daysToShow = trendFilter === 'week' ? 7 : 30;
@@ -2366,6 +2431,8 @@ export function FinancePage() {
             <h2 className="text-xl font-bold text-[#1F2937]">Cierre del Día</h2>
             <div className="flex items-center gap-3">
                <input type="date" value={selectedDate} max={today} onChange={(e) => e.target.value && setSelectedDate(e.target.value)} className="bg-white border border-gray-200 text-[#1F2937] font-bold rounded-lg p-2 outline-none text-sm" />
+               <button onClick={handleShareZ} className="flex items-center gap-2 px-4 py-2 bg-[#25D366] text-white text-xs font-bold rounded-lg hover:bg-[#25D366]/90 transition-colors shadow-lg shadow-[#25D366]/30"><Share2 size={16} /> WhatsApp</button>
+               <button onClick={handleCopyZ} className="flex items-center gap-2 px-3 py-2 bg-white text-[#0B3B68] border border-[#0B3B68]/30 text-xs font-bold rounded-lg hover:bg-[#0B3B68]/5 transition-colors" title="Copiar el reporte como texto"><Copy size={16} /> Copiar</button>
                <button onClick={handlePrint} className="flex items-center gap-2 px-4 py-2 bg-[#0B3B68] text-white text-xs font-bold rounded-lg hover:bg-[#0B3B68]/90 transition-colors shadow-lg shadow-[#0B3B68]/30"><Printer size={16} /> Imprimir</button>
             </div>
           </div>
@@ -2382,6 +2449,52 @@ export function FinancePage() {
                      <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Transferencia</span><span className="font-bold">{formatMoney(closingStats.transferTotal)}</span></div>
                      <div className="border-t-2 border-[#0B3B68] pt-3 flex justify-between text-lg font-black mt-2"><span>TOTAL NETO</span><span>{formatMoney(closingStats.cashTotal + closingStats.transferTotal + closingStats.cardTotal)}</span></div>
                  </div>
+             </div>
+             <div className="mb-8" data-testid="z-cuadre">
+                 <h3 className="text-xs font-bold text-[#6B7280] uppercase mb-3 tracking-wider">Cuadre de Caja</h3>
+                 {shiftRecaps.length === 0 ? (
+                   <p className="text-center text-[#6B7280] italic text-xs">Sin turnos registrados este día.</p>
+                 ) : (
+                   <div className="space-y-3">
+                     {shiftRecaps.map((r, i) => {
+                       const cash = describeDifference(r.cash_difference);
+                       const transfer = describeDifference(r.transfer_difference);
+                       const hhmm = (iso?: string) => iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                       const tone = (t: string) => t === 'ok' ? 'bg-[#7AC142]/15 text-[#3d6b1a]' : t === 'over' ? 'bg-[#F59E0B]/15 text-[#B45309]' : t === 'short' ? 'bg-[#EF4444]/10 text-[#B91C1C]' : 'bg-gray-100 text-[#6B7280]';
+                       const diffText = (d: { label: string; tone: string; amount: number }) =>
+                         d.tone === 'ok' ? 'Cuadra ✓' : d.tone === 'pending' ? 'En curso' : `${d.label} ${d.amount > 0 ? '+' : '−'}${formatMoney(Math.abs(d.amount))}`;
+                       return (
+                         <div key={r.id} className="rounded-xl border border-gray-200 p-3 text-sm font-mono text-[#1F2937] print:break-inside-avoid">
+                           <div className="flex justify-between items-center gap-2 mb-2">
+                             <span className="text-xs font-bold text-[#0B3B68]">
+                               Turno{shiftRecaps.length > 1 ? ` ${i + 1}` : ''} · {r.status === 'closed' ? `${hhmm(r.opened_at)}–${hhmm(r.closed_at)}` : `desde ${hhmm(r.opened_at)}`}
+                               {r.opened_by ? ` · ${r.opened_by.split(' ')[0]}` : ''}
+                             </span>
+                             <span className={`text-[11px] font-black px-2 py-0.5 rounded-md ${tone(cash.tone)}`}>{r.status === 'open' ? 'Sin cerrar' : diffText(cash)}</span>
+                           </div>
+                           <div className="space-y-1 text-xs">
+                             <div className="flex justify-between"><span>Fondo inicial</span><span className="font-bold">{formatMoney(r.start_amount)}</span></div>
+                             {(r.cash_in > 0 || r.cash_out > 0) && (
+                               <div className="flex justify-between"><span>Entradas / Salidas</span><span className="font-bold">{formatMoney(r.cash_in)} / {formatMoney(r.cash_out)}</span></div>
+                             )}
+                             {r.status === 'closed' && r.expected_cash !== undefined && <div className="flex justify-between"><span>Efectivo esperado</span><span className="font-bold">{formatMoney(r.expected_cash)}</span></div>}
+                             {r.status === 'closed' && r.counted_cash !== undefined && <div className="flex justify-between"><span>Efectivo contado</span><span className="font-bold">{formatMoney(r.counted_cash)}</span></div>}
+                             {r.status === 'closed' && r.transfer_expected !== undefined && (
+                               <div className="flex justify-between items-center">
+                                 <span>Transferencias {formatMoney(r.transfer_expected)} esperadas{r.transfer_counted !== undefined ? ` · ${formatMoney(r.transfer_counted)} verificadas` : ''}</span>
+                                 {r.transfer_difference !== undefined && <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${tone(transfer.tone)}`}>{diffText(transfer)}</span>}
+                               </div>
+                             )}
+                             {r.status === 'open' && <p className="text-[#B45309]">⚠ Este turno no se ha cerrado: aún no hay cuadre.</p>}
+                           </div>
+                         </div>
+                       );
+                     })}
+                   </div>
+                 )}
+                 {voidedStats.count > 0 && (
+                   <p className="mt-3 text-xs text-[#6B7280]">Anuladas: {voidedStats.count} ({formatMoney(voidedStats.total)}) — no incluidas en el total neto.</p>
+                 )}
              </div>
              <div>
                  <h3 className="text-xs font-bold text-[#6B7280] uppercase mb-4 tracking-wider">Desglose de Productos Vendidos</h3>

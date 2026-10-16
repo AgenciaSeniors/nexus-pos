@@ -514,6 +514,44 @@ describe('syncLiveData — pull de fondo multi-dispositivo', () => {
     expect((await db.sales.get('vieja2'))?.sync_status).toBe('synced');
   });
 
+  // ── El Corte Z muestra el CUADRE de cada turno: los turnos cerrados en otro
+  // teléfono (y sus movimientos de caja) tienen que llegar a este. ──
+  it('baja los turnos cerrados de otros dispositivos y sus movimientos de caja', async () => {
+    await seedSettings();
+    localStorage.removeItem('nexus_cash_backfill_v1_b1');
+    // 1ª consulta (turnos abiertos): ninguno. 2ª (relleno de turnos): uno cerrado.
+    mockState.responses['cash_shifts:select'] = [
+      { data: [] },
+      { data: [{ id: 'shCerrado', business_id: 'b1', staff_id: 'u1', start_amount: 500, status: 'closed',
+        opened_at: '2026-10-14T12:00:00.000Z', closed_at: '2026-10-14T22:00:00.000Z',
+        end_amount: 1465, expected_amount: 1500, difference: -35 }] },
+    ];
+    mockState.responses['cash_movements:select'] = {
+      data: [{ id: 'mv1', shift_id: 'shCerrado', business_id: 'b1', type: 'out', amount: 40, reason: 'Gasto', staff_id: 'u1', created_at: '2026-10-14T15:00:00.000Z' }],
+    };
+
+    await syncLiveData();
+
+    const turno = await db.cash_shifts.get('shCerrado');
+    expect(turno?.status).toBe('closed');
+    expect(turno?.difference).toBe(-35);
+    expect(turno?.sync_status).toBe('synced');
+    expect((await db.cash_movements.get('mv1'))?.amount).toBe(40);
+    expect(localStorage.getItem('nexus_cash_backfill_v1_b1')).toBe('1');
+  });
+
+  it('el relleno de turnos se hace una sola vez; después solo lo nuevo', async () => {
+    await seedSettings();
+    localStorage.setItem('nexus_cash_backfill_v1_b1', '1');
+    mockState.responses['cash_shifts:select'] = { data: [] };
+
+    await syncLiveData();
+
+    // Con el relleno hecho sigue consultando (incremental), pero no se vuelve a marcar nada nuevo.
+    expect(mockState.calls.some(c => c.op === 'select' && c.key === 'cash_movements')).toBe(true);
+    expect(localStorage.getItem('nexus_cash_backfill_v1_b1')).toBe('1');
+  });
+
   // ── Regresión: "creo el PIN en un teléfono y en el otro me lo vuelve a pedir" ──
   // El PIN se guardaba solo en local (sin encolar), la nube lo tenía vacío y cada
   // sincronización lo pisaba. El admin, además, nunca se bajaba de la nube.

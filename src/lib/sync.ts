@@ -820,14 +820,14 @@ const SALES_BACKFILL_KEY = 'nexus_sales_backfill_v1';
 const SALES_NON_COMPLETED = ['voided', 'partial_refund', 'stock_conflict'];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function fetchSalesPaged(build: (q: any) => any): Promise<any[]> {
+async function fetchSalesPaged(build: (q: any) => any, table = 'sales'): Promise<any[]> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const all: any[] = [];
     let page = 0;
     const size = 1000;
     while (true) {
         // order('id'): paginación estable (ver fetchAll)
-        const { data, error } = await build(supabase.from('sales').select('*'))
+        const { data, error } = await build(supabase.from(table).select('*'))
             .order('id')
             .range(page * size, (page + 1) * size - 1);
         if (error) throw error;
@@ -837,6 +837,45 @@ async function fetchSalesPaged(build: (q: any) => any): Promise<any[]> {
         page++;
     }
     return all;
+}
+
+// ─── PULL DE TURNOS Y MOVIMIENTOS DE CAJA ────────────────────────────────────
+// El Corte Z muestra el CUADRE de cada turno (esperado, contado, diferencia).
+// Esos turnos solo existían en el teléfono que los abrió y cerró; otro teléfono
+// veía las ventas de ayer pero no el cuadre. Mismo criterio que las ventas:
+// las tablas no tienen updated_at, así que el incremental usa las marcas de
+// tiempo propias (apertura/cierre del turno; created_at de los movimientos).
+type CashPullSpec =
+    | { kind: 'initial' }
+    | { kind: 'incremental'; since: number }
+    | { kind: 'range'; fromIso: string; toIso: string };
+
+async function pullCashRecords(businessId: string, spec: CashPullSpec): Promise<void> {
+    const backfillIso = new Date(Date.now() - SALES_BACKFILL_DAYS * 86400000).toISOString();
+    const sinceIso = spec.kind === 'incremental'
+        ? new Date(Math.max(0, spec.since - WATERMARK_OVERLAP_MS)).toISOString()
+        : '';
+
+    const shifts = await fetchSalesPaged(q => {
+        const base = q.eq('business_id', businessId);
+        if (spec.kind === 'initial') return base.gte('opened_at', backfillIso);
+        if (spec.kind === 'incremental') return base.or(`opened_at.gt.${sinceIso},closed_at.gt.${sinceIso}`);
+        return base.or(
+            `and(opened_at.gte.${spec.fromIso},opened_at.lt.${spec.toIso}),and(closed_at.gte.${spec.fromIso},closed_at.lt.${spec.toIso})`,
+        );
+    }, 'cash_shifts');
+
+    const movements = await fetchSalesPaged(q => {
+        const base = q.eq('business_id', businessId);
+        if (spec.kind === 'initial') return base.gte('created_at', backfillIso);
+        if (spec.kind === 'incremental') return base.gt('created_at', sinceIso);
+        return base.gte('created_at', spec.fromIso).lt('created_at', spec.toIso);
+    }, 'cash_movements');
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (shifts.length > 0) await safeBulkPut(db.cash_shifts as never, shifts.map((r: any) => ({ ...r, sync_status: 'synced' as const })) as never[]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (movements.length > 0) await safeBulkPut(db.cash_movements as never, movements.map((r: any) => ({ ...r, sync_status: 'synced' as const })) as never[]);
 }
 
 /**
@@ -946,6 +985,27 @@ async function ensureSalesBackfill(businessId: string): Promise<boolean> {
     }
 }
 
+const CASH_BACKFILL_KEY = 'nexus_cash_backfill_v1';
+
+/**
+ * Relleno único de los turnos y movimientos de caja (flag propio: los
+ * dispositivos que ya hicieron el relleno de ventas no lo repiten, y aun así
+ * necesitan los turnos para ver el cuadre en el Corte Z).
+ * @returns true si lo hizo en esta llamada
+ */
+async function ensureCashBackfill(businessId: string): Promise<boolean> {
+    const key = `${CASH_BACKFILL_KEY}_${businessId}`;
+    if (localStorage.getItem(key) === '1') return false;
+    try {
+        await pullCashRecords(businessId, { kind: 'initial' });
+        localStorage.setItem(key, '1');
+        return true;
+    } catch (err) {
+        console.warn('Relleno de turnos de caja falló (se reintenta en el próximo ciclo):', err);
+        return false;
+    }
+}
+
 /**
  * Baja las ventas de un rango de fechas concreto, sea cual sea el dispositivo o
  * el turno. Es lo que permite consultar un día/mes/año lejano en Finanzas aunque
@@ -963,6 +1023,14 @@ export async function pullSalesRange(businessId: string, fromIso: string, toIso:
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             rows.map((s: any) => ({ ...s, sync_status: 'synced' as const })) as never[],
         );
+    }
+    // Los turnos y movimientos de caja de esas fechas (el cuadre del Corte Z).
+    // DESPUÉS de guardar las ventas y sin que su fallo las invalide: si falla,
+    // el reporte sigue mostrando las ventas y solo falta el cuadre.
+    try {
+        await pullCashRecords(businessId, { kind: 'range', fromIso, toIso });
+    } catch (err) {
+        console.warn('No se pudieron descargar los turnos de caja de ese rango:', err);
     }
     return rows.length;
 }
@@ -1338,6 +1406,16 @@ export async function syncLiveData() {
         // La primera vez en este dispositivo: relleno del historial (ya cubre lo nuevo).
         if (!(await ensureSalesBackfill(businessId))) {
             await pullRemoteSales(businessId, lastSync);
+        }
+        if (!(await ensureCashBackfill(businessId))) {
+            try {
+                await pullCashRecords(businessId, { kind: 'incremental', since: lastSync });
+            } catch (err) {
+                // No tumbar el ciclo entero por el cuadre. Se desmarca el relleno para
+                // que el próximo ciclo repita la ventana completa y no se pierda nada.
+                console.warn('Pull de turnos de caja falló; se repetirá el relleno:', err);
+                localStorage.removeItem(`${CASH_BACKFILL_KEY}_${businessId}`);
+            }
         }
 
         // 5c. Cada 24h: forzar fetchAll (orphan cleanup) para detectar items

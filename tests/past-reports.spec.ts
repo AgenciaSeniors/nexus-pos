@@ -42,14 +42,18 @@ function venta(id: string, total: number, dateIso: string) {
   };
 }
 
-async function sembrar(page: Page, ventasLocales: ReturnType<typeof venta>[]) {
+async function sembrar(
+  page: Page,
+  ventasLocales: ReturnType<typeof venta>[],
+  caja: { turnos: Record<string, unknown>[]; movimientos: Record<string, unknown>[] } = { turnos: [], movimientos: [] },
+) {
   await page.goto('/');
   await page.waitForFunction(async () => {
     const dbs = await indexedDB.databases?.();
     return !!dbs?.some(d => d.name === 'NexusPOS_DB');
   }, null, { timeout: 15000 });
 
-  await page.evaluate(async ({ BIZ, STAFF, ventasLocales }) => {
+  await page.evaluate(async ({ BIZ, STAFF, ventasLocales, caja }) => {
     const db = await new Promise<IDBDatabase>((res, rej) => {
       const r = indexedDB.open('NexusPOS_DB');
       r.onsuccess = () => res(r.result);
@@ -67,12 +71,14 @@ async function sembrar(page: Page, ventasLocales: ReturnType<typeof venta>[]) {
       status: 'active', sync_status: 'synced', subscription_expires_at: '2099-01-01T00:00:00.000Z',
     });
     for (const v of ventasLocales) await put('sales', v);
+    for (const t of caja.turnos) await put('cash_shifts', t);
+    for (const m of caja.movimientos) await put('cash_movements', m);
     localStorage.setItem('nexus_business_id', BIZ);
     localStorage.setItem('nexus_staff_id', STAFF);
     localStorage.setItem(`nexus_guide_seen_${BIZ}`, '1');
     // El relleno automático ya se hizo: aquí se prueba solo la consulta a demanda.
     localStorage.setItem(`nexus_sales_backfill_v1_${BIZ}`, '1');
-  }, { BIZ, STAFF, ventasLocales });
+  }, { BIZ, STAFF, ventasLocales, caja });
   await page.reload();
 }
 
@@ -81,6 +87,18 @@ async function abrirCorteZ(page: Page, fecha: string) {
   await page.getByRole('button', { name: 'Cierre del día' }).click();
   await page.locator('input[type="date"]').fill(fecha);
 }
+
+/** Turno cerrado ayer con el cuadre ya calculado: esperaba 1500, contó 1465 → falta 35. */
+const turnoCerradoAyer = {
+  id: '44444444-4444-4444-8444-4444444444aa', business_id: BIZ, staff_id: STAFF, start_amount: 500,
+  opened_at: mediodiaISO(1).replace('T12', 'T08'), closed_at: mediodiaISO(1).replace('T12', 'T20'),
+  status: 'closed', end_amount: 1465, expected_amount: 1500, difference: -35,
+  transfer_expected: 300, transfer_count: 300, transfer_difference: 0, sync_status: 'synced',
+};
+const salidaDeCaja = {
+  id: '66666666-6666-4666-8666-666666666601', shift_id: turnoCerradoAyer.id, business_id: BIZ,
+  type: 'out', amount: 40, reason: 'Gasto', staff_id: STAFF, created_at: mediodiaISO(1), sync_status: 'synced',
+};
 
 const totalNeto = (page: Page) => page.getByText('TOTAL NETO').locator('..');
 
@@ -132,5 +150,56 @@ test.describe('Reportes de días anteriores (admin sin turno abierto)', () => {
 
     await expect(totalNeto(page)).toContainText('77', { timeout: 20000 });
     expect(pedidoALaNube).toBe(true);
+  });
+
+  test('el Corte Z de ayer incluye el CUADRE DE CAJA del turno (esperado, contado, diferencia)', async ({ page }) => {
+    await page.route('**/*.supabase.co/**', route => route.abort('failed'));
+    await sembrar(page, [venta('aaaaaaaa-0000-4000-8000-0000000000c1', 100, mediodiaISO(1))],
+      { turnos: [turnoCerradoAyer], movimientos: [salidaDeCaja] });
+
+    await abrirCorteZ(page, diaLocal(1));
+
+    const cuadre = page.getByTestId('z-cuadre');
+    await expect(cuadre).toContainText('Cuadre de Caja');
+    await expect(cuadre).toContainText('Efectivo esperado');
+    await expect(cuadre).toContainText('1,500');
+    await expect(cuadre).toContainText('Efectivo contado');
+    await expect(cuadre).toContainText('1,465');
+    await expect(cuadre).toContainText('Falta');
+    await expect(cuadre).toContainText('35');
+    await expect(cuadre).toContainText('Transferencias');
+  });
+
+  test('un día sin turnos lo dice en vez de dejar el cuadre en blanco', async ({ page }) => {
+    await page.route('**/*.supabase.co/**', route => route.abort('failed'));
+    await sembrar(page, [venta('aaaaaaaa-0000-4000-8000-0000000000c2', 100, mediodiaISO(1))]);
+
+    await abrirCorteZ(page, diaLocal(1));
+
+    await expect(page.getByTestId('z-cuadre')).toContainText('Sin turnos registrados este día.');
+  });
+
+  test('"WhatsApp" arma el Corte Z completo como texto (el APK no puede imprimir)', async ({ page }) => {
+    await page.route('**/*.supabase.co/**', route => route.abort('failed'));
+    // window.open se intercepta: lo que importa es la URL que se intenta abrir.
+    await page.addInitScript(() => {
+      (window as unknown as { __abiertas: string[] }).__abiertas = [];
+      window.open = (u?: string | URL) => { (window as unknown as { __abiertas: string[] }).__abiertas.push(String(u)); return null; };
+    });
+    await sembrar(page, [venta('aaaaaaaa-0000-4000-8000-0000000000c3', 100, mediodiaISO(1))],
+      { turnos: [turnoCerradoAyer], movimientos: [salidaDeCaja] });
+
+    await abrirCorteZ(page, diaLocal(1));
+    await expect(page.getByTestId('z-cuadre')).toContainText('Falta');
+    await page.getByRole('button', { name: 'WhatsApp' }).click();
+
+    const abiertas = await page.evaluate(() => (window as unknown as { __abiertas: string[] }).__abiertas);
+    expect(abiertas).toHaveLength(1);
+    expect(abiertas[0].startsWith('https://wa.me/?text=')).toBe(true);
+    const texto = decodeURIComponent(abiertas[0].split('text=')[1]);
+    expect(texto).toContain('REPORTE Z');
+    expect(texto).toContain('CUADRE DE CAJA');
+    expect(texto).toContain('Diferencia efectivo: Falta');
+    expect(texto).toContain('TOTAL NETO');
   });
 });
