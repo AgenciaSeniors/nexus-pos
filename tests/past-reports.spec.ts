@@ -46,6 +46,7 @@ async function sembrar(
   page: Page,
   ventasLocales: ReturnType<typeof venta>[],
   caja: { turnos: Record<string, unknown>[]; movimientos: Record<string, unknown>[] } = { turnos: [], movimientos: [] },
+  inv: { productos: Record<string, unknown>[]; movimientos: Record<string, unknown>[] } = { productos: [], movimientos: [] },
 ) {
   await page.goto('/');
   await page.waitForFunction(async () => {
@@ -53,7 +54,7 @@ async function sembrar(
     return !!dbs?.some(d => d.name === 'NexusPOS_DB');
   }, null, { timeout: 15000 });
 
-  await page.evaluate(async ({ BIZ, STAFF, ventasLocales, caja }) => {
+  await page.evaluate(async ({ BIZ, STAFF, ventasLocales, caja, inv }) => {
     const db = await new Promise<IDBDatabase>((res, rej) => {
       const r = indexedDB.open('NexusPOS_DB');
       r.onsuccess = () => res(r.result);
@@ -73,12 +74,14 @@ async function sembrar(
     for (const v of ventasLocales) await put('sales', v);
     for (const t of caja.turnos) await put('cash_shifts', t);
     for (const m of caja.movimientos) await put('cash_movements', m);
+    for (const p of inv.productos) await put('products', p);
+    for (const m of inv.movimientos) await put('movements', m);
     localStorage.setItem('nexus_business_id', BIZ);
     localStorage.setItem('nexus_staff_id', STAFF);
     localStorage.setItem(`nexus_guide_seen_${BIZ}`, '1');
     // El relleno automático ya se hizo: aquí se prueba solo la consulta a demanda.
     localStorage.setItem(`nexus_sales_backfill_v1_${BIZ}`, '1');
-  }, { BIZ, STAFF, ventasLocales, caja });
+  }, { BIZ, STAFF, ventasLocales, caja, inv });
   await page.reload();
 }
 
@@ -98,6 +101,20 @@ const turnoCerradoAyer = {
 const salidaDeCaja = {
   id: '66666666-6666-4666-8666-666666666601', shift_id: turnoCerradoAyer.id, business_id: BIZ,
   type: 'out', amount: 40, reason: 'Gasto', staff_id: STAFF, created_at: mediodiaISO(1), sync_status: 'synced',
+};
+
+/** Café: empezó el día con 20, vendió 5 → debe quedar 15. Agua: empezó con 2, entraron 10 a media jornada, vendió 4 → debe quedar 8. */
+const inventarioDeAyer = {
+  productos: [
+    { id: '33333333-3333-4333-8333-3333333333c1', business_id: BIZ, name: 'Café Cubita', price: 10, cost: 0, stock: 15, stock_warehouse: 0, sku: null, category: 'General', unit: 'un', sync_status: 'synced', deleted_at: null },
+    { id: '33333333-3333-4333-8333-3333333333c2', business_id: BIZ, name: 'Agua Mineral', price: 5, cost: 0, stock: 8, stock_warehouse: 0, sku: null, category: 'General', unit: 'un', sync_status: 'synced', deleted_at: null },
+  ],
+  movimientos: [
+    { id: '77777777-7777-4777-8777-777777777701', business_id: BIZ, product_id: '33333333-3333-4333-8333-3333333333c1', qty_change: -2, reason: 'sale', created_at: mediodiaISO(1), sync_status: 'synced' },
+    { id: '77777777-7777-4777-8777-777777777702', business_id: BIZ, product_id: '33333333-3333-4333-8333-3333333333c1', qty_change: -3, reason: 'sale', created_at: mediodiaISO(1).replace('T12', 'T15'), sync_status: 'synced' },
+    { id: '77777777-7777-4777-8777-777777777703', business_id: BIZ, product_id: '33333333-3333-4333-8333-3333333333c2', qty_change: -4, reason: 'sale', created_at: mediodiaISO(1), sync_status: 'synced' },
+    { id: '77777777-7777-4777-8777-777777777704', business_id: BIZ, product_id: '33333333-3333-4333-8333-3333333333c2', qty_change: 10, reason: 'restock', created_at: mediodiaISO(1).replace('T12', 'T13'), sync_status: 'synced' },
+  ],
 };
 
 const totalNeto = (page: Page) => page.getByText('TOTAL NETO').locator('..');
@@ -201,5 +218,71 @@ test.describe('Reportes de días anteriores (admin sin turno abierto)', () => {
     expect(texto).toContain('CUADRE DE CAJA');
     expect(texto).toContain('Diferencia efectivo: Falta');
     expect(texto).toContain('TOTAL NETO');
+  });
+
+  test('el Corte Z trae el INVENTARIO DEL DÍA: inicial, entradas, ventas y final esperado', async ({ page }) => {
+    await page.route('**/*.supabase.co/**', route => route.abort('failed'));
+    await sembrar(page, [venta('aaaaaaaa-0000-4000-8000-0000000000d1', 100, mediodiaISO(1))],
+      { turnos: [turnoCerradoAyer], movimientos: [salidaDeCaja] }, inventarioDeAyer);
+
+    await abrirCorteZ(page, diaLocal(1));
+
+    const tabla = page.getByTestId('z-inventario');
+    const cafe = tabla.locator('tr', { hasText: 'Café Cubita' });
+    await expect(cafe).toContainText('20');   // inicial
+    await expect(cafe).toContainText('−5');   // vendió
+    await expect(cafe).toContainText('15');   // final esperado
+    const agua = tabla.locator('tr', { hasText: 'Agua Mineral' });
+    await expect(agua).toContainText('2');    // inicial
+    await expect(agua).toContainText('+10');  // lo que entró durante el día
+    await expect(agua).toContainText('−4');
+    await expect(agua).toContainText('8');    // final esperado
+  });
+
+  test('"Buscar faltante": contar lo físico dice si los productos explican la diferencia de caja', async ({ page }) => {
+    await page.route('**/*.supabase.co/**', route => route.abort('failed'));
+    // La caja de ayer quedó con 35 de menos.
+    await sembrar(page, [venta('aaaaaaaa-0000-4000-8000-0000000000d2', 100, mediodiaISO(1))],
+      { turnos: [turnoCerradoAyer], movimientos: [salidaDeCaja] }, inventarioDeAyer);
+
+    await abrirCorteZ(page, diaLocal(1));
+    await page.getByTestId('btn-buscar-faltante').click();
+
+    const panel = page.getByTestId('shortfall-finder');
+    await expect(panel.getByTestId('shortfall-cash')).toContainText('Falta');
+    await expect(panel.getByTestId('shortfall-verdict')).toContainText('Cuenta los productos');
+
+    // Sobran 3 cafés (30) y 1 agua (5) = 35 → los productos explican lo que falta en caja.
+    await panel.getByLabel('Vitrina de Café Cubita').fill('18');
+    await panel.getByLabel('Vitrina de Agua Mineral').fill('9');
+
+    await expect(panel.getByTestId('shortfall-verdict')).toContainText('explican la diferencia');
+    await expect(panel.getByTestId('shortfall-verdict')).toContainText('dio por vendida');
+
+    // Si lo contado coincide con lo esperado, los productos NO explican el faltante.
+    await panel.getByLabel('Vitrina de Café Cubita').fill('15');
+    await panel.getByLabel('Vitrina de Agua Mineral').fill('8');
+    await expect(panel.getByTestId('shortfall-verdict')).toContainText('no explican');
+    await expect(panel.getByTestId('shortfall-verdict')).toContainText('vuelto');
+  });
+
+  test('el texto de WhatsApp incluye el inventario esperado', async ({ page }) => {
+    await page.route('**/*.supabase.co/**', route => route.abort('failed'));
+    await page.addInitScript(() => {
+      (window as unknown as { __abiertas: string[] }).__abiertas = [];
+      window.open = (u?: string | URL) => { (window as unknown as { __abiertas: string[] }).__abiertas.push(String(u)); return null; };
+    });
+    await sembrar(page, [venta('aaaaaaaa-0000-4000-8000-0000000000d3', 100, mediodiaISO(1))],
+      { turnos: [turnoCerradoAyer], movimientos: [salidaDeCaja] }, inventarioDeAyer);
+
+    await abrirCorteZ(page, diaLocal(1));
+    await expect(page.getByTestId('z-inventario')).toBeVisible();
+    await page.getByRole('button', { name: 'WhatsApp' }).click();
+
+    const abiertas = await page.evaluate(() => (window as unknown as { __abiertas: string[] }).__abiertas);
+    const texto = decodeURIComponent(abiertas[0].split('text=')[1]);
+    expect(texto).toContain('INVENTARIO DEL DÍA (esperado)');
+    expect(texto).toContain('Café Cubita: inicial 20, −5 vendió → final 15');
+    expect(texto).toContain('Agua Mineral: inicial 2, +10 entró, −4 vendió → final 8');
   });
 });

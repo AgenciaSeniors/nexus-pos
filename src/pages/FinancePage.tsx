@@ -17,7 +17,7 @@ import {
   Calendar, CalendarRange, TrendingUp, ArrowLeft, ArrowRight, RefreshCw,
   BarChart3, DollarSign, Wallet, PieChart as PieChartIcon, ClipboardCheck,
   Printer, Trophy, Lock, Unlock, PlusCircle, MinusCircle, ShoppingBag, Loader2, X,
-  ArrowRightLeft, History, Ban, TrendingDown, Users, Hash, Download, RotateCcw, Package, AlertTriangle, ChevronRight, Calculator, Clock, Share2, Copy
+  ArrowRightLeft, History, Ban, TrendingDown, Users, Hash, Download, RotateCcw, Package, AlertTriangle, ChevronRight, Calculator, Clock, Share2, Copy, Search
 } from 'lucide-react';
 import { BillCounter } from '../components/BillCounter';
 import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
@@ -26,6 +26,9 @@ import { isSaleValidAtTime, endOfLocalDay } from '../lib/shiftStats';
 import { pickActiveShift, sortOpenShifts } from '../lib/activeShift';
 import { salesWindow, isWindowCoveredByBackfill } from '../lib/salesWindow';
 import { buildShiftRecaps, buildZReportText, describeDifference } from '../lib/zReport';
+import { buildDailyInventory } from '../lib/dailyInventory';
+import { DailyInventoryTable } from '../components/DailyInventoryTable';
+import { ShortfallFinder } from '../components/ShortfallFinder';
 import { computeProductProfitability, computeSaleNet } from '../lib/salesStats';
 import { computeStockDeductions, round3 } from '../lib/recipe';
 import { BRAND_CHART_COLORS, CHART_TOOLTIP_STYLE } from '../lib/chartTheme';
@@ -65,6 +68,7 @@ export function FinancePage() {
   const [reason, setReason] = useState('');
   const [movementType, setMovementType] = useState<'in' | 'out' | null>(null);
   const [isClosing, setIsClosing] = useState(false);
+  const [showShortfall, setShowShortfall] = useState(false);
   // Captura los stats del turno al iniciar el cierre para evitar que el modal
   // desaparezca cuando db.cash_shifts.update() dispara el useLiveQuery
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -731,6 +735,48 @@ export function FinancePage() {
     return { count: voided.length, total: voided.reduce((acc, sale) => acc + safeFloat(sale.total), 0) };
   }, [allSales, selectedDate]);
 
+  // ── INVENTARIO DEL DÍA (lo que había, lo que entró, lo vendido y lo que debería
+  // quedar) ──  Se reconstruye hacia atrás desde el stock de ahora y los movimientos
+  // de inventario (lib/dailyInventory), así que sirve también para días pasados.
+  // Necesita TODOS los movimientos posteriores al día; este dispositivo solo guarda
+  // los últimos 90 días, por eso fuera de esa ventana no se muestra (sería falso).
+  const dayWindow = useMemo(() => {
+    const start = new Date(selectedDate + 'T00:00');
+    const end = new Date(start.getTime());
+    end.setDate(end.getDate() + 1);
+    return { start, end };
+  }, [selectedDate]);
+  const inventoryAvailable = !isNaN(dayWindow.start.getTime())
+    && dayWindow.start.getTime() >= Date.now() - (SALES_BACKFILL_DAYS - 5) * 86400000;
+
+  const inventoryProducts = useLiveQuery(async () => {
+    const bId = localStorage.getItem('nexus_business_id');
+    if (!bId || viewMode !== 'closing' || !inventoryAvailable) return EMPTY_ARRAY as Product[];
+    return await db.products.where('business_id').equals(bId).toArray();
+  }, [viewMode, inventoryAvailable]) || (EMPTY_ARRAY as Product[]);
+
+  const inventoryMovements = useLiveQuery(async () => {
+    const bId = localStorage.getItem('nexus_business_id');
+    if (!bId || viewMode !== 'closing' || !inventoryAvailable) return EMPTY_ARRAY as InventoryMovement[];
+    // Un día de margen en el índice: el filtro exacto lo hace buildDailyInventory
+    const from = new Date(dayWindow.start.getTime() - 86400000).toISOString();
+    return await db.movements.where('created_at').aboveOrEqual(from).filter(m => m.business_id === bId).toArray();
+  }, [viewMode, inventoryAvailable, dayWindow.start.getTime()]) || (EMPTY_ARRAY as InventoryMovement[]);
+
+  const dayInventory = useMemo(
+    () => (inventoryAvailable
+      ? buildDailyInventory({ products: inventoryProducts, movements: inventoryMovements, windowStart: dayWindow.start, windowEnd: dayWindow.end })
+      : []),
+    [inventoryAvailable, inventoryProducts, inventoryMovements, dayWindow],
+  );
+
+  /** Diferencia de EFECTIVO del día (suma de los turnos cerrados). null = ninguno cerrado. */
+  const dayCashDifference = useMemo(() => {
+    const cerrados = shiftRecaps.filter(r => r.status === 'closed' && r.cash_difference !== undefined);
+    if (cerrados.length === 0) return null;
+    return Math.round(cerrados.reduce((acc, r) => acc + (r.cash_difference ?? 0), 0) * 100) / 100;
+  }, [shiftRecaps]);
+
   /** Texto del Corte Z completo (ventas + cuadre) para WhatsApp / copiar. */
   const buildZText = () => buildZReportText({
     businessName: businessSettings?.name || '',
@@ -744,6 +790,7 @@ export function FinancePage() {
     shifts: shiftRecaps,
     products: closingStats.productsList,
     staff: closingStats.staffList,
+    inventory: dayInventory,
     fmt: formatMoney,
   });
 
@@ -2427,10 +2474,20 @@ export function FinancePage() {
 
       {viewMode === 'closing' && (
         <div className="animate-in slide-in-from-bottom-4 duration-300 max-w-3xl mx-auto">
+          {showShortfall && (
+            <ShortfallFinder
+              rows={dayInventory}
+              cashDifference={dayCashDifference}
+              dateLabel={new Date(selectedDate + 'T00:00').toLocaleDateString()}
+              fmt={formatMoney}
+              onClose={() => setShowShortfall(false)}
+            />
+          )}
           <div className="flex justify-between items-center mb-6 print:hidden">
             <h2 className="text-xl font-bold text-[#1F2937]">Cierre del Día</h2>
             <div className="flex items-center gap-3">
                <input type="date" value={selectedDate} max={today} onChange={(e) => e.target.value && setSelectedDate(e.target.value)} className="bg-white border border-gray-200 text-[#1F2937] font-bold rounded-lg p-2 outline-none text-sm" />
+               <button onClick={() => setShowShortfall(true)} className="flex items-center gap-2 px-3 py-2 bg-[#F59E0B] text-white text-xs font-bold rounded-lg hover:bg-[#F59E0B]/90 transition-colors shadow-lg shadow-[#F59E0B]/30" title="Compara lo que cuentas con lo que el sistema espera" data-testid="btn-buscar-faltante"><Search size={16} /> Buscar faltante</button>
                <button onClick={handleShareZ} className="flex items-center gap-2 px-4 py-2 bg-[#25D366] text-white text-xs font-bold rounded-lg hover:bg-[#25D366]/90 transition-colors shadow-lg shadow-[#25D366]/30"><Share2 size={16} /> WhatsApp</button>
                <button onClick={handleCopyZ} className="flex items-center gap-2 px-3 py-2 bg-white text-[#0B3B68] border border-[#0B3B68]/30 text-xs font-bold rounded-lg hover:bg-[#0B3B68]/5 transition-colors" title="Copiar el reporte como texto"><Copy size={16} /> Copiar</button>
                <button onClick={handlePrint} className="flex items-center gap-2 px-4 py-2 bg-[#0B3B68] text-white text-xs font-bold rounded-lg hover:bg-[#0B3B68]/90 transition-colors shadow-lg shadow-[#0B3B68]/30"><Printer size={16} /> Imprimir</button>
@@ -2495,6 +2552,17 @@ export function FinancePage() {
                  {voidedStats.count > 0 && (
                    <p className="mt-3 text-xs text-[#6B7280]">Anuladas: {voidedStats.count} ({formatMoney(voidedStats.total)}) — no incluidas en el total neto.</p>
                  )}
+             </div>
+             <div className="mb-8">
+                 <div className="flex items-center justify-between mb-3 gap-2">
+                   <h3 className="text-xs font-bold text-[#6B7280] uppercase tracking-wider">Inventario del Día</h3>
+                   {dayCashDifference !== null && Math.abs(dayCashDifference) >= 0.005 && dayInventory.length > 0 && (
+                     <button onClick={() => setShowShortfall(true)} className="print:hidden text-[11px] font-bold text-[#B45309] underline underline-offset-2">¿No cuadra? Buscar el faltante</button>
+                   )}
+                 </div>
+                 {inventoryAvailable
+                   ? <DailyInventoryTable rows={dayInventory} />
+                   : <p className="text-center text-[#6B7280] italic text-xs">El inventario del día solo está disponible para los últimos {SALES_BACKFILL_DAYS - 5} días.</p>}
              </div>
              <div>
                  <h3 className="text-xs font-bold text-[#6B7280] uppercase mb-4 tracking-wider">Desglose de Productos Vendidos</h3>

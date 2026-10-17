@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { CashShift, CashMovement } from './db';
 import { describeDifference, buildShiftRecaps, buildZReportText, type ZReportInput } from './zReport';
+import type { ProductDayRow } from './dailyInventory';
 
 const localDay = (d: Date): string => {
   const p = (n: number) => String(n).padStart(2, '0');
@@ -125,6 +126,29 @@ describe('buildZReportText', () => {
     expect(t).toContain('P15');
     expect(t).not.toContain('P16');
     expect(t).toContain('… y 3 productos más');
+  });
+
+  it('incluye el inventario esperado de lo vendido, con entradas y reparto vitrina/almacén', () => {
+    const fila = (over: Partial<ProductDayRow>): ProductDayRow => ({
+      product_id: 'p', name: 'Café', price: 10, start_display: 20, start_warehouse: 0, entries: 0, sold: 5,
+      returned: 0, other: 0, transfer_to_display: 0, end_display: 15, end_warehouse: 0, ...over,
+    });
+    const t = buildZReportText({
+      ...base,
+      inventory: [
+        fila({}),
+        fila({ product_id: 'q', name: 'Agua', start_display: 5, start_warehouse: 30, entries: 10, sold: 4, end_display: 11, end_warehouse: 30 }),
+        fila({ product_id: 'r', name: 'No vendido', sold: 0 }),
+      ],
+    });
+    expect(t).toContain('*INVENTARIO DEL DÍA (esperado)*');
+    expect(t).toContain('Café: inicial 20, −5 vendió → final 15');
+    expect(t).toContain('Agua: inicial 35, +10 entró, −4 vendió → final 41 (vitrina 11 · almacén 30)');
+    expect(t).not.toContain('No vendido');
+  });
+
+  it('sin inventario no añade la sección', () => {
+    expect(buildZReportText(base)).not.toContain('INVENTARIO DEL DÍA');
   });
 
   it('el desglose por vendedor solo sale si hay más de uno', () => {

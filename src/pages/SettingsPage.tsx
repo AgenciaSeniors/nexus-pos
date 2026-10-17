@@ -1287,6 +1287,7 @@ export function SettingsPage() {
                   'El resumen separa ventas en efectivo, transferencia y mixto — el efectivo de ventas mixtas se suma al efectivo total',
                   'Cierra el turno al final del día para cuadrar la caja — si hay ventas con conflicto de stock sin resolver, el cierre se bloqueará hasta que las atiendas',
                   'Las ventas anuladas no se suman a los totales del resumen',
+                  'Si la caja no cuadra: en "Cierre del día" mira "Inventario del Día" (lo que había, lo que entró, lo vendido y lo que debería quedar de cada producto) y pulsa "Buscar faltante": cuenta los productos que más se vendieron, escribe cuántos hay y la app te dice cuánto dinero explica cada diferencia y si explica el faltante o sobrante',
                   'El Corte Z ("Cierre del día") trae también el CUADRE DE CAJA de cada turno: fondo inicial, efectivo esperado, efectivo contado y la diferencia (cuadra / sobra / falta). Para sacarlo del teléfono usa el botón WhatsApp (o Copiar): manda el reporte completo como texto, sin necesidad de imprimir',
                   'Ver un día anterior: en "Cierre del día" (Corte Z) o en "Reportes" elige la fecha. Si ese teléfono no tiene guardadas las ventas de esa fecha, las descarga solo (necesita internet)',
                   'Reportes por rango: en la pestaña "Resumen diario" activa el modo Rango, elige fechas de inicio y fin, y obtén estadísticas, gráfico y desglose por vendedor para cualquier período',

@@ -11,6 +11,7 @@
  * resuelve la impresión en el APK (Android no ejecuta window.print()).
  */
 import type { CashShift, CashMovement } from './db';
+import type { ProductDayRow } from './dailyInventory';
 
 export type DifferenceTone = 'ok' | 'over' | 'short' | 'pending';
 
@@ -117,6 +118,8 @@ export interface ZReportInput {
   shifts: ZShiftRecap[];
   products: { name: string; quantity: number; total: number }[];
   staff: { name: string; count: number; total: number }[];
+  /** Inventario del día (lib/dailyInventory). Opcional: sin él no hay sección. */
+  inventory?: ProductDayRow[];
   fmt?: (n: number) => string;
 }
 
@@ -191,6 +194,27 @@ export function buildZReportText(input: ZReportInput): string {
     for (const p of shown) lines.push(`${p.quantity} x ${p.name}  ${fmt(p.total)}`);
     const rest = input.products.length - shown.length;
     if (rest > 0) lines.push(`… y ${rest} producto${rest !== 1 ? 's' : ''} más`);
+  }
+
+  // Inventario esperado: solo lo vendido, lo más importante primero. Es lo que se
+  // compara con el conteo físico cuando la caja no cuadra.
+  const vendidos = (input.inventory || []).filter(r => r.sold > 0);
+  if (vendidos.length > 0) {
+    lines.push(SEP);
+    lines.push('*INVENTARIO DEL DÍA (esperado)*');
+    const q = (n: number) => String(Math.round(n * 1000) / 1000);
+    for (const r of vendidos.slice(0, MAX_PRODUCT_LINES)) {
+      const parts = [`inicial ${q(r.start_display + r.start_warehouse)}`];
+      if (r.entries > 0) parts.push(`+${q(r.entries)} entró`);
+      parts.push(`−${q(r.sold)} vendió`);
+      const otros = Math.round((r.other + r.returned) * 1000) / 1000;
+      if (otros !== 0) parts.push(`${otros > 0 ? '+' : '−'}${q(Math.abs(otros))} otros`);
+      const split = r.end_warehouse !== 0 || r.start_warehouse !== 0
+        ? ` (vitrina ${q(r.end_display)} · almacén ${q(r.end_warehouse)})` : '';
+      lines.push(`${r.name}: ${parts.join(', ')} → final ${q(r.end_display + r.end_warehouse)}${split}`);
+    }
+    const resto = vendidos.length - MAX_PRODUCT_LINES;
+    if (resto > 0) lines.push(`… y ${resto} producto${resto !== 1 ? 's' : ''} más`);
   }
 
   if (input.staff.length > 1) {
