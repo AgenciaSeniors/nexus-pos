@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Search, PackageCheck, AlertTriangle, RotateCcw } from 'lucide-react';
 import { currency } from '../lib/currency';
 import { round3 } from '../lib/recipe';
+import { matchesSearch } from '../lib/textSearch';
 import type { CountLine } from '../lib/shiftCount';
 
 export interface CountDraft {
@@ -38,9 +39,9 @@ export function ShiftCountPanel({ mode, drafts, expectedByProduct, onChange, lin
   );
 
   const visible = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = search.trim();
     return drafts.filter(d => {
-      if (q && !d.product_name.toLowerCase().includes(q)) return false;
+      if (q && !matchesSearch(q, d.product_name)) return false;
       if (onlyDifferences) {
         const typed = isClose ? d.closing_input : d.closing_input;
         if (typed === undefined || typed === '') return false;

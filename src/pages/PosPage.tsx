@@ -6,6 +6,7 @@ import { addToQueue, syncPush, syncPull, isOnline, getLastSyncTimestamp } from '
 import { currency } from '../lib/currency';
 import { logAuditAction } from '../lib/audit';
 import { round3 } from '../lib/recipe';
+import { matchesSearch, normalizeText } from '../lib/textSearch';
 import { pickActiveShift } from '../lib/activeShift';
 import { TicketModal } from '../components/TicketModal';
 import { PaymentModal } from '../components/PaymentModal';
@@ -152,7 +153,8 @@ export function PosPage() {
   const filteredProducts = useMemo(() => products.filter(p => {
     // p.sku puede ser null (ver Product en db.ts) → checar antes de .includes
     // o la búsqueda crashea la página entera al teclear.
-    const matchQuery = p.name.toLowerCase().includes(query.toLowerCase()) || (!!p.sku && p.sku.includes(query));
+    // Sin distinguir mayúsculas ni tildes, y por palabras sueltas (lib/textSearch)
+    const matchQuery = matchesSearch(query, p.name, p.sku);
     const matchCat = selectedCategory === 'Todo' || p.category === selectedCategory;
     return matchQuery && matchCat;
   }), [products, query, selectedCategory]);
@@ -243,7 +245,7 @@ export function PosPage() {
   const handleSearchEnter = () => {
     const q = query.trim();
     if (!q) return;
-    const exactSku = products.find(p => p.sku && p.sku.toLowerCase() === q.toLowerCase());
+    const exactSku = products.find(p => p.sku && normalizeText(p.sku) === normalizeText(q));
     const target = exactSku ?? (filteredProducts.length === 1 ? filteredProducts[0] : null);
     if (target) {
       addToCart(target);

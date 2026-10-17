@@ -3,6 +3,7 @@ import { useParams, useNavigate, useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type ComandaItem, type ComandaItemModifier, type Product, type Sale, type SaleItem, type Staff } from '../lib/db';
 import { pickActiveShift } from '../lib/activeShift';
+import { matchesSearch } from '../lib/textSearch';
 import { addToQueue, syncPush } from '../lib/sync';
 import { comandaItemTotal, comandaTotal } from '../lib/comanda';
 import { computeStockDeductions, round3 } from '../lib/recipe';
@@ -91,9 +92,9 @@ export default function ComandaPage() {
   };
 
   const filteredProducts = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     if (!q) return products;
-    return products.filter(p => p.name.toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q));
+    return products.filter(p => matchesSearch(q, p.name, p.sku));
   }, [products, query]);
 
   const total = comandaTotal(items);

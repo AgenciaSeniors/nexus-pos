@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { addToQueue, syncPush } from '../lib/sync';
 import { logAuditAction } from '../lib/audit';
 import { currency } from '../lib/currency';
+import { matchesSearch } from '../lib/textSearch';
 import { computeSaleNet } from '../lib/salesStats';
 import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
 
@@ -63,7 +64,7 @@ export function CustomersPage() {
 
   // Filtrado en cliente
   const filteredCustomers = customers.filter(c => 
-    c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    matchesSearch(searchTerm, c.name) ||
     (c.phone && c.phone.includes(searchTerm))
   );
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { db, type Customer } from '../lib/db';
 import { Search, X, User, Check, UserPlus } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { matchesSearch } from '../lib/textSearch';
 
 interface Props {
   onSelect: (customer: Customer | null) => void;
@@ -25,11 +26,9 @@ export function CustomerSelect({ onSelect, selectedCustomer }: Props) {
         // 1. Verificamos que no esté borrado
         if (c.deleted_at) return false;
 
-        // 2. Normalizamos la búsqueda
-        const term = search.toLowerCase();
-        
-        // 3. Comprobamos nombre (siempre existe y es string)
-        const matchName = c.name.toLowerCase().includes(term);
+        // 2-3. Nombre sin distinguir mayúsculas ni tildes (lib/textSearch)
+        const term = search.trim();
+        const matchName = matchesSearch(term, c.name);
         
         // 4. Comprobamos teléfono
         const matchPhone = c.phone ? c.phone.includes(term) : false;
