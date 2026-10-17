@@ -14,6 +14,7 @@ import { logAuditAction } from '../lib/audit';
 import { InventoryHistory } from '../components/InventoryHistory';
 import { downloadCsv, type CsvColumn } from '../lib/csv';
 import { round3 } from '../lib/recipe';
+import { matchesSearch } from '../lib/textSearch';
 import { resolveStockTarget, movementReason, parseInitialStock } from '../lib/stockTarget';
 
 export function InventoryPage() {
@@ -69,10 +70,7 @@ export function InventoryPage() {
       .sortBy('created_at');
   }, [businessId]) || [];
 
-  const filteredProducts = products.filter(p => 
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.sku?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredProducts = products.filter(p => matchesSearch(searchTerm, p.name, p.sku));
 
   // ✅ LÓGICA DE ALERTAS (Bajo Stock y Vencimiento)
   const getDaysUntilExpiration = (dateString?: string) => {
@@ -678,17 +676,26 @@ export function InventoryPage() {
   };
 
   const openEdit = (p: Product) => {
-      setEditingProduct(p);
-      setFormData({
-          name: p.name, price: p.price.toString(), cost: p.cost?.toString() || '',
-          sku: p.sku || '', category: p.category || 'General', unit: p.unit || 'un',
-          expiration_date: p.expiration_date || '',
-          low_stock_threshold: p.low_stock_threshold !== undefined ? p.low_stock_threshold.toString() : '',
-          // Editando no se toca el stock (eso va por "Ajustar stock", que deja
-          // movimiento con motivo); los campos van vacíos y el bloque se oculta.
-          initial_stock: '', initial_target: 'display'
-      });
-      setIsFormOpen(true);
+      // Un producto puede llegar de la nube o de un CSV con campos vacíos (sin precio,
+      // sin umbral...). `p.price.toString()` lanzaba TypeError dentro del onClick y el
+      // lápiz "no hacía nada", sin ningún aviso. Cada campo se convierte con tolerancia.
+      const texto = (v: unknown): string => (v === null || v === undefined ? '' : String(v));
+      try {
+          setEditingProduct(p);
+          setFormData({
+              name: texto(p.name), price: texto(p.price), cost: texto(p.cost),
+              sku: p.sku || '', category: p.category || 'General', unit: p.unit || 'un',
+              expiration_date: p.expiration_date || '',
+              low_stock_threshold: texto(p.low_stock_threshold),
+              // Editando no se toca el stock (eso va por "Ajustar stock", que deja
+              // movimiento con motivo); los campos van vacíos y el bloque se oculta.
+              initial_stock: '', initial_target: 'display'
+          });
+          setIsFormOpen(true);
+      } catch (err) {
+          console.error('No se pudo abrir la edición del producto:', err);
+          toast.error('No se pudo abrir este producto para editarlo');
+      }
   };
 
   const openStock = (p: Product) => {
