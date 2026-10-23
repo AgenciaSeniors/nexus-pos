@@ -992,6 +992,7 @@ export function SettingsPage() {
                             <div className="text-right pl-6 flex-shrink-0">
                                 <p className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Versión</p>
                                 <p className="text-lg font-black text-[#0B3B68]">v{__APP_VERSION__}</p>
+                                <p className="text-[10px] font-mono text-[#6B7280]" data-testid="settings-build-id">{__BUILD_ID__}</p>
                                 <p className="text-[10px] text-[#6B7280] mb-2">Senio</p>
                                 <button
                                   onClick={handleCheckUpdate}

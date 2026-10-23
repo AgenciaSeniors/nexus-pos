@@ -3,8 +3,18 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { readFileSync } from 'fs'
+import { execSync } from 'child_process'
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
+
+// Identificador de ESTA compilación (los 7 primeros del commit). Se muestra en la app para
+// saber con certeza qué versión está corriendo: la versión de package.json no cambia entre
+// compilaciones y no sirve para distinguirlas.
+const buildId = (() => {
+  if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA.slice(0, 7)
+  try { return execSync('git rev-parse --short=7 HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() }
+  catch { return 'local' }
+})()
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -16,6 +26,7 @@ export default defineConfig({
   define: {
     // Inyecta la versión de package.json en tiempo de compilación
     __APP_VERSION__: JSON.stringify(pkg.version),
+    __BUILD_ID__: JSON.stringify(buildId),
   },
   plugins: [
     react(),

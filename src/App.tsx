@@ -652,6 +652,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                     <Shield size={12} /> Acceso Super Admin
                 </button>
             </div>
+            <p className="text-center text-[10px] text-gray-300 mt-1 select-none" data-testid="build-id">v{__APP_VERSION__} · {__BUILD_ID__}</p>
           </div>
         </div>
       </div>

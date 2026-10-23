@@ -16,30 +16,21 @@ const STAFF = '22222222-2222-4222-8222-222222222222';
 async function sembrar(page: Page, conCola: boolean) {
   await page.route('**/*.supabase.co/**', route => route.abort('failed'));
   await page.goto('/');
-  await page.waitForFunction(async () => {
-    const dbs = await indexedDB.databases?.();
-    return !!dbs?.some(d => d.name === 'NexusPOS_DB');
-  }, null, { timeout: 15000 });
+  // Se siembra con la propia Dexie de la app (expuesta en desarrollo como window.dbDebug) en vez de
+  // abrir IndexedDB a mano: así el esquema está garantizado y no hay carrera con su creación
+  // (con la máquina cargada, sembrar a mano fallaba al azar con "almacén no encontrado").
+  await page.waitForFunction(() => !!(window as unknown as { dbDebug?: unknown }).dbDebug, null, { timeout: 30000 });
 
   await page.evaluate(async ({ BIZ, STAFF, conCola }) => {
-    const db = await new Promise<IDBDatabase>((res, rej) => {
-      const r = indexedDB.open('NexusPOS_DB');
-      r.onsuccess = () => res(r.result);
-      r.onerror = () => rej(r.error);
-    });
-    const put = (store: string, value: unknown) => new Promise<void>((res, rej) => {
-      const tx = db.transaction(store, 'readwrite');
-      tx.objectStore(store).put(value);
-      tx.oncomplete = () => res();
-      tx.onerror = () => rej(tx.error);
-    });
-    await put('staff', { id: STAFF, business_id: BIZ, name: 'Dueño Prueba', role: 'admin', pin: '', active: true, sync_status: 'synced' });
-    await put('settings', {
+    const { db } = (window as unknown as { dbDebug: { db: { open: () => Promise<unknown>; table: (n: string) => { put: (v: unknown) => Promise<unknown> } } } }).dbDebug;
+    await db.open();
+    await db.table('staff').put({ id: STAFF, business_id: BIZ, name: 'Dueño Prueba', role: 'admin', pin: '', active: true, sync_status: 'synced' });
+    await db.table('settings').put({
       id: BIZ, name: 'Bar de Prueba', business_type: 'retail', master_pin: '1234',
       status: 'active', sync_status: 'synced', subscription_expires_at: '2099-01-01T00:00:00.000Z',
     });
     if (conCola) {
-      await put('action_queue', {
+      await db.table('action_queue').put({
         id: '88888888-8888-4888-8888-888888888801', type: 'AUDIT', status: 'pending', retries: 0,
         timestamp: Date.now(), enqueued_at: Date.now(),
         payload: { id: '99999999-9999-4999-8999-999999999901', business_id: BIZ, staff_id: STAFF, staff_name: 'x', action: 'SALE', details: {}, created_at: new Date().toISOString(), sync_status: 'pending_create' },
@@ -88,6 +79,9 @@ test.describe('Sesión perdida', () => {
     await page.getByRole('button', { name: 'Volver a entrar' }).click({ timeout: 20000 });
 
     await expect(page.getByRole('heading', { name: 'Iniciar Sesión' })).toBeVisible({ timeout: 15000 });
+    // El inicio de sesión muestra qué compilación está corriendo (versión · commit): así se sabe
+    // con certeza si la app está al día o enseñando una versión vieja.
+    await expect(page.getByTestId('build-id')).toContainText(/^v\d+\.\d+\.\d+ · \S+$/);
   });
 
   test('el aviso rojo de "sincronización fallida" ya no enseña el error crudo del servidor', async ({ page }) => {
