@@ -727,8 +727,8 @@ export function InventoryPage() {
       {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-[#0B3B68] flex items-center gap-2">
-            <Package className="text-[#7AC142]"/> Inventario
+          <h1 className="text-2xl font-bold text-[#0040FC] flex items-center gap-2">
+            <Package className="text-[#15803D]"/> Inventario
           </h1>
           <p className="text-[#6B7280] text-sm">Control de existencias y precios</p>
         </div>
@@ -736,13 +736,13 @@ export function InventoryPage() {
         <div className="flex bg-white p-1 rounded-xl border border-gray-200 shadow-sm">
             <button 
                 onClick={() => setActiveTab('stock')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'stock' ? 'bg-[#0B3B68] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'stock' ? 'bg-[#0040FC] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}
             >
                 <LayoutList size={16} /> Stock
             </button>
             <button 
                 onClick={() => setActiveTab('history')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'history' ? 'bg-[#0B3B68] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'history' ? 'bg-[#0040FC] text-white shadow-md' : 'text-[#6B7280] hover:bg-gray-50'}`}
             >
                 <HistoryIcon size={16} /> Global
             </button>
@@ -751,13 +751,13 @@ export function InventoryPage() {
         {activeTab === 'stock' && (
             <div className="flex flex-wrap gap-2 w-full md:w-auto">
                 <div className="relative flex-1 md:w-56 group">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-4 h-4 group-focus-within:text-[#0B3B68]" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-4 h-4 group-focus-within:text-[#0040FC]" />
                     <input 
                         type="text" 
                         placeholder="Buscar..." 
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0B3B68] outline-none shadow-sm transition-all text-[#1F2937]"
+                        className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0040FC] outline-none shadow-sm transition-all text-[#1F2937]"
                     />
                 </div>
                 
@@ -777,14 +777,14 @@ export function InventoryPage() {
 
                 <button
                     onClick={() => { setIsImportModalOpen(true); setImportStep('instructions'); }}
-                    className="bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50 hover:text-[#0B3B68] px-3 py-2.5 rounded-xl flex items-center gap-2 font-bold text-sm transition-colors shadow-sm"
+                    className="bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50 hover:text-[#0040FC] px-3 py-2.5 rounded-xl flex items-center gap-2 font-bold text-sm transition-colors shadow-sm"
                     title="Importar desde CSV o Excel"
                 >
                     <Upload size={18}/> <span className="hidden sm:inline">Importar</span>
                 </button>
                 <button
                     onClick={handleExportCSV}
-                    className="bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50 hover:text-[#0B3B68] px-3 py-2.5 rounded-xl flex items-center gap-2 font-bold text-sm transition-colors shadow-sm"
+                    className="bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50 hover:text-[#0040FC] px-3 py-2.5 rounded-xl flex items-center gap-2 font-bold text-sm transition-colors shadow-sm"
                     title="Exportar a Excel"
                 >
                     <Download size={18}/> <span className="hidden sm:inline">Exportar</span>
@@ -792,7 +792,7 @@ export function InventoryPage() {
 
                 <button 
                     onClick={() => { resetForm(); setIsFormOpen(true); }}
-                    className="bg-[#7AC142] hover:bg-[#7AC142]/90 text-white px-4 py-2.5 rounded-xl flex items-center gap-2 font-bold text-sm transition-colors shadow-lg shadow-[#7AC142]/20"
+                    className="bg-[#0040FC] hover:bg-[#0030CC] text-white px-4 py-2.5 rounded-xl flex items-center gap-2 font-bold text-sm transition-colors shadow-lg shadow-[#0040FC]/20"
                 >
                     <Plus size={18}/> <span className="hidden sm:inline">Nuevo</span>
                 </button>
@@ -806,14 +806,14 @@ export function InventoryPage() {
                 products.length === 0 ? (
                   /* Catálogo vacío — onboarding para negocio nuevo */
                   <div className="p-12 text-center">
-                    <div className="w-16 h-16 rounded-2xl bg-[#0B3B68] flex items-center justify-center mx-auto mb-4">
+                    <div className="w-16 h-16 rounded-2xl bg-[#0040FC] flex items-center justify-center mx-auto mb-4">
                       <Package size={32} className="text-white" />
                     </div>
                     <h3 className="text-lg font-black text-[#1F2937] mb-1">¡Agrega tu primer producto!</h3>
                     <p className="text-sm text-[#6B7280] mb-5">Tu catálogo está vacío. Empieza creando los productos que vendes.</p>
                     <button
                       onClick={() => { setEditingProduct(null); resetForm(); setIsFormOpen(true); }}
-                      className="inline-flex items-center gap-2 bg-[#0B3B68] text-white font-bold px-5 py-3 rounded-xl hover:bg-[#0B3B68]/90 transition-colors shadow-md"
+                      className="inline-flex items-center gap-2 bg-[#0040FC] text-white font-bold px-5 py-3 rounded-xl hover:bg-[#0040FC]/90 transition-colors shadow-md"
                     >
                       <Plus size={18}/> Crear primer producto
                     </button>
@@ -850,7 +850,7 @@ export function InventoryPage() {
                                             <div className="font-bold text-[#1F2937]">{product.name}</div>
                                             <div className="flex items-center justify-end md:justify-start gap-2 mt-1 flex-wrap">
                                                 <span className="text-[10px] font-mono bg-gray-100 px-1.5 rounded text-[#6B7280] border border-gray-200">{product.sku || 'SIN SKU'}</span>
-                                                <span className="text-[10px] bg-[#0B3B68]/10 text-[#0B3B68] px-1.5 rounded font-bold uppercase">{product.category}</span>
+                                                <span className="text-[10px] bg-[#0040FC]/10 text-[#0040FC] px-1.5 rounded font-bold uppercase">{product.category}</span>
                                                 {isExpiringSoon && (
                                                     <span className={`text-[10px] px-1.5 rounded font-bold flex items-center gap-1 ${daysToExpiry < 0 ? 'bg-red-100 text-red-600' : 'bg-orange-100 text-orange-600'}`}>
                                                         <Clock size={10}/> {daysToExpiry < 0 ? 'Vencido' : 'Próximo a Vencer'}
@@ -861,7 +861,7 @@ export function InventoryPage() {
                                     </td>
                                     <td className="p-4 text-sm" data-label="Precio">
                                         <div className="text-right md:text-left">
-                                            <div className="font-bold text-[#7AC142]">{currency.format(product.price)}</div>
+                                            <div className="font-bold text-[#15803D]">{currency.format(product.price)}</div>
                                             {(product.cost ?? 0) > 0 ? <div className="text-xs text-[#6B7280]">Costo: {currency.format(product.cost!)}</div> : null}
                                         </div>
                                     </td>
@@ -870,7 +870,7 @@ export function InventoryPage() {
                                             <div className={`inline-flex flex-col items-center justify-center px-3 py-1 rounded-lg border ${
                                                 isLowStock
                                                     ? 'bg-[#F59E0B]/10 border-[#F59E0B]/20 text-[#F59E0B]'
-                                                    : 'bg-[#7AC142]/10 border-[#7AC142]/20 text-[#7AC142]'
+                                                    : 'bg-[#16A34A]/10 border-[#16A34A]/20 text-[#15803D]'
                                             }`}>
                                                 <span className="text-[9px] uppercase font-bold opacity-60">Vitrina</span>
                                                 <span className="text-lg font-black leading-none">{round3(product.stock)}</span>
@@ -896,14 +896,14 @@ export function InventoryPage() {
                                                     <ArrowRightLeft size={18}/>
                                                 </button>
                                             )}
-                                            <button onClick={() => openStock(product)} className="p-2 text-[#0B3B68] bg-[#0B3B68]/10 hover:bg-[#0B3B68]/20 rounded-lg transition-colors" title="Ajustar Stock">
+                                            <button onClick={() => openStock(product)} className="p-2 text-[#0040FC] bg-[#0040FC]/10 hover:bg-[#0040FC]/20 rounded-lg transition-colors" title="Ajustar Stock">
                                                 <ClipboardEdit size={18}/>
                                             </button>
                                             <button onClick={() => openHistory(product)} className="p-2 text-[#6B7280] hover:text-[#1F2937] hover:bg-gray-100 rounded-lg transition-colors" title="Ver Movimientos">
                                                 <HistoryIcon size={18}/>
                                             </button>
                                             <div className="w-px h-8 bg-gray-200 mx-1"></div>
-                                            <button onClick={() => openEdit(product)} className="p-2 text-[#6B7280] hover:text-[#0B3B68] hover:bg-[#0B3B68]/5 rounded-lg" title="Editar Info">
+                                            <button onClick={() => openEdit(product)} className="p-2 text-[#6B7280] hover:text-[#0040FC] hover:bg-[#0040FC]/5 rounded-lg" title="Editar Info">
                                                 <Edit2 size={18}/>
                                             </button>
                                             <button onClick={() => handleDelete(product)} className="p-2 text-[#6B7280] hover:text-[#EF4444] hover:bg-[#EF4444]/10 rounded-lg" title="Eliminar">
@@ -924,7 +924,7 @@ export function InventoryPage() {
 
       {/* ✅ MODAL 0: CENTRO DE ALERTAS */}
       {showAlertsModal && (
-        <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-[#0040FC]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
                 <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-[#F3F4F6]">
                     <h2 className="font-bold text-lg text-[#1F2937] flex items-center gap-2">
@@ -954,7 +954,7 @@ export function InventoryPage() {
                                             <span className="bg-red-100 text-red-600 px-2 py-1 rounded text-xs font-bold border border-red-200">
                                                 Quedan {round3(p.stock)} {p.unit}
                                             </span>
-                                            <button onClick={() => {setShowAlertsModal(false); openStock(p);}} className="text-[#0B3B68] text-xs font-bold hover:underline">Reabastecer</button>
+                                            <button onClick={() => {setShowAlertsModal(false); openStock(p);}} className="text-[#0040FC] text-xs font-bold hover:underline">Reabastecer</button>
                                         </div>
                                     </div>
                                 ))}
@@ -988,7 +988,7 @@ export function InventoryPage() {
                                                 <span className={`px-2 py-1 rounded text-xs font-bold border ${statusColor}`}>
                                                     {statusText}
                                                 </span>
-                                                <button onClick={() => {setShowAlertsModal(false); openEdit(p);}} className="text-[#0B3B68] text-xs font-bold hover:underline">Editar</button>
+                                                <button onClick={() => {setShowAlertsModal(false); openEdit(p);}} className="text-[#0040FC] text-xs font-bold hover:underline">Editar</button>
                                             </div>
                                         </div>
                                     );
@@ -1003,10 +1003,10 @@ export function InventoryPage() {
 
       {/* --- MODAL 1: FORMULARIO PRODUCTO --- */}
       {isFormOpen && (
-        <div className="fixed inset-0 bg-[#0B3B68]/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-[#0040FC]/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden">
             <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-[#F3F4F6] flex-shrink-0">
-               <h3 className="font-bold text-lg text-[#0B3B68]">
+               <h3 className="font-bold text-lg text-[#0040FC]">
                  {editingProduct ? 'Editar Detalles' : 'Nuevo Producto'}
                </h3>
                <button onClick={() => setIsFormOpen(false)}><X className="text-gray-400 hover:text-gray-600"/></button>
@@ -1015,19 +1015,19 @@ export function InventoryPage() {
             <form id="product-form" onSubmit={handleSubmitProduct} className="flex-1 overflow-y-auto p-5 space-y-4">
                <div>
                  <label className="text-xs font-bold text-[#6B7280] uppercase">Nombre del Producto</label>
-                 <input required type="text" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none font-medium" 
+                 <input required type="text" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none font-medium" 
                    value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}/>
                </div>
                
                <div className="grid grid-cols-2 gap-4">
                    <div>
                      <label className="text-xs font-bold text-[#6B7280] uppercase">Precio Venta</label>
-                     <input required type="number" step="0.01" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none font-bold text-[#7AC142]" 
+                     <input required type="number" step="0.01" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none font-bold text-[#15803D]" 
                        value={formData.price} onChange={e => setFormData({...formData, price: e.target.value})}/>
                    </div>
                    <div>
                      <label className="text-xs font-bold text-[#6B7280] uppercase">Costo (Opcional)</label>
-                     <input type="number" step="0.01" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none"
+                     <input type="number" step="0.01" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none"
                        value={formData.cost} onChange={e => setFormData({...formData, cost: e.target.value})}/>
                    </div>
                </div>
@@ -1035,23 +1035,23 @@ export function InventoryPage() {
                {/* ── STOCK INICIAL (solo al crear) ─────────────────────────
                    Evita el rodeo de crear en 0 → ajustar stock → trasladar.   */}
                {!editingProduct && (
-                 <div className="bg-[#0B3B68]/[0.03] border border-[#0B3B68]/10 rounded-xl p-3">
+                 <div className="bg-[#0040FC]/[0.03] border border-[#0040FC]/10 rounded-xl p-3">
                    <label className="text-xs font-bold text-[#6B7280] uppercase flex items-center gap-1">
-                     <Package size={11} className="text-[#0B3B68]"/> Cantidad Inicial (Opcional)
+                     <Package size={11} className="text-[#0040FC]"/> Cantidad Inicial (Opcional)
                    </label>
                    <div className="flex gap-2 mt-2">
                      <input
                        type="number" min="0" step="0.001" inputMode="decimal"
                        placeholder="0"
                        aria-label="Cantidad inicial"
-                       className="flex-1 min-w-0 p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none font-bold"
+                       className="flex-1 min-w-0 p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none font-bold"
                        value={formData.initial_stock}
                        onChange={e => setFormData({...formData, initial_stock: e.target.value})}
                      />
                      <div className="flex gap-1.5 flex-shrink-0">
                        <button type="button"
                          onClick={() => setFormData(f => ({...f, initial_target: 'display'}))}
-                         className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all active:scale-95 ${formData.initial_target === 'display' ? 'bg-[#7AC142] text-white border-[#7AC142] shadow-md' : 'bg-white text-[#6B7280] border-gray-200'}`}>
+                         className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all active:scale-95 ${formData.initial_target === 'display' ? 'bg-[#0040FC] text-white border-[#0040FC] shadow-md' : 'bg-white text-[#6B7280] border-gray-200'}`}>
                          Vitrina
                        </button>
                        <button type="button"
@@ -1070,12 +1070,12 @@ export function InventoryPage() {
                <div className="grid grid-cols-2 gap-4">
                    <div>
                      <label className="text-xs font-bold text-[#6B7280] uppercase">Código / SKU</label>
-                     <input type="text" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none font-mono text-sm"
+                     <input type="text" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none font-mono text-sm"
                        value={formData.sku} onChange={e => setFormData({...formData, sku: e.target.value})}/>
                    </div>
                    <div>
                      <label className="text-xs font-bold text-[#6B7280] uppercase">Vencimiento</label>
-                     <input type="date" className={`w-full p-3 border rounded-xl focus:ring-2 focus:ring-[#0B3B68] ${formData.expiration_date && formData.expiration_date < new Date().toISOString().slice(0, 10) ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                     <input type="date" className={`w-full p-3 border rounded-xl focus:ring-2 focus:ring-[#0040FC] ${formData.expiration_date && formData.expiration_date < new Date().toISOString().slice(0, 10) ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
                        value={formData.expiration_date} onChange={e => setFormData({...formData, expiration_date: e.target.value})}/>
                      {formData.expiration_date && formData.expiration_date < new Date().toISOString().slice(0, 10) && (
                        <p className="text-[10px] text-red-500 font-bold mt-1">Este producto ya está vencido</p>
@@ -1107,7 +1107,7 @@ export function InventoryPage() {
                {/* ── CATEGORÍA ───────────────────────────────────────────── */}
                <div>
                  <label className="text-xs font-bold text-[#6B7280] uppercase">Categoría</label>
-                 <input type="text" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none mt-1"
+                 <input type="text" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none mt-1"
                    placeholder="Ej. Bebidas, Ropa..."
                    value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}/>
                  {(() => {
@@ -1118,7 +1118,7 @@ export function InventoryPage() {
                        {savedCats.map(cat => (
                          <button key={cat} type="button"
                            onClick={() => setFormData(f => ({...f, category: cat}))}
-                           className={`px-3 py-1 rounded-full text-xs font-bold transition-all active:scale-95 border ${formData.category === cat ? 'bg-[#0B3B68] text-white border-[#0B3B68] shadow-sm' : 'bg-white text-[#6B7280] border-gray-200 hover:border-[#0B3B68] hover:text-[#0B3B68]'}`}>
+                           className={`px-3 py-1 rounded-full text-xs font-bold transition-all active:scale-95 border ${formData.category === cat ? 'bg-[#0040FC] text-white border-[#0040FC] shadow-sm' : 'bg-white text-[#6B7280] border-gray-200 hover:border-[#0040FC] hover:text-[#0040FC]'}`}>
                            {cat}
                          </button>
                        ))}
@@ -1147,14 +1147,14 @@ export function InventoryPage() {
                        {PRESET.map(opt => (
                          <button key={opt.value} type="button"
                            onClick={() => setFormData(f => ({...f, unit: opt.value}))}
-                           className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 border ${formData.unit === opt.value ? 'bg-[#0B3B68] text-white border-[#0B3B68] shadow-md' : 'bg-white text-[#6B7280] border-gray-200 hover:border-[#0B3B68] hover:text-[#0B3B68]'}`}>
+                           className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 border ${formData.unit === opt.value ? 'bg-[#0040FC] text-white border-[#0040FC] shadow-md' : 'bg-white text-[#6B7280] border-gray-200 hover:border-[#0040FC] hover:text-[#0040FC]'}`}>
                            {opt.label}
                          </button>
                        ))}
                        {customUnits.map(u => (
                          <button key={u} type="button"
                            onClick={() => setFormData(f => ({...f, unit: u}))}
-                           className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 border ${formData.unit === u ? 'bg-[#7AC142] text-white border-[#7AC142] shadow-md' : 'bg-white text-[#6B7280] border-gray-200 hover:border-[#7AC142] hover:text-[#7AC142]'}`}>
+                           className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 border ${formData.unit === u ? 'bg-[#0040FC] text-white border-[#0040FC] shadow-md' : 'bg-white text-[#6B7280] border-gray-200 hover:border-[#0040FC] hover:text-[#15803D]'}`}>
                            {u}
                          </button>
                        ))}
@@ -1162,13 +1162,13 @@ export function InventoryPage() {
                      <div className="mt-2 relative">
                        <input type="text" autoComplete="off"
                          placeholder="O escribe una unidad personalizada..."
-                         className={`w-full p-2.5 border rounded-xl text-sm outline-none transition-all focus:ring-2 ${isCustom ? 'border-[#7AC142] ring-[#7AC142]/30 bg-[#7AC142]/5 font-bold text-[#1F2937]' : 'border-gray-200 focus:ring-[#0B3B68] text-[#6B7280]'}`}
+                         className={`w-full p-2.5 border rounded-xl text-sm outline-none transition-all focus:ring-2 ${isCustom ? 'border-[#0040FC] ring-[#0040FC]/30 bg-[#0040FC]/5 font-bold text-[#1F2937]' : 'border-gray-200 focus:ring-[#0040FC] text-[#6B7280]'}`}
                          value={isCustom ? formData.unit : ''}
                          onChange={e => setFormData(f => ({...f, unit: e.target.value}))}
                          onFocus={e => { if (!isCustom) e.target.value = ''; }}
                        />
                        {isCustom && (
-                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-[#7AC142] uppercase tracking-wide">Personalizada</span>
+                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-[#15803D] uppercase tracking-wide">Personalizada</span>
                        )}
                      </div>
                    </div>
@@ -1177,8 +1177,8 @@ export function InventoryPage() {
 
             </form>
             <div className="p-4 border-t border-gray-100 flex gap-3 flex-shrink-0 bg-white">
-                 <button type="button" onClick={() => setIsFormOpen(false)} className="flex-1 py-3 bg-white border border-[#0B3B68] text-[#0B3B68] font-bold rounded-xl hover:bg-[#0B3B68]/5">Cancelar</button>
-                 <button type="submit" form="product-form" disabled={isLoading} className="flex-1 py-3 bg-[#7AC142] text-white font-bold rounded-xl hover:bg-[#7AC142]/90 flex justify-center items-center gap-2 shadow-lg shadow-[#7AC142]/20">
+                 <button type="button" onClick={() => setIsFormOpen(false)} className="flex-1 py-3 bg-white border border-[#0040FC] text-[#0040FC] font-bold rounded-xl hover:bg-[#0040FC]/5">Cancelar</button>
+                 <button type="submit" form="product-form" disabled={isLoading} className="flex-1 py-3 bg-[#0040FC] text-white font-bold rounded-xl hover:bg-[#0030CC] flex justify-center items-center gap-2 shadow-lg shadow-[#0040FC]/20">
                    {isLoading ? <Loader2 className="animate-spin text-white"/> : 'Guardar Datos'}
                  </button>
             </div>
@@ -1188,11 +1188,11 @@ export function InventoryPage() {
 
       {/* --- MODAL 2: AJUSTE DE STOCK --- */}
       {isStockModalOpen && editingProduct && (
-        <div className="fixed inset-0 bg-[#0B3B68]/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[92vh] flex flex-col overflow-hidden border-t-4 border-[#0B3B68]">
+        <div className="fixed inset-0 bg-[#0040FC]/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[92vh] flex flex-col overflow-hidden border-t-4 border-[#0040FC]">
                 <div className="p-4 bg-[#F3F4F6] border-b border-gray-100 text-center flex-shrink-0">
                     <h3 className="font-black text-[#1F2937] text-lg uppercase tracking-wide mb-1">Ajuste de Inventario</h3>
-                    <p className="text-[#0B3B68] font-bold">{editingProduct.name}</p>
+                    <p className="text-[#0040FC] font-bold">{editingProduct.name}</p>
                 </div>
 
                 <form onSubmit={handleStockAdjustment} className="flex-1 overflow-y-auto p-5 space-y-4">
@@ -1201,7 +1201,7 @@ export function InventoryPage() {
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-[#6B7280] uppercase">Motivo del Ajuste</label>
                         <div className="grid grid-cols-2 gap-2">
-                            <button type="button" onClick={() => setStockAdjustment({...stockAdjustment, reason: 'restock', newStock: stockAdjustment.target === 'warehouse' ? (editingProduct.stock_warehouse ?? 0) : editingProduct.stock})} className={`p-2 text-xs font-bold rounded-lg border ${stockAdjustment.reason === 'restock' ? 'bg-[#0B3B68]/10 border-[#0B3B68] text-[#0B3B68]' : 'bg-white border-gray-200 text-[#6B7280]'}`}>Compra</button>
+                            <button type="button" onClick={() => setStockAdjustment({...stockAdjustment, reason: 'restock', newStock: stockAdjustment.target === 'warehouse' ? (editingProduct.stock_warehouse ?? 0) : editingProduct.stock})} className={`p-2 text-xs font-bold rounded-lg border ${stockAdjustment.reason === 'restock' ? 'bg-[#0040FC]/10 border-[#0040FC] text-[#0040FC]' : 'bg-white border-gray-200 text-[#6B7280]'}`}>Compra</button>
                             <button type="button" onClick={() => setStockAdjustment({...stockAdjustment, reason: 'damage', newStock: stockAdjustment.target === 'warehouse' ? (editingProduct.stock_warehouse ?? 0) : editingProduct.stock})} className={`p-2 text-xs font-bold rounded-lg border ${stockAdjustment.reason === 'damage' ? 'bg-[#EF4444]/10 border-[#EF4444] text-[#EF4444]' : 'bg-white border-gray-200 text-[#6B7280]'}`}>Merma/Daño</button>
                             <button type="button" onClick={() => setStockAdjustment({...stockAdjustment, reason: 'return', target: 'display', newStock: editingProduct.stock})} className={`p-2 text-xs font-bold rounded-lg border ${stockAdjustment.reason === 'return' ? 'bg-[#F59E0B]/10 border-[#F59E0B] text-[#F59E0B]' : 'bg-white border-gray-200 text-[#6B7280]'}`}>Devolución</button>
                             <button type="button" onClick={() => setStockAdjustment({...stockAdjustment, reason: 'correction', newStock: stockAdjustment.target === 'warehouse' ? (editingProduct.stock_warehouse ?? 0) : editingProduct.stock})} className={`p-2 text-xs font-bold rounded-lg border ${stockAdjustment.reason === 'correction' ? 'bg-gray-100 border-gray-500 text-[#1F2937]' : 'bg-white border-gray-200 text-[#6B7280]'}`}>Corrección</button>
@@ -1215,7 +1215,7 @@ export function InventoryPage() {
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-[#6B7280] uppercase">Aplicar a</label>
                             <div className="grid grid-cols-2 gap-2">
-                                <button type="button" onClick={() => setStockAdjustment({...stockAdjustment, target: 'display', newStock: editingProduct.stock})} className={`p-2 text-xs font-bold rounded-lg border ${stockAdjustment.target === 'display' ? 'bg-[#7AC142]/10 border-[#7AC142] text-[#7AC142]' : 'bg-white border-gray-200 text-[#6B7280]'}`}>Vitrina</button>
+                                <button type="button" onClick={() => setStockAdjustment({...stockAdjustment, target: 'display', newStock: editingProduct.stock})} className={`p-2 text-xs font-bold rounded-lg border ${stockAdjustment.target === 'display' ? 'bg-[#0040FC]/10 border-[#0040FC] text-[#0040FC]' : 'bg-white border-gray-200 text-[#6B7280]'}`}>Vitrina</button>
                                 <button type="button" onClick={() => setStockAdjustment({...stockAdjustment, target: 'warehouse', newStock: editingProduct.stock_warehouse ?? 0})} className={`p-2 text-xs font-bold rounded-lg border ${stockAdjustment.target === 'warehouse' ? 'bg-blue-50 border-blue-500 text-blue-600' : 'bg-white border-gray-200 text-[#6B7280]'}`}>Almacén</button>
                             </div>
                         </div>
@@ -1225,12 +1225,12 @@ export function InventoryPage() {
                     {stockAdjustment.reason === 'restock' && (
                         // El destino ya no está fijado: el texto tiene que seguir al
                         // selector, o contradice lo que el usuario acaba de elegir.
-                        <p className={`text-[10px] rounded-lg px-3 py-2 font-bold text-center border ${getStockTarget('restock') === 'warehouse' ? 'text-blue-600 bg-blue-50 border-blue-100' : 'text-[#7AC142] bg-[#7AC142]/10 border-[#7AC142]/20'}`}>
+                        <p className={`text-[10px] rounded-lg px-3 py-2 font-bold text-center border ${getStockTarget('restock') === 'warehouse' ? 'text-blue-600 bg-blue-50 border-blue-100' : 'text-[#15803D] bg-[#16A34A]/10 border-[#16A34A]/20'}`}>
                             {getStockTarget('restock') === 'warehouse' ? 'Se ingresará al almacén' : 'Se ingresará a la vitrina'}
                         </p>
                     )}
                     {stockAdjustment.reason === 'return' && (
-                        <p className="text-[10px] text-[#7AC142] bg-[#7AC142]/10 border border-[#7AC142]/20 rounded-lg px-3 py-2 font-bold text-center">Se regresa a vitrina (producto vendido)</p>
+                        <p className="text-[10px] text-[#15803D] bg-[#16A34A]/10 border border-[#16A34A]/20 rounded-lg px-3 py-2 font-bold text-center">Se regresa a vitrina (producto vendido)</p>
                     )}
 
                     {/* STOCK ACTUAL → NUEVO */}
@@ -1245,10 +1245,10 @@ export function InventoryPage() {
                         </div>
                         <ArrowRightLeft className="text-[#6B7280]"/>
                         <div className="text-center flex-1">
-                            <span className="block text-[10px] font-bold text-[#0B3B68] uppercase">Nuevo</span>
+                            <span className="block text-[10px] font-bold text-[#0040FC] uppercase">Nuevo</span>
                             <input
                                 type="number" step="0.01" autoFocus required
-                                className="w-20 text-center font-bold text-xl bg-transparent border-b-2 border-[#0B3B68] outline-none text-[#0B3B68]"
+                                className="w-20 text-center font-bold text-xl bg-transparent border-b-2 border-[#0040FC] outline-none text-[#0040FC]"
                                 value={stockAdjustment.newStock}
                                 onChange={e => setStockAdjustment({...stockAdjustment, newStock: parseFloat(e.target.value) || 0})}
                                 onFocus={e => e.target.select()}
@@ -1256,7 +1256,7 @@ export function InventoryPage() {
                         </div>
                     </div>
 
-                    <button type="submit" disabled={isLoading} className="w-full py-3 bg-[#0B3B68] hover:bg-[#0B3B68]/90 text-white font-bold rounded-xl shadow-lg transition-all flex justify-center items-center gap-2">
+                    <button type="submit" disabled={isLoading} className="w-full py-3 bg-[#0040FC] hover:bg-[#0040FC]/90 text-white font-bold rounded-xl shadow-lg transition-all flex justify-center items-center gap-2">
                         {isLoading ? <Loader2 className="animate-spin"/> : 'Confirmar Ajuste'}
                     </button>
                     <button type="button" onClick={() => setIsStockModalOpen(false)} className="w-full text-xs text-[#6B7280] hover:text-[#1F2937] font-bold">Cancelar</button>
@@ -1273,13 +1273,13 @@ export function InventoryPage() {
         const newWarehouse = isToDisplay ? (editingProduct.stock_warehouse ?? 0) - qty : (editingProduct.stock_warehouse ?? 0) + qty;
         const newDisplay = isToDisplay ? editingProduct.stock + qty : editingProduct.stock - qty;
         return (
-        <div className="fixed inset-0 bg-[#0B3B68]/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-[#0040FC]/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
             <div className={`bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[92vh] flex flex-col overflow-hidden border-t-4 ${isToDisplay ? 'border-emerald-500' : 'border-blue-500'}`}>
                 <div className={`p-4 border-b text-center flex-shrink-0 ${isToDisplay ? 'bg-emerald-50 border-emerald-100' : 'bg-blue-50 border-blue-100'}`}>
                     <h3 className={`font-black text-lg uppercase tracking-wide mb-1 ${isToDisplay ? 'text-emerald-700' : 'text-blue-700'}`}>
                         {isToDisplay ? 'Sacar a Vitrina' : 'Devolver a Almacén'}
                     </h3>
-                    <p className="text-[#0B3B68] font-bold">{editingProduct.name}</p>
+                    <p className="text-[#0040FC] font-bold">{editingProduct.name}</p>
                 </div>
 
                 <form onSubmit={handleTransfer} className="flex-1 overflow-y-auto p-5 space-y-4">
@@ -1304,10 +1304,10 @@ export function InventoryPage() {
                             {isToDisplay && <span className="text-[9px] text-emerald-600 font-bold">← origen</span>}
                             {!isToDisplay && <span className="text-[9px] text-blue-600 font-bold">← destino</span>}
                         </div>
-                        <div className={`rounded-xl p-3 text-center border ${isToDisplay ? 'bg-emerald-50 border-emerald-200 ring-2 ring-emerald-300' : 'bg-[#7AC142]/10 border-[#7AC142]/20'}`}>
-                            <span className="block text-[10px] font-bold text-[#7AC142] uppercase">Vitrina</span>
-                            <span className="text-2xl font-black text-[#5a962e]">{round3(editingProduct.stock)}</span>
-                            <span className="block text-[9px] font-bold text-[#7AC142] uppercase">{editingProduct.unit}</span>
+                        <div className={`rounded-xl p-3 text-center border ${isToDisplay ? 'bg-emerald-50 border-emerald-200 ring-2 ring-emerald-300' : 'bg-[#16A34A]/10 border-[#16A34A]/20'}`}>
+                            <span className="block text-[10px] font-bold text-[#15803D] uppercase">Vitrina</span>
+                            <span className="text-2xl font-black text-[#15803D]">{round3(editingProduct.stock)}</span>
+                            <span className="block text-[9px] font-bold text-[#15803D] uppercase">{editingProduct.unit}</span>
                             {isToDisplay && <span className="text-[9px] text-emerald-600 font-bold">← destino</span>}
                             {!isToDisplay && <span className="text-[9px] text-blue-600 font-bold">← origen</span>}
                         </div>
@@ -1337,8 +1337,8 @@ export function InventoryPage() {
                                     <span className="block text-lg font-black text-blue-700">{Math.max(0, newWarehouse)}</span>
                                 </div>
                                 <div>
-                                    <span className="text-[9px] font-bold text-[#7AC142] uppercase">Vitrina</span>
-                                    <span className="block text-lg font-black text-[#5a962e]">{Math.max(0, newDisplay)}</span>
+                                    <span className="text-[9px] font-bold text-[#15803D] uppercase">Vitrina</span>
+                                    <span className="block text-lg font-black text-[#15803D]">{Math.max(0, newDisplay)}</span>
                                 </div>
                             </div>
                         </div>
@@ -1357,12 +1357,12 @@ export function InventoryPage() {
 
       {/* --- MODAL 3: HISTORIAL --- */}
       {isHistoryModalOpen && editingProduct && (
-          <div className="fixed inset-0 bg-[#0B3B68]/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in zoom-in duration-200">
+          <div className="fixed inset-0 bg-[#0040FC]/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in zoom-in duration-200">
               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl h-[80vh] flex flex-col">
                   <div className="p-4 border-b flex justify-between items-center bg-[#F3F4F6] rounded-t-2xl">
                       <div>
                         <h3 className="font-bold text-[#1F2937] flex items-center gap-2"><HistoryIcon size={18}/> Historial</h3>
-                        <p className="text-xs text-[#0B3B68] font-bold uppercase">{editingProduct.name}</p>
+                        <p className="text-xs text-[#0040FC] font-bold uppercase">{editingProduct.name}</p>
                       </div>
                       <button onClick={() => setIsHistoryModalOpen(false)}><X className="text-[#6B7280] hover:text-[#1F2937]"/></button>
                   </div>
@@ -1375,7 +1375,7 @@ export function InventoryPage() {
 
       {/* --- MODAL 4: CONFIRMACIÓN DE ELIMINACIÓN --- */}
       {deleteConfirmProduct && (
-          <div className="fixed inset-0 bg-[#0B3B68]/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="fixed inset-0 bg-[#0040FC]/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-6 text-center animate-in zoom-in-95 duration-200">
                   <div className="w-14 h-14 bg-[#EF4444]/10 rounded-full flex items-center justify-center mx-auto mb-4">
                       <Trash2 size={28} className="text-[#EF4444]" />
@@ -1404,10 +1404,10 @@ export function InventoryPage() {
 
       {/* --- MODAL: IMPORTACIÓN CSV --- */}
       {isImportModalOpen && (
-        <div className="fixed inset-0 bg-[#0B3B68]/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-[#0040FC]/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden">
             <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-[#F3F4F6] flex-shrink-0">
-              <h3 className="font-bold text-lg text-[#0B3B68] flex items-center gap-2">
+              <h3 className="font-bold text-lg text-[#0040FC] flex items-center gap-2">
                 <FileSpreadsheet size={20} /> Importar Inventario
               </h3>
               {importStep !== 'importing' && (
@@ -1442,10 +1442,10 @@ export function InventoryPage() {
                   </div>
 
                   <div className="flex flex-col gap-3">
-                    <button onClick={downloadTemplate} className="w-full py-3 bg-white border border-[#0B3B68] text-[#0B3B68] rounded-xl font-bold text-sm hover:bg-[#0B3B68]/5 transition-colors flex items-center justify-center gap-2">
+                    <button onClick={downloadTemplate} className="w-full py-3 bg-white border border-[#0040FC] text-[#0040FC] rounded-xl font-bold text-sm hover:bg-[#0040FC]/5 transition-colors flex items-center justify-center gap-2">
                       <Download size={16} /> Descargar plantilla CSV
                     </button>
-                    <button onClick={() => importFileRef.current?.click()} className="w-full py-3 bg-[#0B3B68] text-white rounded-xl font-bold text-sm hover:bg-[#0B3B68]/90 transition-colors flex items-center justify-center gap-2 shadow-lg shadow-[#0B3B68]/20">
+                    <button onClick={() => importFileRef.current?.click()} className="w-full py-3 bg-[#0040FC] text-white rounded-xl font-bold text-sm hover:bg-[#0040FC]/90 transition-colors flex items-center justify-center gap-2 shadow-lg shadow-[#0040FC]/20">
                       <Upload size={16} /> Seleccionar archivo (.csv o .xlsx)
                     </button>
                     <input type="file" accept=".csv,.txt,.xlsx,.xls" className="hidden" ref={importFileRef} onChange={handleImportFile} />
@@ -1488,7 +1488,7 @@ export function InventoryPage() {
                             {importResults.valid.slice(0, 10).map((p, i) => (
                               <tr key={i} className="hover:bg-gray-50">
                                 <td className="p-2 font-bold text-[#1F2937]">{p.name}</td>
-                                <td className="p-2 text-center text-[#7AC142] font-bold">${p.price?.toFixed(2)}</td>
+                                <td className="p-2 text-center text-[#15803D] font-bold">${p.price?.toFixed(2)}</td>
                                 <td className="p-2 text-center font-mono text-[#6B7280]">{p.sku}</td>
                                 <td className="p-2 text-center">{p.stock ?? 0}{(p.stock_warehouse ?? 0) > 0 && <span className="text-blue-500"> +{p.stock_warehouse}A</span>}</td>
                               </tr>
@@ -1531,7 +1531,7 @@ export function InventoryPage() {
                     <button onClick={() => setImportStep('instructions')} className="flex-1 py-3 border border-gray-200 text-[#6B7280] font-bold rounded-xl hover:bg-gray-50 transition-colors">
                       Volver
                     </button>
-                    <button onClick={executeImport} disabled={importResults.valid.length === 0} className="flex-1 py-3 bg-[#7AC142] text-white font-bold rounded-xl hover:bg-[#7AC142]/90 transition-colors shadow-lg shadow-[#7AC142]/20 disabled:opacity-50 flex items-center justify-center gap-2">
+                    <button onClick={executeImport} disabled={importResults.valid.length === 0} className="flex-1 py-3 bg-[#0040FC] text-white font-bold rounded-xl hover:bg-[#0030CC] transition-colors shadow-lg shadow-[#0040FC]/20 disabled:opacity-50 flex items-center justify-center gap-2">
                       <Upload size={16} /> Importar {importResults.valid.length}
                     </button>
                   </div>
@@ -1541,13 +1541,13 @@ export function InventoryPage() {
               {/* PASO 3: IMPORTANDO */}
               {importStep === 'importing' && (
                 <div className="py-8 text-center space-y-6">
-                  <Loader2 size={40} className="animate-spin text-[#0B3B68] mx-auto" />
+                  <Loader2 size={40} className="animate-spin text-[#0040FC] mx-auto" />
                   <div>
                     <p className="text-lg font-bold text-[#1F2937]">Importando productos...</p>
                     <p className="text-sm text-[#6B7280] mt-1">{importedCount} de {importResults.valid.length}</p>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-                    <div className="bg-[#7AC142] h-full rounded-full transition-all duration-300" style={{ width: `${importProgress}%` }} />
+                    <div className="bg-[#0040FC] h-full rounded-full transition-all duration-300" style={{ width: `${importProgress}%` }} />
                   </div>
                 </div>
               )}
@@ -1563,7 +1563,7 @@ export function InventoryPage() {
                     {importResults.errors.length > 0 && <p className="text-sm text-red-500 mt-1">{importResults.errors.length} con errores (no importados)</p>}
                     {importResults.skipped.length > 0 && <p className="text-sm text-amber-500">{importResults.skipped.length} saltados (SKU duplicado)</p>}
                   </div>
-                  <button onClick={closeImportModal} className="w-full py-3 bg-[#0B3B68] text-white font-bold rounded-xl hover:bg-[#0B3B68]/90 transition-colors">
+                  <button onClick={closeImportModal} className="w-full py-3 bg-[#0040FC] text-white font-bold rounded-xl hover:bg-[#0040FC]/90 transition-colors">
                     Cerrar
                   </button>
                 </div>

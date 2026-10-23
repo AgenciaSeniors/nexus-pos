@@ -7,14 +7,14 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Colores Primarios del Manual
+        // Colores Senio (tomados de los píxeles reales del logo)
         bisne: {
-          navy: '#0B3B68',   // Azul Profundo (Barras laterales, textos fuertes)
+          navy: '#0040FC',   // Azul Senio (barras laterales, botones, textos fuertes)
           blue: '#3B82F6',   // Azul Información
         },
         talla: {
-          growth: '#7AC142', // Verde Vibrante (Botones, dinero, éxito)
-          dark: '#5a962e',   // Verde un poco más oscuro para hover
+          growth: '#16A34A', // Verde de éxito (dinero, confirmaciones)
+          dark: '#15803D',   // Verde de éxito más oscuro (texto, hover)
         },
         // Colores Semánticos y Neutros personalizados
         surface: '#FFFFFF',
@@ -26,7 +26,7 @@ export default {
         state: {
           error: '#EF4444',
           warning: '#F59E0B',
-          success: '#7AC142',
+          success: '#16A34A',
         }
       },
       fontFamily: {
@@ -37,16 +37,16 @@ export default {
         sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
       },
       boxShadow: {
-        // Sombras tintadas de marca (navy) para una sensación premium y suave.
-        card: '0 1px 2px rgba(11,59,104,0.04), 0 4px 12px rgba(11,59,104,0.06)',
-        'card-hover': '0 10px 28px rgba(11,59,104,0.12)',
-        modal: '0 24px 64px rgba(11,59,104,0.28)',
-        'glow-green': '0 6px 20px rgba(122,193,66,0.30)',
-        'glow-navy': '0 6px 20px rgba(11,59,104,0.25)',
+        // Sombras tintadas de marca (azul Senio) para una sensación premium y suave.
+        card: '0 1px 2px rgba(0,64,252,0.04), 0 4px 12px rgba(0,64,252,0.06)',
+        'card-hover': '0 10px 28px rgba(0,64,252,0.12)',
+        modal: '0 24px 64px rgba(0,64,252,0.28)',
+        'glow-green': '0 6px 20px rgba(22,163,74,0.30)',
+        'glow-navy': '0 6px 20px rgba(0,64,252,0.25)',
       },
       backgroundImage: {
-        'grad-navy': 'linear-gradient(135deg, #0B3B68 0%, #092b4d 100%)',
-        'grad-green': 'linear-gradient(135deg, #7AC142 0%, #5a9d2e 100%)',
+        'grad-navy': 'linear-gradient(135deg, #0040FC 0%, #0030CC 100%)',
+        'grad-green': 'linear-gradient(135deg, #16A34A 0%, #15803D 100%)',
       },
     },
   },

@@ -82,7 +82,7 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
       <div id="printable-ticket" className="bg-white w-full max-w-[380px] shadow-2xl overflow-hidden relative rounded-2xl">
         
         {/* Decoración Visual (Si es pre-cuenta es naranja, si es final es azul) */}
-        <div className={`h-3 w-full no-print ${isPreBill ? 'bg-orange-500' : 'bg-[#0B3B68]'}`}></div>
+        <div className={`h-3 w-full no-print ${isPreBill ? 'bg-orange-500' : 'bg-[#0040FC]'}`}></div>
 
         {/* --- CONTENIDO DEL TICKET --- */}
         <div 
@@ -301,7 +301,7 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
             <button
               onClick={handlePrint}
               autoFocus
-              className={`flex-1 text-white font-bold py-3 rounded-xl transition-colors flex justify-center items-center gap-2 shadow-lg ${isPreBill ? 'bg-orange-500 hover:bg-orange-600' : 'bg-[#0B3B68] hover:bg-[#0B3B68]/90'}`}
+              className={`flex-1 text-white font-bold py-3 rounded-xl transition-colors flex justify-center items-center gap-2 shadow-lg ${isPreBill ? 'bg-orange-500 hover:bg-orange-600' : 'bg-[#0040FC] hover:bg-[#0040FC]/90'}`}
             >
               <Printer size={18} /> Imprimir / PDF
             </button>

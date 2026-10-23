@@ -26,8 +26,8 @@ export function Card({ className, hover = false, children, ...rest }: CardProps)
 export type SectionAccent = 'navy' | 'green' | 'amber';
 
 const CHIP: Record<SectionAccent, string> = {
-  navy: 'bg-[#0B3B68]/10',
-  green: 'bg-[#7AC142]/15',
+  navy: 'bg-[#0040FC]/10',
+  green: 'bg-[#16A34A]/15',
   amber: 'bg-amber-100',
 };
 

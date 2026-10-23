@@ -35,7 +35,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
           aria-describedby={errorId}
           className={cn(
             base,
-            error ? 'border-[#EF4444] focus:ring-[#EF4444]/15' : 'border-gray-200 focus:border-[#0B3B68] focus:ring-[#0B3B68]/10',
+            error ? 'border-[#EF4444] focus:ring-[#EF4444]/15' : 'border-gray-200 focus:border-[#0040FC] focus:ring-[#0040FC]/10',
             label ? className : undefined,
           )}
           {...rest}

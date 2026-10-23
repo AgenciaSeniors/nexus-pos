@@ -9,7 +9,7 @@ import { useNow, minutesSince, formatElapsed } from '../lib/time';
 function urgency(mins: number) {
   if (mins >= 10) return { ring: 'border-red-400 shadow-[0_0_0_1px_#f87171]', chip: 'bg-red-500 text-white', head: 'from-red-600 to-red-700' };
   if (mins >= 5) return { ring: 'border-amber-300', chip: 'bg-amber-400 text-amber-950', head: 'from-amber-500 to-amber-600' };
-  return { ring: 'border-gray-200', chip: 'bg-white/20 text-white', head: 'from-[#0B3B68] to-[#092b4d]' };
+  return { ring: 'border-gray-200', chip: 'bg-white/20 text-white', head: 'from-[#0040FC] to-[#0030CC]' };
 }
 
 type KStatus = ComandaItem['kitchen_status'];
@@ -73,7 +73,7 @@ export default function KdsPage() {
 
   return (
     <div className="p-4 md:p-6">
-      <PageHeader title="Cocina" icon={<ChefHat className="text-[#0B3B68]" />} className="mb-5" />
+      <PageHeader title="Cocina" icon={<ChefHat className="text-[#0040FC]" />} className="mb-5" />
 
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -109,10 +109,10 @@ export default function KdsPage() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="font-bold text-[#1F2937]">
-                            <span className="text-[#0B3B68]">{it.quantity}×</span> {it.name}
+                            <span className="text-[#0040FC]">{it.quantity}×</span> {it.name}
                           </p>
                           {it.modifiers?.length ? (
-                            <p className="text-xs text-[#0B3B68] mt-0.5">{it.modifiers.map(m => m.modifier_name).join(', ')}</p>
+                            <p className="text-xs text-[#0040FC] mt-0.5">{it.modifiers.map(m => m.modifier_name).join(', ')}</p>
                           ) : null}
                           {it.note && <p className="text-xs text-amber-700 mt-0.5">📝 {it.note}</p>}
                         </div>

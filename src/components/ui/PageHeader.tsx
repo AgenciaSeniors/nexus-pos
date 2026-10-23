@@ -16,7 +16,7 @@ export function PageHeader({ title, icon, subtitle, action, className }: PageHea
   return (
     <div className={cn('flex items-start justify-between gap-4', className)}>
       <div className="min-w-0">
-        <h1 className="text-2xl md:text-3xl font-black text-[#0B3B68] flex items-center gap-2">
+        <h1 className="text-2xl md:text-3xl font-black text-[#0040FC] flex items-center gap-2">
           {icon}
           <span className="truncate">{title}</span>
         </h1>

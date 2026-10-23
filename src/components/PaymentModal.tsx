@@ -116,11 +116,11 @@ export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled,
   };
 
   return (
-    <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+    <div className="fixed inset-0 bg-[#0040FC]/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
       <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
 
         {/* Header */}
-        <div className="bg-[#0B3B68] p-5 text-white flex justify-between items-start">
+        <div className="bg-[#0040FC] p-5 text-white flex justify-between items-start">
           <div>
             <p className="text-white/60 text-xs font-bold uppercase tracking-wider mb-0.5">Total a Pagar</p>
             {pointsDiscount > 0 ? (
@@ -236,7 +236,7 @@ export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled,
                   disabled={key === 'mixto' && effectiveTotal <= 0}
                   className={`p-3 rounded-2xl border-2 flex flex-col items-center gap-1.5 transition-all ${
                     method === key
-                      ? 'border-[#0B3B68] bg-[#0B3B68]/5 text-[#0B3B68]'
+                      ? 'border-[#0040FC] bg-[#0040FC]/5 text-[#0040FC]'
                       : 'border-gray-100 text-gray-400 hover:bg-gray-50 hover:border-gray-200'
                   } disabled:opacity-30 disabled:cursor-not-allowed`}
                 >
@@ -257,7 +257,7 @@ export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled,
                       type="number"
                       autoFocus
                       inputMode="decimal"
-                      className="w-full pl-10 pr-4 py-4 text-3xl font-black border-2 border-gray-200 rounded-2xl focus:border-[#0B3B68] focus:ring-0 outline-none transition-colors text-[#1F2937]"
+                      className="w-full pl-10 pr-4 py-4 text-3xl font-black border-2 border-gray-200 rounded-2xl focus:border-[#0040FC] focus:ring-0 outline-none transition-colors text-[#1F2937]"
                       placeholder="0.00"
                       value={tendered}
                       onChange={e => setTendered(e.target.value)}
@@ -267,16 +267,16 @@ export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled,
                 <div className="flex gap-2 flex-wrap">
                   {suggestions.map(amount => (
                     <button key={amount} onClick={() => setTendered(amount.toString())}
-                      className="px-4 py-2 bg-gray-100 text-[#1F2937] rounded-xl text-sm font-bold hover:bg-[#0B3B68]/10 hover:text-[#0B3B68] transition-colors">
+                      className="px-4 py-2 bg-gray-100 text-[#1F2937] rounded-xl text-sm font-bold hover:bg-[#0040FC]/10 hover:text-[#0040FC] transition-colors">
                       ${amount}
                     </button>
                   ))}
                   <button onClick={() => setTendered(effectiveTotal.toFixed(2))}
-                    className="px-4 py-2 bg-[#7AC142]/10 text-[#7AC142] border border-[#7AC142]/20 rounded-xl text-sm font-bold hover:bg-[#7AC142]/20 transition-colors">
+                    className="px-4 py-2 bg-[#16A34A]/10 text-[#15803D] border border-[#16A34A]/20 rounded-xl text-sm font-bold hover:bg-[#16A34A]/20 transition-colors">
                     Monto Exacto
                   </button>
                 </div>
-                <div className={`p-4 rounded-2xl flex justify-between items-center transition-all ${change >= 0 ? 'bg-[#7AC142]/10 text-[#7AC142] border border-[#7AC142]/20' : 'bg-red-50 text-red-500 border border-red-100'}`}>
+                <div className={`p-4 rounded-2xl flex justify-between items-center transition-all ${change >= 0 ? 'bg-[#16A34A]/10 text-[#15803D] border border-[#16A34A]/20' : 'bg-red-50 text-red-500 border border-red-100'}`}>
                   <span className="font-bold uppercase text-xs tracking-wider">Cambio:</span>
                   <span className="text-3xl font-black">{change >= 0 ? `$${change.toFixed(2)}` : '---'}</span>
                 </div>
@@ -285,7 +285,7 @@ export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled,
 
             {/* Panel: Transferencia */}
             {method === 'transferencia' && (
-              <div className="p-4 bg-[#0B3B68]/5 border border-[#0B3B68]/10 text-[#0B3B68] rounded-2xl text-sm animate-in slide-in-from-left-4 duration-200">
+              <div className="p-4 bg-[#0040FC]/5 border border-[#0040FC]/10 text-[#0040FC] rounded-2xl text-sm animate-in slide-in-from-left-4 duration-200">
                 <p className="flex items-center gap-2 font-bold mb-1"><Smartphone size={18}/> Pago Digital</p>
                 <p>Confirma que has recibido el pago exacto de <strong className="font-black text-lg">${effectiveTotal.toFixed(2)}</strong> mediante transferencia antes de continuar.</p>
               </div>
@@ -305,7 +305,7 @@ export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled,
                         autoFocus
                         min="0"
                         inputMode="decimal"
-                        className="w-full pl-7 pr-3 py-3 text-xl font-black border-2 border-gray-200 rounded-xl focus:border-[#0B3B68] focus:ring-0 outline-none text-[#1F2937]"
+                        className="w-full pl-7 pr-3 py-3 text-xl font-black border-2 border-gray-200 rounded-xl focus:border-[#0040FC] focus:ring-0 outline-none text-[#1F2937]"
                         placeholder="0.00"
                         value={cashInput}
                         onChange={e => handleCashInputChange(e.target.value)}
@@ -320,7 +320,7 @@ export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled,
                         type="number"
                         min="0"
                         inputMode="decimal"
-                        className="w-full pl-7 pr-3 py-3 text-xl font-black border-2 border-gray-200 rounded-xl focus:border-[#0B3B68] focus:ring-0 outline-none text-[#1F2937]"
+                        className="w-full pl-7 pr-3 py-3 text-xl font-black border-2 border-gray-200 rounded-xl focus:border-[#0040FC] focus:ring-0 outline-none text-[#1F2937]"
                         placeholder="0.00"
                         value={transferInput}
                         onChange={e => setTransferInput(e.target.value)}
@@ -328,7 +328,7 @@ export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled,
                     </div>
                   </div>
                 </div>
-                <div className={`p-3 rounded-xl flex justify-between items-center text-sm font-bold transition-all ${mixtoValid ? 'bg-[#7AC142]/10 text-[#7AC142] border border-[#7AC142]/20' : Math.abs(remaining) < 0.01 ? 'bg-[#7AC142]/10 text-[#7AC142] border border-[#7AC142]/20' : remaining > 0 ? 'bg-amber-50 text-amber-600 border border-amber-200' : 'bg-red-50 text-red-500 border border-red-100'}`}>
+                <div className={`p-3 rounded-xl flex justify-between items-center text-sm font-bold transition-all ${mixtoValid ? 'bg-[#16A34A]/10 text-[#15803D] border border-[#16A34A]/20' : Math.abs(remaining) < 0.01 ? 'bg-[#16A34A]/10 text-[#15803D] border border-[#16A34A]/20' : remaining > 0 ? 'bg-amber-50 text-amber-600 border border-amber-200' : 'bg-red-50 text-red-500 border border-red-100'}`}>
                   <span>Faltante / Sobrante</span>
                   <span className="text-lg font-black">{remaining === 0 ? '✓ Correcto' : remaining > 0 ? `-$${remaining.toFixed(2)}` : `+$${Math.abs(remaining).toFixed(2)}`}</span>
                 </div>
@@ -342,7 +342,7 @@ export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled,
           <button
             onClick={handleConfirm}
             disabled={!isValid}
-            className="w-full bg-[#7AC142] text-white py-4 rounded-2xl font-black text-lg hover:bg-[#7AC142]/90 transition-all active:scale-95 disabled:opacity-40 disabled:active:scale-100 flex items-center justify-center gap-2 shadow-lg shadow-[#7AC142]/20"
+            className="w-full bg-[#0040FC] text-white py-4 rounded-2xl font-black text-lg hover:bg-[#0030CC] transition-all active:scale-95 disabled:opacity-40 disabled:active:scale-100 flex items-center justify-center gap-2 shadow-lg shadow-[#0040FC]/20"
           >
             <span>Confirmar Cobro</span>
             <ArrowRight size={20}/>

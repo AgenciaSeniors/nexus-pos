@@ -5,8 +5,8 @@ export type IconButtonVariant = 'plain' | 'ghost' | 'navy' | 'danger';
 export type IconButtonSize = 'sm' | 'md';
 
 const VARIANTS: Record<IconButtonVariant, string> = {
-  plain: 'bg-white border border-gray-200 text-[#0B3B68] hover:bg-gray-50',
-  ghost: 'bg-transparent text-[#0B3B68] hover:bg-[#0B3B68]/10',
+  plain: 'bg-white border border-gray-200 text-[#0040FC] hover:bg-gray-50',
+  ghost: 'bg-transparent text-[#0040FC] hover:bg-[#0040FC]/10',
   navy: 'bg-grad-navy text-white shadow-glow-navy hover:-translate-y-px',
   danger: 'bg-transparent text-[#EF4444] hover:bg-red-50',
 };
@@ -37,7 +37,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       title={label}
       className={cn(
         'inline-flex items-center justify-center rounded-xl transition-all active:scale-95',
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0B3B68] focus-visible:ring-offset-1',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0040FC] focus-visible:ring-offset-1',
         'disabled:opacity-40 disabled:pointer-events-none',
         VARIANTS[variant],
         SIZES[size],

@@ -175,11 +175,11 @@ export function StaffSelectorModal({ businessId, onSelect, onClose }: Props) {
   // --- Staff list screen ---
   if (!selected) {
     return (
-      <div className="fixed inset-0 bg-[#0B3B68] flex flex-col items-center justify-center p-4 z-50 overflow-y-auto">
+      <div className="fixed inset-0 bg-[#0040FC] flex flex-col items-center justify-center p-4 z-50 overflow-y-auto">
         <div className="w-full max-w-md my-auto">
           <div className="flex flex-col items-center mb-6">
-            <div className="bg-[#7AC142] w-14 h-14 rounded-2xl flex items-center justify-center mb-3 shadow-xl shadow-[#7AC142]/30">
-              <Users size={28} className="text-[#0B3B68]" />
+            <div className="bg-[#0040FC] w-14 h-14 rounded-2xl flex items-center justify-center mb-3 shadow-xl shadow-[#0040FC]/30">
+              <Users size={28} className="text-[#0040FC]" />
             </div>
             <h1 className="text-2xl font-black text-white text-center">¿Quién eres?</h1>
             <p className="text-white/60 mt-1 text-center text-sm">Selecciona tu perfil para acceder al sistema</p>
@@ -196,10 +196,10 @@ export function StaffSelectorModal({ businessId, onSelect, onClose }: Props) {
                 <button
                   key={staff.id}
                   onClick={() => handleSelectStaff(staff)}
-                  className="flex items-center gap-4 bg-white/10 hover:bg-white/20 border border-white/10 hover:border-[#7AC142]/50 text-white p-4 rounded-2xl transition-all active:scale-95 text-left"
+                  className="flex items-center gap-4 bg-white/10 hover:bg-white/20 border border-white/10 hover:border-white/50 text-white p-4 rounded-2xl transition-all active:scale-95 text-left"
                 >
                   <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-black text-lg flex-shrink-0 ${
-                    staff.role === 'admin' ? 'bg-[#7AC142] text-[#0B3B68]' : 'bg-white/20 text-white'
+                    staff.role === 'admin' ? 'bg-white text-[#0040FC]' : 'bg-white/20 text-white'
                   }`}>
                     {staff.name.substring(0, 2).toUpperCase()}
                   </div>
@@ -244,11 +244,11 @@ export function StaffSelectorModal({ businessId, onSelect, onClose }: Props) {
     : 'Ingresa tu PIN de 4 dígitos';
 
   return (
-    <div className="fixed inset-0 bg-[#0B3B68] flex flex-col items-center justify-center p-4 z-50 overflow-y-auto">
+    <div className="fixed inset-0 bg-[#0040FC] flex flex-col items-center justify-center p-4 z-50 overflow-y-auto">
       <div className="w-full max-w-xs my-auto">
         <div className="flex flex-col items-center mb-5">
           <div className={`w-16 h-16 rounded-2xl flex items-center justify-center font-black text-2xl mb-3 shadow-xl ${
-            selected.role === 'admin' ? 'bg-[#7AC142] text-[#0B3B68]' : 'bg-white/20 text-white'
+            selected.role === 'admin' ? 'bg-white text-[#0040FC]' : 'bg-white/20 text-white'
           }`}>
             {selected.name.substring(0, 2).toUpperCase()}
           </div>
@@ -277,7 +277,7 @@ export function StaffSelectorModal({ businessId, onSelect, onClose }: Props) {
             <div
               key={i}
               className={`w-4 h-4 rounded-full transition-all duration-150 ${
-                i < currentPin.length ? 'bg-[#7AC142] scale-110' : 'bg-white/20'
+                i < currentPin.length ? 'bg-[#0040FC] scale-110' : 'bg-white/20'
               }`}
             />
           ))}
@@ -302,7 +302,7 @@ export function StaffSelectorModal({ businessId, onSelect, onClose }: Props) {
               key={d}
               onClick={() => handlePinDigit(d)}
               disabled={isLocked}
-              className="bg-white/10 hover:bg-white/20 active:bg-[#7AC142] active:text-[#0B3B68] text-white font-black text-xl py-4 rounded-2xl transition-all active:scale-95 border border-white/5 disabled:opacity-30 disabled:pointer-events-none"
+              className="bg-white/10 hover:bg-white/20 active:bg-white active:text-[#0040FC] text-white font-black text-xl py-4 rounded-2xl transition-all active:scale-95 border border-white/5 disabled:opacity-30 disabled:pointer-events-none"
             >
               {d}
             </button>
@@ -311,7 +311,7 @@ export function StaffSelectorModal({ businessId, onSelect, onClose }: Props) {
           <button
             onClick={() => handlePinDigit('0')}
             disabled={isLocked}
-            className="bg-white/10 hover:bg-white/20 active:bg-[#7AC142] active:text-[#0B3B68] text-white font-black text-xl py-4 rounded-2xl transition-all active:scale-95 border border-white/5 disabled:opacity-30 disabled:pointer-events-none"
+            className="bg-white/10 hover:bg-white/20 active:bg-white active:text-[#0040FC] text-white font-black text-xl py-4 rounded-2xl transition-all active:scale-95 border border-white/5 disabled:opacity-30 disabled:pointer-events-none"
           >
             0
           </button>

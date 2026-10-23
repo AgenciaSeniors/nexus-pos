@@ -13,7 +13,7 @@
   /* Títulos (Headings) - Montserrat */
   h1, h2, h3, h4, h5, h6 {
     font-family: 'Montserrat', sans-serif;
-    @apply font-bold text-[#0B3B68]; /* Bisne Navy por defecto en títulos */
+    @apply font-bold text-[#0040FC]; /* Bisne Navy por defecto en títulos */
   }
 
   /* Cuerpo y Datos - Roboto */
@@ -30,7 +30,7 @@
     @apply bg-transparent;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-[#0B3B68]/20 rounded-full hover:bg-[#0B3B68]/40;
+    @apply bg-[#0040FC]/20 rounded-full hover:bg-[#0040FC]/40;
   }
 }
 

@@ -320,8 +320,8 @@ export function CustomersPage() {
       {/* HEADER */}
       <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-6">
         <div>
-            <h1 className="text-2xl font-bold text-[#0B3B68] flex items-center gap-2">
-                <Users className="text-[#7AC142]" /> Clientes
+            <h1 className="text-2xl font-bold text-[#0040FC] flex items-center gap-2">
+                <Users className="text-[#15803D]" /> Clientes
             </h1>
             <p className="text-[#6B7280] text-sm">Fidelización y contactos</p>
         </div>
@@ -334,20 +334,20 @@ export function CustomersPage() {
                     placeholder="Buscar..." 
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
-                    className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0B3B68] outline-none shadow-sm text-[#1F2937]"
+                    className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0040FC] outline-none shadow-sm text-[#1F2937]"
                 />
             </div>
             <button
                 onClick={handleExportCSV}
                 disabled={customers.length === 0}
-                className="bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50 hover:text-[#0B3B68] px-3 py-2 rounded-xl flex items-center gap-2 font-bold text-sm transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                className="bg-white border border-gray-200 text-[#6B7280] hover:bg-gray-50 hover:text-[#0040FC] px-3 py-2 rounded-xl flex items-center gap-2 font-bold text-sm transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
                 title="Exportar clientes a CSV"
             >
                 <Download size={16}/> <span className="hidden sm:inline">CSV</span>
             </button>
             <button
                 onClick={() => { resetForm(); setIsFormOpen(true); }}
-                className="bg-[#7AC142] hover:bg-[#7AC142]/90 text-white px-4 py-2 rounded-xl flex items-center gap-2 font-bold shadow-lg shadow-[#7AC142]/20 transition-colors"
+                className="bg-[#0040FC] hover:bg-[#0030CC] text-white px-4 py-2 rounded-xl flex items-center gap-2 font-bold shadow-lg shadow-[#0040FC]/20 transition-colors"
             >
                 <UserPlus size={18} /> <span className="hidden sm:inline">Nuevo</span>
             </button>
@@ -357,7 +357,7 @@ export function CustomersPage() {
       {/* LISTA DE CLIENTES */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in duration-300">
         {!customers ? (
-             <div className="p-12 flex justify-center"><Loader2 className="animate-spin text-[#0B3B68]"/></div>
+             <div className="p-12 flex justify-center"><Loader2 className="animate-spin text-[#0040FC]"/></div>
         ) : filteredCustomers.length === 0 ? (
             <div className="p-12 text-center text-[#6B7280]">
                 <Users size={32} className="mx-auto mb-3 opacity-20"/>
@@ -385,22 +385,22 @@ export function CustomersPage() {
                                 </td>
                                 <td className="p-4 text-sm text-[#6B7280]" data-label="Contacto">
                                     <div className="flex flex-col items-end md:items-start">
-                                        {c.phone && <div className="flex items-center gap-2 mb-1"><Phone size={14} className="text-[#0B3B68]"/> {c.phone}</div>}
-                                        {c.email && <div className="flex items-center gap-2"><Mail size={14} className="text-[#0B3B68]"/> {c.email}</div>}
+                                        {c.phone && <div className="flex items-center gap-2 mb-1"><Phone size={14} className="text-[#0040FC]"/> {c.phone}</div>}
+                                        {c.email && <div className="flex items-center gap-2"><Mail size={14} className="text-[#0040FC]"/> {c.email}</div>}
                                     </div>
                                 </td>
                                 <td className="p-4 text-center" data-label="Puntos">
                                     <div className="flex justify-end md:justify-center w-full">
-                                        <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold border ${c.loyalty_points && c.loyalty_points > 0 ? 'bg-[#7AC142]/10 text-[#7AC142] border-[#7AC142]/20' : 'bg-gray-50 text-gray-400 border-gray-100'}`}>
+                                        <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold border ${c.loyalty_points && c.loyalty_points > 0 ? 'bg-[#16A34A]/10 text-[#15803D] border-[#16A34A]/20' : 'bg-gray-50 text-gray-400 border-gray-100'}`}>
                                             <Star size={12} className={c.loyalty_points ? 'fill-current' : ''}/> {c.loyalty_points || 0}
                                         </span>
                                     </div>
                                 </td>
                                 <td className="p-4 text-right" data-label="Acciones" onClick={e => e.stopPropagation()}>
                                     <div className="flex justify-end gap-2 w-full">
-                                        <button onClick={() => openEdit(c)} className="p-2 text-[#6B7280] hover:text-[#0B3B68] hover:bg-[#0B3B68]/5 rounded-lg transition-colors"><Edit2 size={18}/></button>
+                                        <button onClick={() => openEdit(c)} className="p-2 text-[#6B7280] hover:text-[#0040FC] hover:bg-[#0040FC]/5 rounded-lg transition-colors"><Edit2 size={18}/></button>
                                         <button onClick={() => handleDelete(c.id)} className="p-2 text-[#6B7280] hover:text-[#EF4444] hover:bg-[#EF4444]/10 rounded-lg transition-colors"><Trash2 size={18}/></button>
-                                        <button onClick={() => openDetails(c)} className="p-2 text-[#6B7280] hover:text-[#0B3B68] hover:bg-gray-100 rounded-lg"><ChevronRight size={18}/></button>
+                                        <button onClick={() => openDetails(c)} className="p-2 text-[#6B7280] hover:text-[#0040FC] hover:bg-gray-100 rounded-lg"><ChevronRight size={18}/></button>
                                     </div>
                                 </td>
                             </tr>
@@ -413,13 +413,13 @@ export function CustomersPage() {
 
       {/* --- MODAL DETALLES (CRM) --- */}
       {isDetailsOpen && selectedCustomer && (
-          <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="fixed inset-0 bg-[#0040FC]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden">
                   
                   {/* Header del Modal */}
                   <div className="p-4 bg-[#F3F4F6] border-b border-gray-200 flex justify-between items-start flex-shrink-0">
                       <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 bg-[#0B3B68] rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg border-2 border-white">
+                          <div className="w-12 h-12 bg-[#0040FC] rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg border-2 border-white">
                               {selectedCustomer.name.substring(0,2).toUpperCase()}
                           </div>
                           <div>
@@ -447,7 +447,7 @@ export function CustomersPage() {
                               <h3 className="text-4xl font-black text-[#1F2937] mt-1">{selectedCustomer.loyalty_points || 0}</h3>
                               <button 
                                 onClick={() => setIsPointsModalOpen(true)}
-                                className="mt-4 w-full py-2 bg-[#0B3B68] text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-[#0B3B68]/90 transition-colors"
+                                className="mt-4 w-full py-2 bg-[#0040FC] text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-[#0040FC]/90 transition-colors"
                               >
                                   <Gift size={14}/> Ajustar Saldo
                               </button>
@@ -456,14 +456,14 @@ export function CustomersPage() {
                           {/* Estadísticas */}
                           <div className="space-y-4">
                               <div className="flex items-center gap-3 p-3 bg-white rounded-xl border border-gray-200">
-                                  <div className="bg-[#7AC142]/10 p-2 rounded-lg text-[#7AC142]"><TrendingUp size={20}/></div>
+                                  <div className="bg-[#16A34A]/10 p-2 rounded-lg text-[#15803D]"><TrendingUp size={20}/></div>
                                   <div>
                                       <p className="text-[10px] text-[#6B7280] font-bold uppercase">Total Gastado</p>
                                       <p className="font-bold text-[#1F2937]">{currency.format(customerHistory?.totalSpent || 0)}</p>
                                   </div>
                               </div>
                               <div className="flex items-center gap-3 p-3 bg-white rounded-xl border border-gray-200">
-                                  <div className="bg-[#0B3B68]/10 p-2 rounded-lg text-[#0B3B68]"><Calendar size={20}/></div>
+                                  <div className="bg-[#0040FC]/10 p-2 rounded-lg text-[#0040FC]"><Calendar size={20}/></div>
                                   <div>
                                       <p className="text-[10px] text-[#6B7280] font-bold uppercase">Última Visita</p>
                                       <p className="font-bold text-[#1F2937]">{customerHistory?.lastVisit ? new Date(customerHistory.lastVisit).toLocaleDateString() : 'N/A'}</p>
@@ -528,7 +528,7 @@ export function CustomersPage() {
 
       {/* --- MODAL AJUSTE PUNTOS --- */}
       {isPointsModalOpen && selectedCustomer && (
-          <div className="fixed inset-0 bg-[#0B3B68]/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="fixed inset-0 bg-[#0040FC]/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in duration-200">
                   <div className="p-5 border-b border-gray-100 bg-[#F3F4F6] text-center">
                       <h3 className="font-bold text-[#1F2937]">Ajustar Puntos</h3>
@@ -541,21 +541,21 @@ export function CustomersPage() {
                               <button type="button" onClick={() => setPointsAdjustment(p => ({...p, amount: p.amount - 10}))} className="p-2 bg-[#EF4444]/10 text-[#EF4444] rounded-lg font-bold border border-[#EF4444]/20 hover:bg-[#EF4444]/20">-10</button>
                               <input 
                                 type="number" autoFocus
-                                className="flex-1 text-center font-bold text-xl border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-[#0B3B68]"
+                                className="flex-1 text-center font-bold text-xl border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-[#0040FC]"
                                 value={pointsAdjustment.amount}
                                 onChange={e => setPointsAdjustment(p => ({...p, amount: parseInt(e.target.value) || 0}))}
                               />
-                              <button type="button" onClick={() => setPointsAdjustment(p => ({...p, amount: p.amount + 10}))} className="p-2 bg-[#7AC142]/10 text-[#7AC142] rounded-lg font-bold border border-[#7AC142]/20 hover:bg-[#7AC142]/20">+10</button>
+                              <button type="button" onClick={() => setPointsAdjustment(p => ({...p, amount: p.amount + 10}))} className="p-2 bg-[#16A34A]/10 text-[#15803D] rounded-lg font-bold border border-[#16A34A]/20 hover:bg-[#16A34A]/20">+10</button>
                           </div>
                           <p className="text-xs text-center mt-2 text-[#6B7280]">
-                              Nuevo saldo: <span className="font-bold text-[#0B3B68]">{Math.max(0, (selectedCustomer.loyalty_points || 0) + pointsAdjustment.amount)}</span>
+                              Nuevo saldo: <span className="font-bold text-[#0040FC]">{Math.max(0, (selectedCustomer.loyalty_points || 0) + pointsAdjustment.amount)}</span>
                           </p>
                       </div>
                       <div>
                           <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Motivo (Obligatorio)</label>
                           <input 
                             type="text" required
-                            className="w-full p-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-[#0B3B68]"
+                            className="w-full p-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-[#0040FC]"
                             placeholder="Ej. Regalo cumpleaños, Error..."
                             value={pointsAdjustment.reason}
                             onChange={e => setPointsAdjustment(p => ({...p, reason: e.target.value}))}
@@ -563,7 +563,7 @@ export function CustomersPage() {
                       </div>
                       <div className="flex gap-2 pt-2">
                           <button type="button" onClick={() => setIsPointsModalOpen(false)} className="flex-1 py-2 text-[#6B7280] font-bold hover:bg-gray-50 rounded-lg">Cancelar</button>
-                          <button type="submit" disabled={isLoading} className="flex-1 py-2 bg-[#0B3B68] text-white font-bold rounded-lg hover:bg-[#0B3B68]/90">
+                          <button type="submit" disabled={isLoading} className="flex-1 py-2 bg-[#0040FC] text-white font-bold rounded-lg hover:bg-[#0040FC]/90">
                               {isLoading ? <Loader2 className="animate-spin mx-auto"/> : 'Confirmar'}
                           </button>
                       </div>
@@ -574,7 +574,7 @@ export function CustomersPage() {
 
       {/* --- MODAL FORMULARIO CLIENTE --- */}
       {isFormOpen && (
-        <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-[#0040FC]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in duration-200">
                 <div className="p-4 border-b border-gray-100 bg-[#F3F4F6] flex justify-between items-center flex-shrink-0">
                     <h2 className="text-xl font-bold text-[#1F2937]">{editingId ? 'Editar Cliente' : 'Nuevo Cliente'}</h2>
@@ -584,32 +584,32 @@ export function CustomersPage() {
                 <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-4">
                     <div>
                         <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Nombre Completo <span className="text-[#EF4444]">*</span></label>
-                        <input autoFocus required type="text" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none"
+                        <input autoFocus required type="text" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none"
                             value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Ej. Juan Pérez" />
                     </div>
                     
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Teléfono</label>
-                            <input type="tel" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none"
+                            <input type="tel" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none"
                                 value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} placeholder="Ej. 555-1234" />
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Email</label>
-                            <input type="email" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none"
+                            <input type="email" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none"
                                 value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} placeholder="juan@mail.com" />
                         </div>
                     </div>
 
                     <div>
                         <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Dirección</label>
-                        <input type="text" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none"
+                        <input type="text" className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none"
                             value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} placeholder="Calle Principal #123..." />
                     </div>
                     
                     <div className="flex gap-3 pt-4">
-                        <button type="button" onClick={() => setIsFormOpen(false)} className="flex-1 py-3 bg-white border border-[#0B3B68] text-[#0B3B68] font-bold rounded-xl hover:bg-[#0B3B68]/5 transition-colors">Cancelar</button>
-                        <button type="submit" disabled={isLoading} className="flex-1 py-3 bg-[#7AC142] text-white font-bold rounded-xl hover:bg-[#7AC142]/90 flex justify-center items-center gap-2 transition-colors shadow-lg shadow-[#7AC142]/20">
+                        <button type="button" onClick={() => setIsFormOpen(false)} className="flex-1 py-3 bg-white border border-[#0040FC] text-[#0040FC] font-bold rounded-xl hover:bg-[#0040FC]/5 transition-colors">Cancelar</button>
+                        <button type="submit" disabled={isLoading} className="flex-1 py-3 bg-[#0040FC] text-white font-bold rounded-xl hover:bg-[#0030CC] flex justify-center items-center gap-2 transition-colors shadow-lg shadow-[#0040FC]/20">
                             {isLoading ? <Loader2 className="animate-spin"/> : (editingId ? 'Actualizar' : 'Guardar Cliente')}
                         </button>
                     </div>
@@ -620,7 +620,7 @@ export function CustomersPage() {
 
       {/* --- MODAL CONFIRMACIÓN ELIMINAR CLIENTE --- */}
       {deleteConfirmId && deleteConfirmCustomer && (
-          <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="fixed inset-0 bg-[#0040FC]/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4 animate-in fade-in duration-200">
               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs max-h-[92vh] overflow-y-auto p-6 text-center animate-in zoom-in-95 duration-200">
                   <div className="w-14 h-14 bg-[#EF4444]/10 rounded-full flex items-center justify-center mx-auto mb-4">
                       <Trash2 size={28} className="text-[#EF4444]" />

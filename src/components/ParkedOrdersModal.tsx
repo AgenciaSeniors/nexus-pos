@@ -44,7 +44,7 @@ export function ParkedOrdersModal({ onRestore, onClose }: Props) {
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
         <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
           
-          <div className="bg-[#0B3B68] p-4 text-white flex justify-between items-center">
+          <div className="bg-[#0040FC] p-4 text-white flex justify-between items-center">
             <h2 className="font-bold text-lg flex items-center gap-2">
               <Clock size={20} className="text-orange-400" />
               Cuentas en Espera
@@ -60,7 +60,7 @@ export function ParkedOrdersModal({ onRestore, onClose }: Props) {
             )}
 
             {orders.map(order => (
-              <div key={order.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex justify-between items-center hover:border-[#0B3B68]/30 transition-colors">
+              <div key={order.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex justify-between items-center hover:border-[#0040FC]/30 transition-colors">
                 <div>
                   {order.note && (
                     <div className="inline-flex items-center gap-1.5 bg-orange-100 text-orange-700 px-2.5 py-1 rounded-md text-xs font-black uppercase mb-2 border border-orange-200 tracking-wide">
@@ -84,7 +84,7 @@ export function ParkedOrdersModal({ onRestore, onClose }: Props) {
                   {/* ✅ NUEVO BOTÓN DE IMPRESIÓN */}
                   <button 
                     onClick={() => setOrderToPrint(order)}
-                    className="p-3 text-slate-500 hover:text-[#0B3B68] hover:bg-[#0B3B68]/10 rounded-lg transition-colors"
+                    className="p-3 text-slate-500 hover:text-[#0040FC] hover:bg-[#0040FC]/10 rounded-lg transition-colors"
                     title="Imprimir Pre-cuenta"
                   >
                     <Printer size={20} />
@@ -98,7 +98,7 @@ export function ParkedOrdersModal({ onRestore, onClose }: Props) {
                   </button>
                   <button 
                     onClick={() => onRestore(order)}
-                    className="p-3 bg-[#0B3B68] text-white rounded-lg hover:bg-[#0B3B68]/90 shadow-md flex items-center gap-2 font-bold text-sm transition-transform active:scale-95"
+                    className="p-3 bg-[#0040FC] text-white rounded-lg hover:bg-[#0040FC]/90 shadow-md flex items-center gap-2 font-bold text-sm transition-transform active:scale-95"
                   >
                     <PlayCircle size={18} />
                     <span className="hidden sm:inline">Cobrar</span>

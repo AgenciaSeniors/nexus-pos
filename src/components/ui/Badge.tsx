@@ -4,8 +4,8 @@ import { cn } from './cn';
 export type BadgeColor = 'navy' | 'green' | 'amber' | 'red' | 'blue' | 'gray';
 
 const COLORS: Record<BadgeColor, string> = {
-  navy: 'bg-[#0B3B68]/10 text-[#0B3B68]',
-  green: 'bg-[#7AC142]/15 text-[#4f7d24]',
+  navy: 'bg-[#0040FC]/10 text-[#0040FC]',
+  green: 'bg-[#16A34A]/15 text-[#166534]',
   amber: 'bg-amber-100 text-amber-700',
   red: 'bg-red-100 text-red-600',
   blue: 'bg-blue-100 text-blue-700',

@@ -24,7 +24,7 @@ export function EmptyState({ icon, title, description, action, size = 'md', clas
       {icon && (
         <div
           className={cn(
-            'rounded-2xl bg-[#0B3B68]/5 text-[#0B3B68] flex items-center justify-center mb-3',
+            'rounded-2xl bg-[#0040FC]/5 text-[#0040FC] flex items-center justify-center mb-3',
             sm ? 'w-12 h-12' : 'w-16 h-16',
           )}
         >

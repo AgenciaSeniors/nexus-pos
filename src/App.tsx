@@ -61,7 +61,7 @@ function UpdatePasswordScreen({ onComplete }: { onComplete: () => void }) {
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
       <div className="bg-white p-8 rounded-2xl shadow-xl max-w-sm w-full border border-slate-200 animate-in zoom-in-95 duration-300">
-        <div className="bg-[#0B3B68] w-14 h-14 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-[#0B3B68]/20">
+        <div className="bg-[#0040FC] w-14 h-14 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-[#0040FC]/20">
            <Lock className="text-white w-7 h-7" />
         </div>
         <h2 className="text-2xl font-black text-slate-900 mb-2">Nueva Contraseña</h2>
@@ -73,13 +73,13 @@ function UpdatePasswordScreen({ onComplete }: { onComplete: () => void }) {
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
               <input 
                 type="password" required minLength={6} autoFocus
-                className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none transition-all font-medium" 
+                className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none transition-all font-medium" 
                 placeholder="••••••••" 
                 value={password} onChange={e => setPassword(e.target.value)} 
               />
             </div>
           </div>
-          <button disabled={loading} type="submit" className="w-full bg-[#7AC142] text-white font-bold py-3.5 rounded-xl hover:bg-[#5e9631] transition-all flex items-center justify-center gap-2 mt-4 shadow-lg shadow-[#7AC142]/20 active:scale-95 disabled:opacity-70">
+          <button disabled={loading} type="submit" className="w-full bg-[#0040FC] text-white font-bold py-3.5 rounded-xl hover:bg-[#0030CC] transition-all flex items-center justify-center gap-2 mt-4 shadow-lg shadow-[#0040FC]/20 active:scale-95 disabled:opacity-70">
             {loading ? <Loader2 className="animate-spin w-5 h-5" /> : "Guardar Contraseña"}
           </button>
         </form>
@@ -409,9 +409,9 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
       <div className="bg-white w-full max-w-4xl rounded-[2rem] shadow-2xl overflow-hidden flex flex-col md:flex-row">
         
         {/* LADO IZQUIERDO: DECORATIVO (SOLO PC) */}
-        <div className="w-full md:w-1/2 bg-[#0B3B68] p-10 flex flex-col justify-between text-white relative overflow-hidden hidden md:flex">
+        <div className="w-full md:w-1/2 bg-[#0040FC] p-10 flex flex-col justify-between text-white relative overflow-hidden hidden md:flex">
           <div className="absolute top-0 left-0 w-full h-full opacity-20 pointer-events-none">
-             <div className="absolute top-10 left-10 w-40 h-40 bg-[#7AC142] rounded-full blur-3xl"></div>
+             <div className="absolute top-10 left-10 w-40 h-40 bg-white/20 rounded-full blur-3xl"></div>
              <div className="absolute bottom-10 right-10 w-56 h-56 bg-blue-400 rounded-full blur-[100px]"></div>
           </div>
           
@@ -428,7 +428,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
             </div>
             
             {/* ✅ TITULARES MEJORADOS Y EN VERDE PARA QUE RESALTEN */}
-            <h1 className="text-5xl font-black mb-5 leading-tight drop-shadow-xl text-[#7AC142]">
+            <h1 className="text-5xl font-black mb-5 leading-tight drop-shadow-xl text-white">
               {mode === 'login' ? 'Bienvenido' : (mode === 'forgot' || mode === 'otp') ? 'Recupera tu acceso' : 'Comienza tu negocio'}
             </h1>
             <p className="text-slate-300 text-lg font-medium leading-relaxed drop-shadow-md">
@@ -438,8 +438,8 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
 
           <div className="relative z-10 mt-8 md:mt-0">
             <div className="flex flex-col gap-3 text-sm text-slate-200 font-medium">
-              <span className="flex items-center gap-2"><CheckCircle className="w-5 h-5 text-[#7AC142]"/> Base de Datos Offline-First</span>
-              <span className="flex items-center gap-2"><CheckCircle className="w-5 h-5 text-[#7AC142]"/> Sincronización Inmediata</span>
+              <span className="flex items-center gap-2"><CheckCircle className="w-5 h-5 text-[#4ADE80]"/> Base de Datos Offline-First</span>
+              <span className="flex items-center gap-2"><CheckCircle className="w-5 h-5 text-[#4ADE80]"/> Sincronización Inmediata</span>
             </div>
           </div>
         </div>
@@ -452,7 +452,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
             {/* ✅ ENCABEZADO MÓVIL */}
             <div className="md:hidden flex flex-col items-center mb-8 text-center animate-in fade-in slide-in-from-top-4 duration-500">
                 <div
-                    className="bg-white p-3 rounded-2xl mb-4 shadow-xl shadow-[#0B3B68]/15 ring-1 ring-gray-100 select-none"
+                    className="bg-white p-3 rounded-2xl mb-4 shadow-xl shadow-[#0040FC]/15 ring-1 ring-gray-100 select-none"
                     onPointerDown={startSecretPress}
                     onPointerUp={cancelSecretPress}
                     onPointerLeave={cancelSecretPress}
@@ -460,8 +460,8 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 >
                     <img src={logo} alt="Senio" className="w-10 h-10 object-contain" draggable={false} />
                 </div>
-                <h1 className="text-3xl font-black text-[#0B3B68] tracking-tight">Senio</h1>
-                <p className="text-[#7AC142] text-sm mt-1 font-bold">
+                <h1 className="text-3xl font-black text-[#0040FC] tracking-tight">Senio</h1>
+                <p className="text-[#0040FC] text-sm mt-1 font-bold">
                     {mode === 'login' ? 'Bienvenido' : mode === 'register' ? 'Crea tu cuenta ahora' : 'Restablecer Acceso'}
                 </p>
             </div>
@@ -481,27 +481,27 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                     <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Nombre Completo</label>
                     <div className="relative">
                       <User className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
-                      <input type="text" required className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="Ej. Juan Pérez" value={fullName} onChange={e => setFullName(e.target.value)} />
+                      <input type="text" required className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="Ej. Juan Pérez" value={fullName} onChange={e => setFullName(e.target.value)} />
                     </div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Nombre del Negocio</label>
                     <div className="relative">
                       <Store className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
-                      <input type="text" required className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="Ej. Cafetería Central" value={businessName} onChange={e => setBusinessName(e.target.value)} />
+                      <input type="text" required className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="Ej. Cafetería Central" value={businessName} onChange={e => setBusinessName(e.target.value)} />
                     </div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Teléfono</label>
                     <div className="relative">
                       <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
-                      <input type="tel" required className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="+53 5555 5555" value={phone} onChange={e => setPhone(e.target.value)} />
+                      <input type="tel" required className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="+53 5555 5555" value={phone} onChange={e => setPhone(e.target.value)} />
                     </div>
                   </div>
-                  <div className="bg-[#7AC142]/10 border border-[#7AC142]/30 rounded-xl px-4 py-3 flex items-center gap-3">
+                  <div className="bg-[#16A34A]/10 border border-[#16A34A]/30 rounded-xl px-4 py-3 flex items-center gap-3">
                     <span className="text-2xl">🎁</span>
                     <div>
-                      <p className="text-sm font-black text-[#0B3B68]">7 días de prueba gratuita</p>
+                      <p className="text-sm font-black text-[#0040FC]">7 días de prueba gratuita</p>
                       <p className="text-xs text-[#6B7280]">Sin costo. Sin tarjeta. Cancela cuando quieras.</p>
                     </div>
                   </div>
@@ -511,10 +511,10 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
               {/* RECUPERACIÓN POR SOPORTE — el camino que de verdad funciona hoy. */}
               {mode === 'forgot' && !mostrarCodigoPorCorreo && (
                 <div className="space-y-4 animate-in fade-in duration-300">
-                  <div className="bg-[#7AC142]/10 border border-[#7AC142]/30 rounded-xl p-4">
-                    <p className="text-sm font-bold text-[#0B3B68]">Escríbenos y te restablecemos la contraseña</p>
+                  <div className="bg-[#16A34A]/10 border border-[#16A34A]/30 rounded-xl p-4">
+                    <p className="text-sm font-bold text-[#0040FC]">Escríbenos y te restablecemos la contraseña</p>
                     <p className="text-xs text-[#6B7280] mt-1">
-                      Dinos el <strong className="text-[#0B3B68]">nombre de tu negocio</strong> y te damos una
+                      Dinos el <strong className="text-[#0040FC]">nombre de tu negocio</strong> y te damos una
                       contraseña nueva en el momento. Es la vía más rápida.
                     </p>
                   </div>
@@ -529,7 +529,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                   <button
                     type="button"
                     onClick={() => setMostrarCodigoPorCorreo(true)}
-                    className="block w-full text-center text-xs font-bold text-[#6B7280] hover:text-[#0B3B68] transition-colors"
+                    className="block w-full text-center text-xs font-bold text-[#6B7280] hover:text-[#0040FC] transition-colors"
                   >
                     Prefiero recibir un código por correo
                   </button>
@@ -541,7 +541,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Correo Electrónico</label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
-                  <input type="email" required readOnly={mode === 'otp'} className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937] read-only:opacity-70" placeholder="correo@ejemplo.com" value={email} onChange={e => setEmail(e.target.value)} />
+                  <input type="email" required readOnly={mode === 'otp'} className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] focus:bg-white outline-none transition-all font-medium text-[#1F2937] read-only:opacity-70" placeholder="correo@ejemplo.com" value={email} onChange={e => setEmail(e.target.value)} />
                 </div>
               </div>
               )}
@@ -553,7 +553,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
                     <input
                       type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={OTP_MAX_LENGTH} required
-                      className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-mono tracking-[0.5em] text-center text-lg text-[#1F2937]"
+                      className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] focus:bg-white outline-none transition-all font-mono tracking-[0.5em] text-center text-lg text-[#1F2937]"
                       placeholder={'•'.repeat(OTP_MIN_LENGTH)}
                       value={otpCode}
                       onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, OTP_MAX_LENGTH))}
@@ -567,8 +567,8 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                     <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">{mode === 'otp' ? 'Nueva contraseña' : 'Contraseña'}</label>
                     <div className="relative">
                       <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
-                      <input type={showPassword ? 'text' : 'password'} required className="w-full pl-10 pr-11 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
-                      <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B7280] hover:text-[#0B3B68] transition-colors p-1">
+                      <input type={showPassword ? 'text' : 'password'} required className="w-full pl-10 pr-11 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
+                      <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B7280] hover:text-[#0040FC] transition-colors p-1">
                         {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                       </button>
                     </div>
@@ -588,7 +588,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
               )}
 
               {(mode !== 'forgot' || mostrarCodigoPorCorreo) && (
-              <button disabled={loading || (mode === 'login' && lockoutStatus.isLocked) || (mode === 'forgot' && otpCooldown > 0)} type="submit" className="w-full bg-[#0B3B68] text-white font-bold py-3.5 rounded-xl hover:bg-[#092b4d] transition-all flex items-center justify-center gap-2 mt-6 shadow-xl shadow-[#0B3B68]/20 disabled:opacity-70 disabled:cursor-not-allowed active:scale-95 text-lg">
+              <button disabled={loading || (mode === 'login' && lockoutStatus.isLocked) || (mode === 'forgot' && otpCooldown > 0)} type="submit" className="w-full bg-[#0040FC] text-white font-bold py-3.5 rounded-xl hover:bg-[#0030CC] transition-all flex items-center justify-center gap-2 mt-6 shadow-xl shadow-[#0040FC]/20 disabled:opacity-70 disabled:cursor-not-allowed active:scale-95 text-lg">
                 {loading && <Loader2 className="animate-spin w-5 h-5" />}
                 {mode === 'login' && lockoutStatus.isLocked
                   ? `Bloqueado · ${formatLockoutTime(lockoutStatus.secondsLeft)}`
@@ -600,13 +600,13 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
 
             <div className="mt-6 text-center space-y-3">
               {mode === 'login' && (
-                  <button type="button" onClick={() => { setMostrarCodigoPorCorreo(false); setMode('forgot'); }} className="text-sm font-bold text-[#6B7280] hover:text-[#0B3B68] transition-colors">
+                  <button type="button" onClick={() => { setMostrarCodigoPorCorreo(false); setMode('forgot'); }} className="text-sm font-bold text-[#6B7280] hover:text-[#0040FC] transition-colors">
                     ¿Olvidaste tu contraseña?
                   </button>
               )}
 
               {mode === 'otp' && (
-                  <button type="button" onClick={() => handleForgotPassword()} disabled={loading || otpCooldown > 0} className="block w-full text-sm font-bold text-[#6B7280] hover:text-[#0B3B68] transition-colors disabled:opacity-50">
+                  <button type="button" onClick={() => handleForgotPassword()} disabled={loading || otpCooldown > 0} className="block w-full text-sm font-bold text-[#6B7280] hover:text-[#0040FC] transition-colors disabled:opacity-50">
                     {otpCooldown > 0 ? `Reenviar código en ${otpCooldown}s` : 'Reenviar código'}
                   </button>
               )}
@@ -615,12 +615,12 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 {(mode === 'login' || mode === 'register') ? (
                   <>
                     {mode === 'login' ? '¿No tienes cuenta?' : '¿Ya tienes cuenta?'}
-                    <button onClick={() => setMode(mode === 'login' ? 'register' : 'login')} className="ml-2 font-black text-[#7AC142] hover:text-[#5e9631] transition-colors">
+                    <button onClick={() => setMode(mode === 'login' ? 'register' : 'login')} className="ml-2 font-black text-[#0040FC] hover:text-[#0030CC] transition-colors">
                       {mode === 'login' ? 'Regístrate Aquí' : 'Inicia Sesión'}
                     </button>
                   </>
                 ) : (
-                    <button onClick={() => { setMode('login'); setOtpCode(''); }} className="font-black text-[#0B3B68] hover:text-[#092b4d] transition-colors">
+                    <button onClick={() => { setMode('login'); setOtpCode(''); }} className="font-black text-[#0040FC] hover:text-[#0030CC] transition-colors">
                       Volver a Iniciar Sesión
                     </button>
                 )}
@@ -648,7 +648,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
             )}
 
             <div className="mt-4 pt-4 flex justify-center">
-                <button onClick={() => navigate('/admin-login')} className="flex items-center gap-1.5 text-gray-400 hover:text-[#0B3B68] transition-colors text-[10px] font-bold uppercase tracking-wider">
+                <button onClick={() => navigate('/admin-login')} className="flex items-center gap-1.5 text-gray-400 hover:text-[#0040FC] transition-colors text-[10px] font-bold uppercase tracking-wider">
                     <Shield size={12} /> Acceso Super Admin
                 </button>
             </div>
@@ -1071,7 +1071,7 @@ function BusinessApp() {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50 gap-6 p-4">
          <div className="flex flex-col items-center gap-2">
-            <Loader2 className="animate-spin text-[#0B3B68] w-10 h-10 mb-4" />
+            <Loader2 className="animate-spin text-[#0040FC] w-10 h-10 mb-4" />
             <p className="text-slate-700 font-bold text-lg tracking-tight">Verificando Credenciales...</p>
             <p className="text-slate-400 text-xs mt-2">Conectando con Senio</p>
          </div>
@@ -1152,7 +1152,7 @@ function BusinessApp() {
           onClose={() => setShowStaffSelector(false)}
         />
       )}
-      <Suspense fallback={<div className="flex items-center justify-center h-screen"><Loader2 className="animate-spin text-[#0B3B68]" size={32} /></div>}>
+      <Suspense fallback={<div className="flex items-center justify-center h-screen"><Loader2 className="animate-spin text-[#0040FC]" size={32} /></div>}>
         <Routes>
           <Route element={<Layout currentStaff={currentStaff} onChangeStaff={() => setShowStaffSelector(true)} />}>
             {/* `/` solo redirige al "hogar" según el rol: el dueño (admin) ve el Panel
@@ -1163,7 +1163,7 @@ function BusinessApp() {
               path="/"
               element={
                 currentStaff.role !== 'admin' && settingsRows === undefined
-                  ? <div className="flex items-center justify-center h-full"><Loader2 className="animate-spin text-[#0B3B68]" size={28} /></div>
+                  ? <div className="flex items-center justify-center h-full"><Loader2 className="animate-spin text-[#0040FC]" size={28} /></div>
                   : <Navigate to={homeTarget} replace />
               }
             />
@@ -1295,7 +1295,7 @@ export default function App() {
       <Toaster position="top-right" richColors />
       <SyncEventToasts />
       <HashRouter>
-        <Suspense fallback={<div className="flex items-center justify-center h-screen"><Loader2 className="animate-spin text-[#0B3B68]" size={32} /></div>}>
+        <Suspense fallback={<div className="flex items-center justify-center h-screen"><Loader2 className="animate-spin text-[#0040FC]" size={32} /></div>}>
           <Routes>
             <Route path="/admin-login" element={<SuperAdminLogin />} />
             <Route path="/super-panel" element={<AdminRoute><SuperAdminPage /></AdminRoute>} />

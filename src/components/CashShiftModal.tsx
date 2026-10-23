@@ -159,12 +159,12 @@ export function CashShiftModal({
 
   const title = isOpen ? 'Abrir Caja' : isClose ? 'Cerrar Caja' : 'Movimiento de Efectivo';
   const Icon = isOpen ? LogIn : isClose ? LogOut : DollarSign;
-  const iconBg = isOpen ? 'bg-[#7AC142]/10' : isClose ? 'bg-[#EF4444]/10' : 'bg-[#0B3B68]/10';
-  const iconColor = isOpen ? 'text-[#7AC142]' : isClose ? 'text-[#EF4444]' : 'text-[#0B3B68]';
+  const iconBg = isOpen ? 'bg-[#16A34A]/10' : isClose ? 'bg-[#EF4444]/10' : 'bg-[#0040FC]/10';
+  const iconColor = isOpen ? 'text-[#15803D]' : isClose ? 'text-[#EF4444]' : 'text-[#0040FC]';
   const submitHandler = isOpen ? handleOpenShift : isClose ? handleCloseShift : handleMovement;
 
   return (
-    <div className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+    <div className="fixed inset-0 bg-[#0040FC]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
 
         {/* Header */}
@@ -190,7 +190,7 @@ export function CashShiftModal({
                 onClick={() => setMovType('in')}
                 className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 font-bold text-sm transition-all ${
                   movType === 'in'
-                    ? 'border-[#7AC142] bg-[#7AC142]/10 text-[#7AC142]'
+                    ? 'border-[#16A34A] bg-[#16A34A]/10 text-[#15803D]'
                     : 'border-gray-200 text-[#6B7280] hover:bg-gray-50'
                 }`}
               >
@@ -214,7 +214,7 @@ export function CashShiftModal({
           {isClose && (
             <div className="bg-[#F3F4F6] rounded-xl p-4 space-y-1">
               <p className="text-xs text-[#6B7280] font-bold uppercase">Efectivo esperado en caja</p>
-              <p className="text-2xl font-black text-[#0B3B68]">{currency.format(expectedCash)}</p>
+              <p className="text-2xl font-black text-[#0040FC]">{currency.format(expectedCash)}</p>
               <p className="text-xs text-[#6B7280]">Ingresa el efectivo físico que contaste abajo</p>
             </div>
           )}
@@ -235,7 +235,7 @@ export function CashShiftModal({
                 placeholder="0.00"
                 value={amount}
                 onChange={e => setAmount(e.target.value)}
-                className="w-full pl-8 pr-4 py-3 text-xl font-bold border-2 border-gray-200 rounded-xl focus:border-[#0B3B68] outline-none transition-colors"
+                className="w-full pl-8 pr-4 py-3 text-xl font-bold border-2 border-gray-200 rounded-xl focus:border-[#0040FC] outline-none transition-colors"
               />
             </div>
 
@@ -243,7 +243,7 @@ export function CashShiftModal({
             {isClose && amount && !isNaN(parseFloat(amount)) && (
               <div className={`mt-2 p-2 rounded-lg text-sm font-bold flex justify-between ${
                 Math.abs((parseFloat(amount) || 0) - expectedCash) < 0.01
-                  ? 'bg-[#7AC142]/10 text-[#7AC142]'
+                  ? 'bg-[#16A34A]/10 text-[#15803D]'
                   : 'bg-[#EF4444]/10 text-[#EF4444]'
               }`}>
                 <span>Diferencia:</span>
@@ -262,7 +262,7 @@ export function CashShiftModal({
                 placeholder="Ej. Pago proveedor, Fondo cambio..."
                 value={reason}
                 onChange={e => setReason(e.target.value)}
-                className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-[#0B3B68] outline-none transition-colors"
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-[#0040FC] outline-none transition-colors"
               />
             </div>
           )}
@@ -280,7 +280,7 @@ export function CashShiftModal({
               type="submit"
               disabled={isLoading}
               className={`flex-1 py-3 text-white font-bold rounded-xl transition-all active:scale-95 disabled:opacity-60 flex items-center justify-center gap-2 shadow-lg ${
-                isClose ? 'bg-[#EF4444] hover:bg-[#EF4444]/90 shadow-[#EF4444]/20' : 'bg-[#0B3B68] hover:bg-[#0B3B68]/90 shadow-[#0B3B68]/20'
+                isClose ? 'bg-[#EF4444] hover:bg-[#EF4444]/90 shadow-[#EF4444]/20' : 'bg-[#0040FC] hover:bg-[#0040FC]/90 shadow-[#0040FC]/20'
               }`}
             >
               {isLoading ? (

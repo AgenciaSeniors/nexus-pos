@@ -18,7 +18,7 @@ export function EnvSetupError({ missing }: EnvSetupErrorProps) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#F3F4F6] p-4 antialiased">
       <div className="w-full max-w-xl rounded-2xl bg-white shadow-xl ring-1 ring-black/5 overflow-hidden">
-        <div className="bg-gradient-to-br from-[#0B3B68] to-[#092b4d] px-6 py-5 flex items-center gap-3">
+        <div className="bg-gradient-to-br from-[#0040FC] to-[#0030CC] px-6 py-5 flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10">
             <AlertTriangle className="h-5 w-5 text-amber-300" />
           </div>
@@ -46,18 +46,18 @@ export function EnvSetupError({ missing }: EnvSetupErrorProps) {
           </ul>
 
           <div className="space-y-2">
-            <p className="text-sm font-semibold text-[#0B3B68]">
+            <p className="text-sm font-semibold text-[#0040FC]">
               Cómo solucionarlo
             </p>
             <ol className="list-decimal pl-5 text-sm space-y-1.5 text-gray-600">
               <li>
-                Crea (o edita) el archivo <code className="font-mono text-[#0B3B68]">.env.local</code> en la
+                Crea (o edita) el archivo <code className="font-mono text-[#0040FC]">.env.local</code> en la
                 raíz del proyecto.
               </li>
               <li>Agrega tus valores reales:</li>
             </ol>
 
-            <pre className="rounded-lg bg-[#0B3B68] text-green-200 text-xs sm:text-sm font-mono px-4 py-3 overflow-x-auto whitespace-pre">
+            <pre className="rounded-lg bg-[#0040FC] text-green-200 text-xs sm:text-sm font-mono px-4 py-3 overflow-x-auto whitespace-pre">
 {envExample}
             </pre>
 

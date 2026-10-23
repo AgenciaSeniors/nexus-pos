@@ -92,7 +92,7 @@ export function RecipeAdmin() {
   return (
     <div className="space-y-6">
       {/* Marcar ingredientes */}
-      <SectionCard title="Ingredientes" icon={<Carrot size={18} className="text-[#5a9d2e]" />} accent="green"
+      <SectionCard title="Ingredientes" icon={<Carrot size={18} className="text-[#15803D]" />} accent="green"
         subtitle="Marca los productos que son insumos: no se venden en el menú; se descuentan por receta.">
         {loading ? (
           <SkeletonList rows={2} rowClassName="h-9 w-32" className="flex flex-wrap gap-2 space-y-0" />
@@ -105,10 +105,10 @@ export function RecipeAdmin() {
               <label key={p.id}
                 className={cn(
                   'inline-flex items-center gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer text-sm font-bold transition-colors',
-                  p.is_ingredient ? 'border-[#7AC142] bg-[#7AC142]/5 text-[#0B3B68]' : 'border-gray-200 text-[#6B7280] hover:border-gray-300',
+                  p.is_ingredient ? 'border-[#0040FC] bg-[#0040FC]/5 text-[#0040FC]' : 'border-gray-200 text-[#6B7280] hover:border-gray-300',
                 )}>
                 <input type="checkbox" checked={!!p.is_ingredient} onChange={e => toggleIngredient(p, e.target.checked)}
-                  className="accent-[#7AC142]" />
+                  className="accent-[#0040FC]" />
                 {p.name}
               </label>
             ))}
@@ -117,7 +117,7 @@ export function RecipeAdmin() {
       </SectionCard>
 
       {/* Recetas por plato */}
-      <SectionCard title="Receta de un plato" icon={<ChefHat size={18} className="text-[#0B3B68]" />}
+      <SectionCard title="Receta de un plato" icon={<ChefHat size={18} className="text-[#0040FC]" />}
         subtitle="Elige un plato y define qué ingredientes consume cada unidad.">
         <Select value={dishId} onChange={e => setDishId(e.target.value)} aria-label="Plato" className="mb-4"
           disabled={loading || dishes.length === 0}>

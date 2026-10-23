@@ -73,14 +73,14 @@ export function ShiftCountPanel({ mode, drafts, expectedByProduct, onChange, lin
             placeholder="Buscar producto..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0B3B68]"
+            className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0040FC]"
           />
         </div>
         <div className="flex gap-2">
           <button
             type="button"
             onClick={fillAllExpected}
-            className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-[#7AC142] text-[#7AC142] text-xs font-bold hover:bg-[#7AC142]/5 active:scale-95 transition-all whitespace-nowrap"
+            className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-[#16A34A] text-[#15803D] text-xs font-bold hover:bg-[#16A34A]/5 active:scale-95 transition-all whitespace-nowrap"
           >
             <PackageCheck size={14} /> Todo conforme
           </button>
@@ -141,7 +141,7 @@ export function ShiftCountPanel({ mode, drafts, expectedByProduct, onChange, lin
                   aria-label={`Conteo de ${d.product_name}`}
                   value={typed ?? ''}
                   onChange={e => onChange(d.product_id, { closing_input: e.target.value })}
-                  className="w-24 flex-shrink-0 p-2.5 border-2 border-gray-200 rounded-xl text-center font-bold outline-none focus:border-[#0B3B68]"
+                  className="w-24 flex-shrink-0 p-2.5 border-2 border-gray-200 rounded-xl text-center font-bold outline-none focus:border-[#0040FC]"
                 />
               </div>
 
@@ -177,7 +177,7 @@ export function ShiftCountPanel({ mode, drafts, expectedByProduct, onChange, lin
                           <RotateCcw size={12} /> Sobran {round3(line.surplus_qty)}
                         </span>
                       ) : (
-                        <span className="text-[#0B3B68]">
+                        <span className="text-[#0040FC]">
                           Vendido {round3(line.sold_qty)} · {currency.format(line.amount)}
                         </span>
                       )}

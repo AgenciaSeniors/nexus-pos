@@ -6,11 +6,11 @@ export type ButtonVariant = 'primary' | 'navy' | 'secondary' | 'danger' | 'ghost
 export type ButtonSize = 'sm' | 'md' | 'lg';
 
 const VARIANTS: Record<ButtonVariant, string> = {
-  primary: 'bg-grad-green text-white shadow-glow-green hover:shadow-[0_10px_26px_rgba(122,193,66,0.42)] hover:-translate-y-px focus-visible:ring-[#7AC142]',
-  navy: 'bg-grad-navy text-white shadow-glow-navy hover:shadow-[0_10px_26px_rgba(11,59,104,0.38)] hover:-translate-y-px focus-visible:ring-[#0B3B68]',
-  secondary: 'bg-white text-[#1F2937] border border-gray-200 shadow-sm hover:shadow-card hover:border-gray-300 focus-visible:ring-[#0B3B68]',
+  primary: 'bg-grad-green text-white shadow-glow-green hover:shadow-[0_10px_26px_rgba(22,163,74,0.42)] hover:-translate-y-px focus-visible:ring-[#16A34A]',
+  navy: 'bg-grad-navy text-white shadow-glow-navy hover:shadow-[0_10px_26px_rgba(0,64,252,0.38)] hover:-translate-y-px focus-visible:ring-[#0040FC]',
+  secondary: 'bg-white text-[#1F2937] border border-gray-200 shadow-sm hover:shadow-card hover:border-gray-300 focus-visible:ring-[#0040FC]',
   danger: 'bg-[#EF4444] text-white shadow-[0_6px_20px_rgba(239,68,68,0.28)] hover:bg-red-600 hover:-translate-y-px focus-visible:ring-[#EF4444]',
-  ghost: 'bg-transparent text-[#0B3B68] hover:bg-[#0B3B68]/10 focus-visible:ring-[#0B3B68]',
+  ghost: 'bg-transparent text-[#0040FC] hover:bg-[#0040FC]/10 focus-visible:ring-[#0040FC]',
 };
 
 // Alturas ≥44px en md/lg para área táctil cómoda (sm reservado para botones-icono inline).

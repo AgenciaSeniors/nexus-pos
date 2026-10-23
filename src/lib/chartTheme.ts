@@ -5,13 +5,13 @@
  */
 import type { CSSProperties } from 'react';
 
-export const NAVY = '#0B3B68';
-export const GREEN = '#7AC142';
+export const NAVY = '#0040FC'; // azul Senio (el nombre NAVY es histórico)
+export const GREEN = '#16A34A';
 
 /** Paleta de marca para series categóricas (pie, barras múltiples). */
 export const BRAND_CHART_COLORS = [
-  '#0B3B68', // navy
-  '#7AC142', // verde
+  '#0040FC', // azul Senio
+  '#16A34A', // verde
   '#F59E0B', // ámbar
   '#EF4444', // rojo
   '#6366F1', // índigo
@@ -19,11 +19,11 @@ export const BRAND_CHART_COLORS = [
   '#6B7280', // gris
 ];
 
-/** Tarjeta del tooltip: redondeada, con sombra tintada de navy (consistente con `shadow-card`). */
+/** Tarjeta del tooltip: redondeada, con sombra tintada de azul Senio (consistente con `shadow-card`). */
 export const CHART_TOOLTIP_STYLE: CSSProperties = {
   borderRadius: 12,
   border: '1px solid #eef2f7',
-  boxShadow: '0 10px 28px rgba(11,59,104,0.12)',
+  boxShadow: '0 10px 28px rgba(0,64,252,0.12)',
   fontSize: 12,
   fontWeight: 600,
   color: '#1F2937',

@@ -50,7 +50,7 @@ export function DailyInventoryTable({ rows }: Props) {
                   <td className="py-1.5 px-1 text-right">{r.entries > 0 ? `+${q(r.entries)}` : '–'}</td>
                   <td className="py-1.5 px-1 text-right">{r.sold > 0 ? `−${q(r.sold)}` : '–'}</td>
                   <td className="py-1.5 px-1 text-right">{otros !== 0 ? `${otros > 0 ? '+' : '−'}${q(Math.abs(otros))}` : '–'}</td>
-                  <td className="py-1.5 pl-1 text-right font-black text-[#0B3B68]">{split(r.end_display, r.end_warehouse, hasWarehouse)}</td>
+                  <td className="py-1.5 pl-1 text-right font-black text-[#0040FC]">{split(r.end_display, r.end_warehouse, hasWarehouse)}</td>
                 </tr>
               );
             })}

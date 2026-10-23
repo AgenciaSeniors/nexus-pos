@@ -325,9 +325,9 @@ export default function ComandaPage() {
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
           {filteredProducts.slice(0, 60).map(p => (
             <button key={p.id} onClick={() => addProduct(p)} disabled={splitInProgress}
-              className="p-3 rounded-xl border border-gray-200 bg-white text-left shadow-card hover:border-[#7AC142] hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:pointer-events-none">
+              className="p-3 rounded-xl border border-gray-200 bg-white text-left shadow-card hover:border-[#0040FC] hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:pointer-events-none">
               <p className="font-bold text-sm text-[#1F2937] line-clamp-2">{p.name}</p>
-              <p className="text-[#7AC142] font-black text-sm mt-1">${p.price.toFixed(2)}</p>
+              <p className="text-[#15803D] font-black text-sm mt-1">${p.price.toFixed(2)}</p>
             </button>
           ))}
           {filteredProducts.length === 0 && (
@@ -338,7 +338,7 @@ export default function ComandaPage() {
 
       {/* Comanda actual */}
       <div className="lg:w-96 shrink-0 bg-white rounded-2xl border border-gray-200 shadow-card p-4 flex flex-col lg:sticky lg:top-6 lg:self-start lg:max-h-[calc(100vh-3rem)]">
-        <h2 className="font-black text-[#1F2937] mb-3 flex items-center gap-2"><ClipboardList size={18} className="text-[#0B3B68]" /> Comanda</h2>
+        <h2 className="font-black text-[#1F2937] mb-3 flex items-center gap-2"><ClipboardList size={18} className="text-[#0040FC]" /> Comanda</h2>
         <div className="flex-1 overflow-y-auto space-y-2 min-h-[120px]">
           {liveItems.length === 0 && (
             <EmptyState size="sm" icon={<ClipboardList size={22} />} title="Comanda vacía"
@@ -361,9 +361,9 @@ export default function ComandaPage() {
           ))}
         </div>
         <div className="border-t border-gray-100 mt-3 pt-3">
-          <div className="flex justify-between items-center mb-3 bg-[#0B3B68]/5 rounded-xl px-3 py-2.5">
+          <div className="flex justify-between items-center mb-3 bg-[#0040FC]/5 rounded-xl px-3 py-2.5">
             <span className="font-bold text-[#6B7280] uppercase text-xs tracking-wide">Total</span>
-            <span className="text-2xl font-black text-[#0B3B68]">${total.toFixed(2)}</span>
+            <span className="text-2xl font-black text-[#0040FC]">${total.toFixed(2)}</span>
           </div>
           {pendingToSend.length > 0 && (
             <Button variant="navy" fullWidth size="lg" className="mb-2" onClick={sendToKitchen} icon={<ChefHat size={20} />}>
@@ -373,7 +373,7 @@ export default function ComandaPage() {
           <div className="flex gap-2">
             <Button variant={splitInProgress ? 'primary' : 'secondary'} size="lg" onClick={() => setShowSplit(true)}
               disabled={liveItems.length === 0 || isClosing || !activeShift}
-              className={splitInProgress ? '' : 'border-2 border-[#0B3B68] text-[#0B3B68]'} icon={<Users size={18} />}>
+              className={splitInProgress ? '' : 'border-2 border-[#0040FC] text-[#0040FC]'} icon={<Users size={18} />}>
               {splitInProgress ? 'Retomar división' : 'Dividir'}
             </Button>
             {/* Con una división en curso, "Cobrar" el total completo duplicaría

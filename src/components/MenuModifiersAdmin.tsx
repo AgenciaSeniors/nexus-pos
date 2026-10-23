@@ -139,7 +139,7 @@ export function MenuModifiersAdmin() {
   return (
     <div className="space-y-6">
       {/* Crear grupo */}
-      <SectionCard title="Grupos de modificadores" icon={<SlidersHorizontal size={18} className="text-[#0B3B68]" />}
+      <SectionCard title="Grupos de modificadores" icon={<SlidersHorizontal size={18} className="text-[#0040FC]" />}
         subtitle="Ej. “Término” (única opción) o “Extras” (varias). Cada opción puede sumar precio.">
         <div className="flex flex-col sm:flex-row gap-2 mb-2">
           <Input value={groupName} onChange={e => setGroupName(e.target.value)} placeholder="Nombre del grupo (ej. Término, Extras)"
@@ -148,11 +148,11 @@ export function MenuModifiersAdmin() {
         </div>
         <div className="flex flex-wrap gap-4 text-sm text-[#6B7280] mb-5">
           <label className="flex items-center gap-1.5 cursor-pointer">
-            <input type="checkbox" checked={groupMulti} onChange={e => setGroupMulti(e.target.checked)} className="accent-[#0B3B68]" />
+            <input type="checkbox" checked={groupMulti} onChange={e => setGroupMulti(e.target.checked)} className="accent-[#0040FC]" />
             Permitir varias opciones
           </label>
           <label className="flex items-center gap-1.5 cursor-pointer">
-            <input type="checkbox" checked={groupRequired} onChange={e => setGroupRequired(e.target.checked)} className="accent-[#0B3B68]" />
+            <input type="checkbox" checked={groupRequired} onChange={e => setGroupRequired(e.target.checked)} className="accent-[#0040FC]" />
             Obligatorio
           </label>
         </div>
@@ -209,7 +209,7 @@ export function MenuModifiersAdmin() {
 
       {/* Asignar a productos */}
       {groupList.length > 0 && (
-        <SectionCard title="Asignar a un producto" icon={<Link2 size={18} className="text-[#0B3B68]" />}
+        <SectionCard title="Asignar a un producto" icon={<Link2 size={18} className="text-[#0040FC]" />}
           subtitle="Elige un producto y marca qué grupos de modificadores se ofrecen al pedirlo.">
           <Select value={assignProductId} onChange={e => setAssignProductId(e.target.value)} aria-label="Producto" className="mb-3">
             <option value="">Elige un producto…</option>
@@ -221,10 +221,10 @@ export function MenuModifiersAdmin() {
                 <label key={g.id}
                   className={cn(
                     'inline-flex items-center gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer text-sm font-bold transition-colors',
-                    assignedGroupIds.has(g.id) ? 'border-[#7AC142] bg-[#7AC142]/5 text-[#0B3B68]' : 'border-gray-200 text-[#6B7280] hover:border-gray-300',
+                    assignedGroupIds.has(g.id) ? 'border-[#0040FC] bg-[#0040FC]/5 text-[#0040FC]' : 'border-gray-200 text-[#6B7280] hover:border-gray-300',
                   )}>
                   <input type="checkbox" checked={assignedGroupIds.has(g.id)} onChange={e => toggleAssign(g.id, e.target.checked)}
-                    className="accent-[#7AC142]" />
+                    className="accent-[#0040FC]" />
                   {g.name}
                 </label>
               ))}

@@ -33,14 +33,14 @@ const TABLES = [
   { name: 'Barra 1', state: 'reservada' as const, total: 0, mins: 0 },
 ];
 const STATE_STYLES = {
-  libre: { box: 'border-[#7AC142]/30 bg-[#7AC142]/5', dot: 'bg-[#7AC142] shadow-[0_0_6px_#7AC142]', label: 'Libre' },
+  libre: { box: 'border-[#16A34A]/30 bg-[#16A34A]/5', dot: 'bg-[#16A34A] shadow-[0_0_6px_#16A34A]', label: 'Libre' },
   ocupada: { box: 'border-amber-300 bg-amber-50', dot: 'bg-amber-500 shadow-[0_0_6px_#f59e0b]', label: 'Ocupada' },
   por_cobrar: { box: 'border-red-300 bg-red-50', dot: 'bg-red-500 shadow-[0_0_6px_#ef4444]', label: 'Por cobrar' },
   reservada: { box: 'border-blue-300 bg-blue-50', dot: 'bg-blue-500 shadow-[0_0_6px_#3b82f6]', label: 'Reservada' },
 };
 
 const KDS_TICKETS = [
-  { mesa: 'Mesa 5', mins: 3, head: 'from-[#0B3B68] to-[#092b4d]', chip: 'bg-white/20 text-white', ring: 'border-gray-200', items: [{ q: 2, n: 'Mojito', mods: 'sin azúcar' }, { q: 1, n: 'Tostones' }] },
+  { mesa: 'Mesa 5', mins: 3, head: 'from-[#0040FC] to-[#0030CC]', chip: 'bg-white/20 text-white', ring: 'border-gray-200', items: [{ q: 2, n: 'Mojito', mods: 'sin azúcar' }, { q: 1, n: 'Tostones' }] },
   { mesa: 'Mesa 2', mins: 7, head: 'from-amber-500 to-amber-600', chip: 'bg-amber-400 text-amber-950', ring: 'border-amber-300', items: [{ q: 1, n: 'Ropa vieja', mods: 'término medio' }, { q: 3, n: 'Arroz blanco' }] },
   { mesa: 'Mesa 3', mins: 14, head: 'from-red-600 to-red-700', chip: 'bg-red-500 text-white', ring: 'border-red-400 shadow-[0_0_0_1px_#f87171]', items: [{ q: 2, n: 'Pizza Napolitana', mods: 'extra queso' }] },
 ];
@@ -60,7 +60,7 @@ export default function DesignPreview() {
     <div className="min-h-screen bg-[#F3F4F6] p-5 md:p-8">
       <div className="max-w-6xl mx-auto">
         <div className="mb-8">
-          <h1 className="text-3xl font-black text-[#0B3B68]">nexus · Modo Restaurante</h1>
+          <h1 className="text-3xl font-black text-[#0040FC]">nexus · Modo Restaurante</h1>
           <p className="text-[#6B7280]">Previsualización del pase de diseño premium (datos de ejemplo)</p>
         </div>
 
@@ -97,7 +97,7 @@ export default function DesignPreview() {
 
         {/* MESAS */}
         <Block title="Pantalla · Mesas">
-          <PageHeader title="Mesas" icon={<UtensilsCrossed className="text-[#0B3B68]" />} className="mb-4"
+          <PageHeader title="Mesas" icon={<UtensilsCrossed className="text-[#0040FC]" />} className="mb-4"
             action={<Button variant="ghost" size="sm" icon={<Plus size={16} />}>Áreas y mesas</Button>} />
           <div className="grid grid-cols-3 gap-3 mb-6">
             <StatCard label="Libres" value={3} icon={<Armchair size={16} />} />
@@ -116,7 +116,7 @@ export default function DesignPreview() {
                   <p className="text-[11px] font-bold text-[#6B7280] uppercase">{s.label}</p>
                   {t.total > 0 && (
                     <div className="flex items-center justify-between mt-1.5">
-                      <span className="text-sm font-black text-[#0B3B68]">${t.total.toFixed(2)}</span>
+                      <span className="text-sm font-black text-[#0040FC]">${t.total.toFixed(2)}</span>
                       <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[#6B7280]"><Clock size={11} /> {t.mins}m</span>
                     </div>
                   )}
@@ -128,7 +128,7 @@ export default function DesignPreview() {
 
         {/* COCINA */}
         <Block title="Pantalla · Cocina (KDS)">
-          <PageHeader title="Cocina" icon={<ChefHat className="text-[#0B3B68]" />} className="mb-4" />
+          <PageHeader title="Cocina" icon={<ChefHat className="text-[#0040FC]" />} className="mb-4" />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {KDS_TICKETS.map(t => (
               <div key={t.mesa} className={`bg-white rounded-2xl border-2 overflow-hidden shadow-card ${t.ring}`}>
@@ -139,8 +139,8 @@ export default function DesignPreview() {
                 <div className="p-3 space-y-2">
                   {t.items.map((it, i) => (
                     <div key={i} className="p-3 rounded-xl border border-gray-200 bg-gray-50">
-                      <p className="font-bold text-[#1F2937]"><span className="text-[#0B3B68]">{it.q}×</span> {it.n}</p>
-                      {it.mods && <p className="text-xs text-[#0B3B68] mt-0.5">{it.mods}</p>}
+                      <p className="font-bold text-[#1F2937]"><span className="text-[#0040FC]">{it.q}×</span> {it.n}</p>
+                      {it.mods && <p className="text-xs text-[#0040FC] mt-0.5">{it.mods}</p>}
                       <div className="flex gap-2 mt-2.5">
                         <button className="flex-1 bg-amber-500 text-white text-sm font-bold py-2.5 rounded-lg flex items-center justify-center gap-1.5"><Flame size={16} /> Preparar</button>
                         <button className="flex-1 bg-grad-green text-white text-sm font-bold py-2.5 rounded-lg flex items-center justify-center gap-1.5 shadow-glow-green"><Check size={16} /> Listo</button>
@@ -179,13 +179,13 @@ export default function DesignPreview() {
                 ))}
               </div>
               <div className="border-t border-gray-100 mt-3 pt-3">
-                <div className="flex justify-between items-center mb-3 bg-[#0B3B68]/5 rounded-xl px-3 py-2.5">
+                <div className="flex justify-between items-center mb-3 bg-[#0040FC]/5 rounded-xl px-3 py-2.5">
                   <span className="font-bold text-[#6B7280] uppercase text-xs tracking-wide">Total</span>
-                  <span className="text-2xl font-black text-[#0B3B68]">${comTotal.toFixed(2)}</span>
+                  <span className="text-2xl font-black text-[#0040FC]">${comTotal.toFixed(2)}</span>
                 </div>
                 <Button variant="navy" fullWidth size="lg" className="mb-2" icon={<ChefHat size={20} />}>Enviar a cocina (2)</Button>
                 <div className="flex gap-2">
-                  <Button variant="secondary" size="lg" className="border-2 border-[#0B3B68] text-[#0B3B68]" icon={<Users size={18} />}>Dividir</Button>
+                  <Button variant="secondary" size="lg" className="border-2 border-[#0040FC] text-[#0040FC]" icon={<Users size={18} />}>Dividir</Button>
                   <Button variant="primary" size="lg" fullWidth icon={<CreditCard size={20} />}>Cobrar</Button>
                 </div>
               </div>
@@ -211,12 +211,12 @@ export default function DesignPreview() {
                     <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                       <div className="h-full bg-grad-green rounded-full" style={{ width: `${(1 / parts) * 100}%` }} />
                     </div>
-                    <div className="flex items-center justify-between p-3 rounded-xl border border-[#7AC142]/40 bg-[#7AC142]/5">
-                      <div><p className="font-bold text-[#1F2937]">Cuenta 1</p><p className="text-sm text-[#0B3B68] font-black">$7.83</p></div>
-                      <span className="flex items-center gap-1 text-[#4f7d24] font-bold text-sm"><Check size={16} /> Pagada</span>
+                    <div className="flex items-center justify-between p-3 rounded-xl border border-[#16A34A]/40 bg-[#16A34A]/5">
+                      <div><p className="font-bold text-[#1F2937]">Cuenta 1</p><p className="text-sm text-[#0040FC] font-black">$7.83</p></div>
+                      <span className="flex items-center gap-1 text-[#166534] font-bold text-sm"><Check size={16} /> Pagada</span>
                     </div>
                     <div className="flex items-center justify-between p-3 rounded-xl border border-gray-200">
-                      <div><p className="font-bold text-[#1F2937]">Cuenta 2</p><p className="text-sm text-[#0B3B68] font-black">$7.83</p></div>
+                      <div><p className="font-bold text-[#1F2937]">Cuenta 2</p><p className="text-sm text-[#0040FC] font-black">$7.83</p></div>
                       <Button size="sm" icon={<CreditCard size={16} />}>Cobrar</Button>
                     </div>
                   </div>
@@ -229,7 +229,7 @@ export default function DesignPreview() {
         {/* PANEL CONFIG */}
         <Block title="Panel de configuración">
           <div className="grid md:grid-cols-2 gap-4">
-            <SectionCard title="Áreas" icon={<MapPin size={18} className="text-[#0B3B68]" />} subtitle="Zonas de tu local.">
+            <SectionCard title="Áreas" icon={<MapPin size={18} className="text-[#0040FC]" />} subtitle="Zonas de tu local.">
               <div className="flex gap-2 mb-4">
                 <Input placeholder="Ej. Salón, Terraza" className="flex-1" />
                 <Button icon={<Plus size={18} />}>Añadir</Button>
@@ -240,7 +240,7 @@ export default function DesignPreview() {
                 <Badge color="navy">Barra</Badge>
               </div>
             </SectionCard>
-            <SectionCard title="Ingredientes" accent="green" icon={<Plus size={18} className="text-[#5a9d2e]" />}
+            <SectionCard title="Ingredientes" accent="green" icon={<Plus size={18} className="text-[#15803D]" />}
               subtitle="Insumos que se descuentan por receta.">
               <EmptyState size="sm" icon={<ClipboardList size={22} />} title="Sin ingredientes"
                 description="Marca productos como insumo para empezar." />

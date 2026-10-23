@@ -55,7 +55,7 @@ function DeltaBadge({ delta, onDark = false }: { delta: Delta; onDark?: boolean 
   const tone = onDark
     ? 'bg-white/20 text-white'
     : direction === 'up'
-      ? 'bg-[#7AC142]/15 text-[#5a962e]'
+      ? 'bg-[#16A34A]/15 text-[#15803D]'
       : direction === 'down'
         ? 'bg-red-100 text-red-600'
         : 'bg-gray-100 text-gray-500';
@@ -144,15 +144,15 @@ export function HomePage() {
 
   const quickActions = isRestaurant
     ? [
-        { to: '/mesas', label: 'Mesas', icon: <UtensilsCrossed size={22} />, accent: 'bg-[#7AC142]' },
-        { to: '/cocina', label: 'Cocina', icon: <ChefHat size={22} />, accent: 'bg-[#0B3B68]' },
+        { to: '/mesas', label: 'Mesas', icon: <UtensilsCrossed size={22} />, accent: 'bg-[#0040FC]' },
+        { to: '/cocina', label: 'Cocina', icon: <ChefHat size={22} />, accent: 'bg-[#0040FC]' },
         { to: '/inventario', label: 'Inventario', icon: <Package size={22} />, accent: 'bg-amber-500' },
         { to: '/finanzas', label: 'Finanzas', icon: <PieChartIcon size={22} />, accent: 'bg-indigo-500' },
       ]
     : [
-        { to: '/venta', label: 'Vender', icon: <ShoppingBag size={22} />, accent: 'bg-[#7AC142]' },
+        { to: '/venta', label: 'Vender', icon: <ShoppingBag size={22} />, accent: 'bg-[#0040FC]' },
         { to: '/inventario', label: 'Inventario', icon: <Package size={22} />, accent: 'bg-amber-500' },
-        { to: '/clientes', label: 'Clientes', icon: <UsersIcon size={22} />, accent: 'bg-[#0B3B68]' },
+        { to: '/clientes', label: 'Clientes', icon: <UsersIcon size={22} />, accent: 'bg-[#0040FC]' },
         { to: '/finanzas', label: 'Finanzas', icon: <PieChartIcon size={22} />, accent: 'bg-indigo-500' },
       ];
 
@@ -162,7 +162,7 @@ export function HomePage() {
     <div className="p-4 md:p-6 space-y-6 max-w-6xl mx-auto">
       {/* Saludo */}
       <div>
-        <h1 className="text-2xl md:text-3xl font-black text-[#0B3B68]">
+        <h1 className="text-2xl md:text-3xl font-black text-[#0040FC]">
           {greeting}, {currentStaff?.name?.split(' ')[0] || ''} 👋
         </h1>
         <p className="text-sm text-[#6B7280] mt-1 capitalize">
@@ -244,7 +244,7 @@ export function HomePage() {
         <SectionCard
           title="Ventas por hora"
           subtitle="Movimiento de hoy"
-          icon={<TrendingUp size={18} className="text-[#0B3B68]" />}
+          icon={<TrendingUp size={18} className="text-[#0040FC]" />}
         >
           {hourlyChart.length === 0 ? (
             <div className="h-48 flex flex-col items-center justify-center text-center text-[#6B7280]">
@@ -298,7 +298,7 @@ export function HomePage() {
                     </div>
                     <div className="mt-1 h-2 rounded-full bg-gray-100 overflow-hidden">
                       <div
-                        className="h-full rounded-full bg-gradient-to-r from-[#7AC142] to-[#5a962e]"
+                        className="h-full rounded-full bg-gradient-to-r from-[#16A34A] to-[#15803D]"
                         style={{ width: `${Math.max(6, (p.qty / maxTopQty) * 100)}%` }}
                       />
                     </div>
@@ -315,9 +315,9 @@ export function HomePage() {
         {/* Caja / turno */}
         <SectionCard
           title="Estado de caja"
-          icon={<Wallet size={18} className="text-[#0B3B68]" />}
+          icon={<Wallet size={18} className="text-[#0040FC]" />}
           action={
-            <Link to="/finanzas" className="text-xs font-bold text-[#0B3B68] hover:underline flex items-center gap-1">
+            <Link to="/finanzas" className="text-xs font-bold text-[#0040FC] hover:underline flex items-center gap-1">
               Finanzas <ChevronRight size={14} />
             </Link>
           }
@@ -344,7 +344,7 @@ export function HomePage() {
           icon={<AlertTriangle size={18} className="text-amber-500" />}
           accent="amber"
           action={
-            <Link to="/inventario" className="text-xs font-bold text-[#0B3B68] hover:underline flex items-center gap-1">
+            <Link to="/inventario" className="text-xs font-bold text-[#0040FC] hover:underline flex items-center gap-1">
               Inventario <ChevronRight size={14} />
             </Link>
           }

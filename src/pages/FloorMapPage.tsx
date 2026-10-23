@@ -9,7 +9,7 @@ import { PageHeader, EmptyState, Button, StatCard } from '../components/ui';
 import { useNow, minutesSince, formatElapsed } from '../lib/time';
 
 const STATE_STYLES: Record<RestaurantTable['state'], { box: string; dot: string; label: string }> = {
-  libre: { box: 'border-[#7AC142]/30 bg-[#7AC142]/5 hover:border-[#7AC142] hover:shadow-card-hover', dot: 'bg-[#7AC142] shadow-[0_0_6px_#7AC142]', label: 'Libre' },
+  libre: { box: 'border-[#16A34A]/30 bg-[#16A34A]/5 hover:border-[#0040FC] hover:shadow-card-hover', dot: 'bg-[#16A34A] shadow-[0_0_6px_#16A34A]', label: 'Libre' },
   ocupada: { box: 'border-amber-300 bg-amber-50 hover:border-amber-400 hover:shadow-card-hover', dot: 'bg-amber-500 shadow-[0_0_6px_#f59e0b]', label: 'Ocupada' },
   por_cobrar: { box: 'border-red-300 bg-red-50 hover:border-red-400 hover:shadow-card-hover', dot: 'bg-red-500 shadow-[0_0_6px_#ef4444]', label: 'Por cobrar' },
   reservada: { box: 'border-blue-300 bg-blue-50 hover:border-blue-400 hover:shadow-card-hover', dot: 'bg-blue-500 shadow-[0_0_6px_#3b82f6]', label: 'Reservada' },
@@ -121,7 +121,7 @@ export default function FloorMapPage() {
         <p className="text-[11px] font-bold text-[#6B7280] uppercase">{style.label}</p>
         {comanda && (
           <div className="flex items-center justify-between mt-1.5">
-            <span className="text-sm font-black text-[#0B3B68]">${total.toFixed(2)}</span>
+            <span className="text-sm font-black text-[#0040FC]">${total.toFixed(2)}</span>
             <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[#6B7280]">
               <Clock size={11} /> {formatElapsed(mins)}
             </span>
@@ -135,7 +135,7 @@ export default function FloorMapPage() {
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
       <PageHeader
         title="Mesas"
-        icon={<UtensilsCrossed className="text-[#0B3B68]" />}
+        icon={<UtensilsCrossed className="text-[#0040FC]" />}
         className="mb-4"
         action={
           <Button variant="ghost" size="sm" icon={<Plus size={16} />} onClick={() => navigate('/configuracion?tab=restaurant')}>

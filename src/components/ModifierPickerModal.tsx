@@ -82,11 +82,11 @@ export function ModifierPickerModal({ product, groups, modifiers, onCancel, onCo
                 const on = selected.has(m.id);
                 return (
                   <button key={m.id} onClick={() => toggle(g, m.id)} aria-pressed={on}
-                    className={`w-full flex items-center justify-between p-3 rounded-xl border-2 text-left transition-all active:scale-[0.99] ${on ? 'border-[#7AC142] bg-[#7AC142]/5' : 'border-gray-200 hover:border-gray-300'}`}>
+                    className={`w-full flex items-center justify-between p-3 rounded-xl border-2 text-left transition-all active:scale-[0.99] ${on ? 'border-[#0040FC] bg-[#0040FC]/5' : 'border-gray-200 hover:border-gray-300'}`}>
                     <span className="font-medium text-[#1F2937]">{m.name}</span>
                     <span className="flex items-center gap-2">
                       {m.price_delta ? <span className="text-sm text-[#6B7280]">+${m.price_delta.toFixed(2)}</span> : null}
-                      {on && <Check size={16} className="text-[#7AC142]" />}
+                      {on && <Check size={16} className="text-[#15803D]" />}
                     </span>
                   </button>
                 );

@@ -119,7 +119,7 @@ export function SplitBillModal({
       <Modal title={`Dividir cuenta · $${frozenGrandTotal.toFixed(2)}`} onClose={handleClose} size="lg" zIndex={40}>
         <div className="p-4 space-y-4">
           {saved && paidCount > 0 && !allPaid && (
-            <p className="text-xs text-[#0B3B68] bg-[#0B3B68]/5 border border-[#0B3B68]/15 rounded-lg px-3 py-2">
+            <p className="text-xs text-[#0040FC] bg-[#0040FC]/5 border border-[#0040FC]/15 rounded-lg px-3 py-2">
               División retomada: {paidCount} de {parts} cuenta{paidCount !== 1 ? 's' : ''} ya cobrada{paidCount !== 1 ? 's' : ''}.
             </p>
           )}
@@ -168,7 +168,7 @@ export function SplitBillModal({
                   <span className="text-xs text-[#6B7280]">${comandaItemTotal(it).toFixed(2)}</span>
                   <select value={assignment[it.id] ?? ''} disabled={locked} onChange={e => setAssignment(a => ({ ...a, [it.id]: Number(e.target.value) }))}
                     aria-label={`Asignar ${it.name} a una cuenta`}
-                    className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white outline-none focus:ring-2 focus:ring-[#0B3B68]">
+                    className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white outline-none focus:ring-2 focus:ring-[#0040FC]">
                     <option value="">—</option>
                     {Array.from({ length: parts }).map((_, i) => <option key={i} value={i}>Cuenta {i + 1}</option>)}
                   </select>
@@ -192,13 +192,13 @@ export function SplitBillModal({
               const disabled = !canPayItemMode || (partTotals[i] ?? 0) <= 0;
               const isPaid = !!paid[i];
               return (
-                <div key={i} className={`flex items-center justify-between p-3 rounded-xl border transition-colors ${isPaid ? 'border-[#7AC142]/40 bg-[#7AC142]/5' : 'border-gray-200'}`}>
+                <div key={i} className={`flex items-center justify-between p-3 rounded-xl border transition-colors ${isPaid ? 'border-[#16A34A]/40 bg-[#16A34A]/5' : 'border-gray-200'}`}>
                   <div>
                     <p className="font-bold text-[#1F2937]">Cuenta {i + 1}</p>
-                    <p className="text-sm text-[#0B3B68] font-black">${(partTotals[i] ?? 0).toFixed(2)}</p>
+                    <p className="text-sm text-[#0040FC] font-black">${(partTotals[i] ?? 0).toFixed(2)}</p>
                   </div>
                   {isPaid ? (
-                    <span className="flex items-center gap-1 text-[#4f7d24] font-bold text-sm"><Check size={16} /> Pagada</span>
+                    <span className="flex items-center gap-1 text-[#166534] font-bold text-sm"><Check size={16} /> Pagada</span>
                   ) : (
                     <Button size="sm" disabled={disabled} onClick={() => setPayingPart(i)} icon={<CreditCard size={16} />}>
                       Cobrar
@@ -209,7 +209,7 @@ export function SplitBillModal({
             })}
           </div>
 
-          {allPaid && <p className="text-center text-[#4f7d24] font-bold">Todas las cuentas pagadas ✓</p>}
+          {allPaid && <p className="text-center text-[#166534] font-bold">Todas las cuentas pagadas ✓</p>}
         </div>
       </Modal>
 

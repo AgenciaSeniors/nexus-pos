@@ -99,7 +99,7 @@ export function RestaurantAdmin() {
   return (
     <div className="space-y-6">
       {/* Áreas */}
-      <SectionCard title="Áreas" icon={<MapPin size={18} className="text-[#0B3B68]" />}
+      <SectionCard title="Áreas" icon={<MapPin size={18} className="text-[#0040FC]" />}
         subtitle="Zonas de tu local (salón, terraza, barra…).">
         <div className="flex flex-col sm:flex-row gap-2 mb-4">
           <Input value={areaName} onChange={e => setAreaName(e.target.value)} placeholder="Ej. Salón, Terraza"
@@ -128,7 +128,7 @@ export function RestaurantAdmin() {
       </SectionCard>
 
       {/* Mesas */}
-      <SectionCard title="Mesas" icon={<UtensilsCrossed size={18} className="text-[#0B3B68]" />}
+      <SectionCard title="Mesas" icon={<UtensilsCrossed size={18} className="text-[#0040FC]" />}
         subtitle="Cada mesa abre una comanda independiente.">
         <div className="flex flex-col sm:flex-row gap-2 mb-4">
           <Input value={tableName} onChange={e => setTableName(e.target.value)} placeholder="Ej. Mesa 1"

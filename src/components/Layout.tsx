@@ -290,7 +290,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
     if (failedCount > 0) {
       return { className: "bg-orange-50 text-orange-500 ring-1 ring-orange-200", icon: <AlertCircle size={20} />, title: `${failedCount} elemento(s) con error — toca para reintentar` };
     }
-    return { className: "bg-[#7AC142]/10 text-[#7AC142] ring-1 ring-[#7AC142]/30 hover:bg-[#7AC142]/20", icon: <CheckCircle2 size={20} />, title: "Sistema actualizado y seguro" + lastSyncLabel };
+    return { className: "bg-white/10 text-[#4ADE80] ring-1 ring-[#4ADE80]/40 hover:bg-white/20", icon: <CheckCircle2 size={20} />, title: "Sistema actualizado y seguro" + lastSyncLabel };
   };
 
   const buttonState = getButtonState();
@@ -299,10 +299,10 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
     <div className="flex h-screen w-full bg-[#F3F4F6] overflow-hidden font-sans text-[#1F2937]">
       
       {/* SIDEBAR DESKTOP */}
-      <aside className={`hidden md:flex flex-col items-center py-6 z-20 shadow-xl transition-all bg-[#0B3B68] text-white duration-300 ${isCashier ? 'w-20' : 'w-24'}`}>
+      <aside className={`hidden md:flex flex-col items-center py-6 z-20 shadow-xl transition-all bg-[#0040FC] text-white duration-300 ${isCashier ? 'w-20' : 'w-24'}`}>
         
         {/* ✅ LOGO PRINCIPAL */}
-        <div className="mb-6 p-1.5 bg-white rounded-2xl shadow-lg flex items-center justify-center w-14 h-14 overflow-hidden border-2 border-[#7AC142]/30">
+        <div className="mb-6 p-1.5 bg-white rounded-2xl shadow-lg flex items-center justify-center w-14 h-14 overflow-hidden border-2 border-white/30">
           <img 
               src={logo} 
               alt="Logo" 
@@ -311,18 +311,18 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
         </div>
         
         <div className="mb-8 text-center px-1 w-full relative">
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-1 font-bold text-sm shadow-lg transition-colors border-2 border-[#7AC142] ${isAdmin ? 'bg-[#7AC142] text-[#0B3B68]' : 'bg-white/10 text-white'}`}>
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-1 font-bold text-sm shadow-lg transition-colors border-2 border-white ${isAdmin ? 'bg-white text-[#0040FC]' : 'bg-white/10 text-white'}`}>
             {currentStaff?.name.substring(0, 2).toUpperCase() || 'BT'}
           </div>
           {!isCashier && (
-             <p className="text-[10px] font-bold text-[#7AC142] truncate w-full px-1 uppercase tracking-wider opacity-90">
+             <p className="text-[10px] font-bold text-white truncate w-full px-1 uppercase tracking-wider opacity-90">
                {currentStaff?.name?.split(' ')[0]}
              </p>
           )}
           {multipleStaff && onChangeStaff && (
             <button
               onClick={onChangeStaff}
-              className="mt-1 mx-auto flex items-center justify-center gap-1 text-[9px] font-bold text-white/50 hover:text-[#7AC142] transition-colors uppercase tracking-wide"
+              className="mt-1 mx-auto flex items-center justify-center gap-1 text-[9px] font-bold text-white/60 hover:text-white transition-colors uppercase tracking-wide"
               title="Cambiar vendedor"
             >
               <ArrowLeftRight size={10}/> cambiar
@@ -337,7 +337,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
             const showConflictBadge = item.path === '/finanzas' && conflictCount > 0;
             const showUpdateBadge = item.path === '/configuracion' && !!updateVersion;
             return (
-              <Link key={item.path} to={item.path} className={`flex flex-col items-center justify-center p-3 rounded-xl transition-all duration-200 group relative ${isActive ? 'bg-[#7AC142] text-[#0B3B68] shadow-lg shadow-[#7AC142]/20 font-bold translate-x-1' : 'text-gray-300 hover:text-white hover:bg-white/10'}`}>
+              <Link key={item.path} to={item.path} className={`flex flex-col items-center justify-center p-3 rounded-xl transition-all duration-200 group relative ${isActive ? 'bg-white text-[#0040FC] shadow-lg shadow-black/20 font-bold translate-x-1' : 'text-gray-300 hover:text-white hover:bg-white/10'}`}>
                 {item.icon}
                 {showInventoryBadge && (
                   <span className="absolute top-1.5 right-1.5 flex h-2.5 w-2.5">
@@ -353,8 +353,8 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
                 )}
                 {showUpdateBadge && (
                   <span className="absolute top-1.5 right-1.5 flex h-2.5 w-2.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#7AC142] opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#7AC142] border border-white/50"></span>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4ADE80] opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#4ADE80] border border-white/50"></span>
                   </span>
                 )}
                 <span className="absolute left-full ml-4 px-3 py-2 bg-[#1F2937] text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 shadow-xl font-bold uppercase tracking-wide border border-gray-700">
@@ -366,13 +366,13 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
         </nav>
 
         <div className="shrink-0 flex flex-col gap-3 w-full px-3 mt-4 border-t border-white/10 pt-6">
-            <button onClick={() => setIsBillCounterOpen(true)} className="p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group border bg-white/5 hover:bg-[#7AC142]/15 text-gray-300 hover:text-[#7AC142] border-white/5" title="Contador de Efectivo">
+            <button onClick={() => setIsBillCounterOpen(true)} className="p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group border bg-white/5 hover:bg-white/15 text-gray-200 hover:text-white border-white/10" title="Contador de Efectivo">
                 <Calculator size={20} />
                 <span className="absolute left-full ml-4 px-3 py-2 bg-[#1F2937] text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 shadow-xl font-bold uppercase tracking-wide border border-gray-700">
                     Contador de Efectivo
                 </span>
             </button>
-            <button onClick={handleManualSync} disabled={!isOnline || isSyncing} className={`p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group border ${!isOnline ? 'bg-red-500/20 text-red-400 border-red-500/50' : pendingCount > 0 ? 'bg-white/5 hover:bg-white/10 text-[#F59E0B] border-[#F59E0B]/50' : failedCount > 0 ? 'bg-white/5 hover:bg-white/10 text-orange-400 border-orange-400/50' : 'bg-white/5 hover:bg-white/10 text-[#7AC142] border-white/5'}`} title={!isOnline ? 'Sin conexión' : buttonState.title}>
+            <button onClick={handleManualSync} disabled={!isOnline || isSyncing} className={`p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group border ${!isOnline ? 'bg-red-500/20 text-red-400 border-red-500/50' : pendingCount > 0 ? 'bg-white/5 hover:bg-white/10 text-[#F59E0B] border-[#F59E0B]/50' : failedCount > 0 ? 'bg-white/5 hover:bg-white/10 text-orange-400 border-orange-400/50' : 'bg-white/5 hover:bg-white/10 text-[#4ADE80] border-white/10'}`} title={!isOnline ? 'Sin conexión' : buttonState.title}>
                 {!isOnline ? <WifiOff size={20} /> : buttonState.icon}
                 {(pendingCount > 0 || failedCount > 0) && (
                     <span className="absolute top-2 right-2 flex h-2.5 w-2.5">
@@ -390,10 +390,10 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
       {/* HEADER MÓVIL */}
       <div className="flex-1 flex flex-col min-w-0 relative">
         <header
-          className="bg-[#0B3B68] text-white border-b border-[#0B3B68] px-4 pb-3 flex justify-between items-center md:hidden z-10 shadow-lg sticky top-0"
+          className="bg-[#0040FC] text-white border-b border-[#0040FC] px-4 pb-3 flex justify-between items-center md:hidden z-10 shadow-lg sticky top-0"
           style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
         >
-            <button onClick={() => setIsMobileMenuOpen(true)} className="text-white hover:text-[#7AC142] transition-colors">
+            <button onClick={() => setIsMobileMenuOpen(true)} className="text-white hover:text-white/80 transition-colors">
                 <Menu size={26} />
             </button>
             
@@ -406,7 +406,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
             </div>
 
             <div className="flex items-center gap-3">
-                <button onClick={handleManualSync} disabled={!isOnline || isSyncing} className={`flex items-center justify-center w-9 h-9 rounded-full transition-all ${!isOnline ? 'bg-red-500 text-white' : isSyncing || pendingCount > 0 ? 'bg-[#F59E0B] text-[#0B3B68] animate-pulse' : 'bg-[#7AC142] text-[#0B3B68]'}`}>
+                <button onClick={handleManualSync} disabled={!isOnline || isSyncing} className={`flex items-center justify-center w-9 h-9 rounded-full transition-all ${!isOnline ? 'bg-red-500 text-white' : isSyncing || pendingCount > 0 ? 'bg-[#F59E0B] text-[#0040FC] animate-pulse' : 'bg-white text-[#0040FC]'}`}>
                     {!isOnline ? <WifiOff size={18}/> : isSyncing ? <RefreshCw size={18} className="animate-spin"/> : pendingCount > 0 ? <Cloud size={18}/> : <CheckCircle2 size={18}/>}
                 </button>
             </div>
@@ -518,9 +518,9 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
 
         {/* Banner discreto de actualización disponible */}
         {updateVersion && !updateDismissed && (
-          <div className="bg-[#0B3B68]/90 backdrop-blur-sm text-white px-4 py-2 flex items-center justify-between gap-3 z-20 animate-in slide-in-from-top duration-300">
+          <div className="bg-[#0040FC]/90 backdrop-blur-sm text-white px-4 py-2 flex items-center justify-between gap-3 z-20 animate-in slide-in-from-top duration-300">
             <div className="flex items-center gap-2 min-w-0">
-              <span className="flex-shrink-0 w-2 h-2 rounded-full bg-[#7AC142] shadow-[0_0_6px_#7AC142]"></span>
+              <span className="flex-shrink-0 w-2 h-2 rounded-full bg-[#4ADE80] shadow-[0_0_6px_#4ADE80]"></span>
               <span className="text-xs font-medium truncate">
                 Nueva versión <strong>v{updateVersion}</strong> disponible
               </span>
@@ -528,7 +528,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
             <div className="flex items-center gap-2 flex-shrink-0">
               <Link
                 to="/configuracion"
-                className="text-xs font-bold text-[#7AC142] hover:text-[#7AC142]/80 transition-colors whitespace-nowrap"
+                className="text-xs font-bold text-white underline underline-offset-2 hover:text-white/80 transition-colors whitespace-nowrap"
               >
                 Ver en Configuración →
               </Link>
@@ -555,7 +555,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
               const isActive = location.pathname === item.path;
               const showInventoryBadge = item.path === '/inventario' && inventoryAlertCount > 0;
               return (
-                <Link key={item.path} to={item.path} className={`flex-1 p-2 rounded-xl flex flex-col items-center transition-all duration-200 relative ${isActive ? 'text-[#0B3B68] bg-[#0B3B68]/5 transform -translate-y-1' : 'text-gray-400 hover:text-[#0B3B68]'}`}>
+                <Link key={item.path} to={item.path} className={`flex-1 p-2 rounded-xl flex flex-col items-center transition-all duration-200 relative ${isActive ? 'text-[#0040FC] bg-[#0040FC]/5 transform -translate-y-1' : 'text-gray-400 hover:text-[#0040FC]'}`}>
                     <div className={isActive ? 'drop-shadow-sm' : ''}>{item.icon}</div>
                     {showInventoryBadge && (
                       <span className="absolute top-1 right-[calc(50%-12px)] flex h-2 w-2">
@@ -571,11 +571,11 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
 
         {isMobileMenuOpen && (
             <div className="fixed inset-0 z-50 md:hidden flex justify-end">
-                <div className="absolute inset-0 bg-[#0B3B68]/90 backdrop-blur-sm animate-in fade-in" onClick={() => setIsMobileMenuOpen(false)} />
+                <div className="absolute inset-0 bg-[#0040FC]/90 backdrop-blur-sm animate-in fade-in" onClick={() => setIsMobileMenuOpen(false)} />
                 
                 <div className="relative bg-[#F3F4F6] w-4/5 max-w-xs h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 border-l border-gray-200">
                     <div
-                      className="px-6 pb-6 bg-[#0B3B68] text-white"
+                      className="px-6 pb-6 bg-[#0040FC] text-white"
                       style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 1.5rem)' }}
                     >
                         <div className="flex justify-between items-center mb-6">
@@ -586,7 +586,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
                            <button onClick={() => setIsMobileMenuOpen(false)} className="bg-white/10 p-2 rounded-full hover:bg-white/20 text-white"><X size={20}/></button>
                         </div>
                         <h2 className="text-xl font-bold text-white mb-1">Menú Principal</h2>
-                        <p className="text-[#7AC142] text-sm font-medium">Hola, {currentStaff?.name.split(' ')[0]}</p>
+                        <p className="text-white/80 text-sm font-medium">Hola, {currentStaff?.name.split(' ')[0]}</p>
                     </div>
                     
                     <div className="flex-1 overflow-y-auto p-4 space-y-2">
@@ -594,12 +594,12 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
                              const isActive = location.pathname === item.path;
                              const showUpdateDot = item.path === '/configuracion' && !!updateVersion;
                              return (
-                                <Link key={item.path} to={item.path} onClick={() => setIsMobileMenuOpen(false)} className={`flex items-center gap-4 p-4 rounded-xl transition-all relative ${isActive ? 'bg-[#0B3B68] text-white shadow-md font-bold' : 'text-[#1F2937] hover:bg-gray-100'}`}>
-                                    <span className={isActive ? 'text-[#7AC142]' : 'text-[#0B3B68]'}>{item.icon}</span>
+                                <Link key={item.path} to={item.path} onClick={() => setIsMobileMenuOpen(false)} className={`flex items-center gap-4 p-4 rounded-xl transition-all relative ${isActive ? 'bg-[#0040FC] text-white shadow-md font-bold' : 'text-[#1F2937] hover:bg-gray-100'}`}>
+                                    <span className={isActive ? 'text-white' : 'text-[#0040FC]'}>{item.icon}</span>
                                     <span className="flex-1">{item.label}</span>
                                     {showUpdateDot && (
-                                      <span className="flex items-center gap-1.5 text-[10px] font-bold text-[#7AC142] bg-[#7AC142]/10 px-2 py-0.5 rounded-full border border-[#7AC142]/30">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-[#7AC142]"></span>
+                                      <span className="flex items-center gap-1.5 text-[10px] font-bold text-[#15803D] bg-[#16A34A]/10 px-2 py-0.5 rounded-full border border-[#16A34A]/30">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-[#16A34A]"></span>
                                         v{updateVersion}
                                       </span>
                                     )}
@@ -611,14 +611,14 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
                     <div className="p-6 border-t border-gray-200 bg-white space-y-3">
                         <button
                           onClick={() => { setIsMobileMenuOpen(false); setIsBillCounterOpen(true); }}
-                          className="flex items-center justify-center gap-3 text-[#0B3B68] w-full p-4 hover:bg-[#7AC142]/10 rounded-xl font-bold transition-colors border border-[#7AC142]/30 bg-[#7AC142]/5"
+                          className="flex items-center justify-center gap-3 text-[#0040FC] w-full p-4 hover:bg-[#16A34A]/10 rounded-xl font-bold transition-colors border border-[#16A34A]/30 bg-[#16A34A]/5"
                         >
-                          <Calculator size={20} className="text-[#7AC142]" /> Contador de Efectivo
+                          <Calculator size={20} className="text-[#15803D]" /> Contador de Efectivo
                         </button>
                         {multipleStaff && onChangeStaff && (
                           <button
                             onClick={() => { setIsMobileMenuOpen(false); onChangeStaff(); }}
-                            className="flex items-center justify-center gap-3 text-[#0B3B68] w-full p-4 hover:bg-[#0B3B68]/5 rounded-xl font-bold transition-colors border border-[#0B3B68]/20"
+                            className="flex items-center justify-center gap-3 text-[#0040FC] w-full p-4 hover:bg-[#0040FC]/5 rounded-xl font-bold transition-colors border border-[#0040FC]/20"
                           >
                             <ArrowLeftRight size={20} /> Cambiar Vendedor
                           </button>
@@ -635,7 +635,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
       {/* Modal de bienvenida → guía rápida (solo primera vez) */}
       {showGuidePrompt && (
         <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm z-50 animate-in slide-in-from-bottom-4 fade-in duration-300">
-          <div className="bg-[#0B3B68] text-white rounded-2xl shadow-2xl p-4 flex items-center gap-3">
+          <div className="bg-[#0040FC] text-white rounded-2xl shadow-2xl p-4 flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center flex-shrink-0">
               <HelpCircle size={22} className="text-white" />
             </div>
@@ -652,7 +652,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
                   setShowGuidePrompt(false);
                   navigate('/configuracion?tab=help');
                 }}
-                className="bg-[#7AC142] text-[#0B3B68] text-xs font-black px-3 py-2 rounded-xl hover:bg-[#7AC142]/90 transition-colors whitespace-nowrap"
+                className="bg-white text-[#0040FC] text-xs font-black px-3 py-2 rounded-xl hover:bg-white/90 transition-colors whitespace-nowrap"
               >
                 Ver guía
               </button>

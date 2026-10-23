@@ -32,10 +32,10 @@ export function BillCounter({ isOpen, onClose, onApply, applyLabel = 'Usar este 
   // Esto puede pasar si la sesión aún no terminó de cargar.
   if (isOpen && !businessId) {
     return (
-      <div className="fixed inset-0 bg-[#0B3B68]/80 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+      <div className="fixed inset-0 bg-[#0040FC]/80 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
         <div className="bg-white rounded-2xl p-6 max-w-xs text-center shadow-2xl">
           <p className="text-sm text-slate-600 mb-4">El contador necesita que tu sesión esté completamente cargada. Inténtalo en unos segundos.</p>
-          <button onClick={onClose} className="px-4 py-2 bg-[#0B3B68] text-white font-bold rounded-xl text-sm">Entendido</button>
+          <button onClick={onClose} className="px-4 py-2 bg-[#0040FC] text-white font-bold rounded-xl text-sm">Entendido</button>
         </div>
       </div>
     );
@@ -129,14 +129,14 @@ export function BillCounter({ isOpen, onClose, onApply, applyLabel = 'Usar este 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-[#0B3B68]/80 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 bg-[#0040FC]/80 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white w-full sm:max-w-md sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh] sm:max-h-[90vh] animate-in slide-in-from-bottom sm:zoom-in-95 duration-300">
 
         {/* HEADER */}
-        <div className="bg-[#0B3B68] px-5 py-4 text-white flex justify-between items-center flex-shrink-0">
+        <div className="bg-[#0040FC] px-5 py-4 text-white flex justify-between items-center flex-shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-[#7AC142]/20 flex items-center justify-center flex-shrink-0">
-              <Calculator size={18} className="text-[#7AC142]" />
+            <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center flex-shrink-0">
+              <Calculator size={18} className="text-white" />
             </div>
             <div className="min-w-0">
               <h2 className="text-base font-black truncate">Contador de Efectivo</h2>
@@ -153,7 +153,7 @@ export function BillCounter({ isOpen, onClose, onApply, applyLabel = 'Usar este 
         </div>
 
         {/* TOTAL GRANDE STICKY */}
-        <div className="bg-gradient-to-r from-[#0B3B68] to-[#092b4d] text-white px-5 py-4 flex items-center justify-between flex-shrink-0 border-b-4 border-[#7AC142]">
+        <div className="bg-gradient-to-r from-[#0040FC] to-[#0030CC] text-white px-5 py-4 flex items-center justify-between flex-shrink-0 border-b-4 border-[#16A34A]">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-white/60">Total contado</p>
             <p className="text-3xl font-black tracking-tight">{formatMoney(grandTotal)}</p>
@@ -169,7 +169,7 @@ export function BillCounter({ isOpen, onClose, onApply, applyLabel = 'Usar este 
             className="w-10 h-10 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             title="Copiar total"
           >
-            {copied ? <CheckCircle2 size={18} className="text-[#7AC142]" /> : <Copy size={16} />}
+            {copied ? <CheckCircle2 size={18} className="text-[#15803D]" /> : <Copy size={16} />}
           </button>
         </div>
 
@@ -179,10 +179,10 @@ export function BillCounter({ isOpen, onClose, onApply, applyLabel = 'Usar este 
           {/* BILLETES */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-xs font-black uppercase tracking-wider text-[#0B3B68] flex items-center gap-1.5">
+              <h3 className="text-xs font-black uppercase tracking-wider text-[#0040FC] flex items-center gap-1.5">
                 <Banknote size={14} /> Billetes
               </h3>
-              <span className="text-xs font-bold text-[#0B3B68]">{formatMoney(billsTotal)}</span>
+              <span className="text-xs font-bold text-[#0040FC]">{formatMoney(billsTotal)}</span>
             </div>
             <div className="space-y-1.5">
               {BILLS.map(denom => {
@@ -191,7 +191,7 @@ export function BillCounter({ isOpen, onClose, onApply, applyLabel = 'Usar este 
                 const subtotal = qty * denom;
                 return (
                   <div key={key} className={`flex items-center gap-2 p-2.5 rounded-xl border transition-colors ${qty > 0 ? 'bg-blue-50/50 border-blue-100' : 'bg-gray-50/60 border-gray-100'}`}>
-                    <div className={`w-16 text-center px-2 py-1.5 rounded-lg font-black text-xs flex-shrink-0 ${denom >= 1000 ? 'bg-[#0B3B68] text-white' : denom >= 100 ? 'bg-blue-100 text-blue-800' : 'bg-gray-200 text-gray-700'}`}>
+                    <div className={`w-16 text-center px-2 py-1.5 rounded-lg font-black text-xs flex-shrink-0 ${denom >= 1000 ? 'bg-[#0040FC] text-white' : denom >= 100 ? 'bg-blue-100 text-blue-800' : 'bg-gray-200 text-gray-700'}`}>
                       ${formatNumber(denom)}
                     </div>
                     <span className="text-xl font-light text-gray-400 flex-shrink-0">×</span>
@@ -202,10 +202,10 @@ export function BillCounter({ isOpen, onClose, onApply, applyLabel = 'Usar este 
                       value={counts[key] || ''}
                       onChange={e => updateCount(key, e.target.value)}
                       placeholder="0"
-                      className="w-16 text-center px-2 py-1.5 border border-gray-200 rounded-lg font-bold text-sm focus:border-[#0B3B68] focus:ring-2 focus:ring-[#0B3B68]/10 outline-none transition-all bg-white"
+                      className="w-16 text-center px-2 py-1.5 border border-gray-200 rounded-lg font-bold text-sm focus:border-[#0040FC] focus:ring-2 focus:ring-[#0040FC]/10 outline-none transition-all bg-white"
                     />
                     <div className="flex-1 text-right">
-                      <span className={`font-bold text-sm font-mono ${qty > 0 ? 'text-[#0B3B68]' : 'text-gray-300'}`}>
+                      <span className={`font-bold text-sm font-mono ${qty > 0 ? 'text-[#0040FC]' : 'text-gray-300'}`}>
                         {formatMoney(subtotal)}
                       </span>
                     </div>
@@ -218,10 +218,10 @@ export function BillCounter({ isOpen, onClose, onApply, applyLabel = 'Usar este 
           {/* MONEDAS */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-xs font-black uppercase tracking-wider text-[#0B3B68] flex items-center gap-1.5">
+              <h3 className="text-xs font-black uppercase tracking-wider text-[#0040FC] flex items-center gap-1.5">
                 <Coins size={14} /> Monedas
               </h3>
-              <span className="text-xs font-bold text-[#0B3B68]">{formatMoney(coinsTotal)}</span>
+              <span className="text-xs font-bold text-[#0040FC]">{formatMoney(coinsTotal)}</span>
             </div>
             <div className="space-y-1.5">
               {COINS.map(denom => {
@@ -268,14 +268,14 @@ export function BillCounter({ isOpen, onClose, onApply, applyLabel = 'Usar este 
             <button
               onClick={handleApply}
               disabled={grandTotal === 0}
-              className="flex-1 px-3 py-2.5 bg-[#7AC142] text-[#0B3B68] hover:bg-[#7AC142]/90 rounded-xl text-sm font-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-md shadow-[#7AC142]/20"
+              className="flex-1 px-3 py-2.5 bg-[#0040FC] text-white hover:bg-[#16A34A]/90 rounded-xl text-sm font-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-md shadow-[#16A34A]/20"
             >
               {applyLabel}
             </button>
           ) : (
             <button
               onClick={onClose}
-              className="flex-1 px-3 py-2.5 bg-[#0B3B68] text-white hover:bg-[#092b4d] rounded-xl text-sm font-black transition-colors"
+              className="flex-1 px-3 py-2.5 bg-[#0040FC] text-white hover:bg-[#0030CC] rounded-xl text-sm font-black transition-colors"
             >
               Cerrar
             </button>

@@ -27,7 +27,7 @@ export function Stepper({ value, onDecrement, onIncrement, min, max, size = 'md'
         onClick={onDecrement}
         disabled={!canDec}
         aria-label="Disminuir"
-        className={cn(btn, 'flex items-center justify-center rounded-lg bg-white border border-gray-200 text-[#0B3B68] transition-colors hover:bg-gray-50 active:scale-95 disabled:opacity-40 disabled:pointer-events-none')}
+        className={cn(btn, 'flex items-center justify-center rounded-lg bg-white border border-gray-200 text-[#0040FC] transition-colors hover:bg-gray-50 active:scale-95 disabled:opacity-40 disabled:pointer-events-none')}
       >
         <Minus size={size === 'sm' ? 14 : 16} />
       </button>
@@ -39,7 +39,7 @@ export function Stepper({ value, onDecrement, onIncrement, min, max, size = 'md'
         onClick={onIncrement}
         disabled={!canInc}
         aria-label="Aumentar"
-        className={cn(btn, 'flex items-center justify-center rounded-lg bg-white border border-gray-200 text-[#0B3B68] transition-colors hover:bg-gray-50 active:scale-95 disabled:opacity-40 disabled:pointer-events-none')}
+        className={cn(btn, 'flex items-center justify-center rounded-lg bg-white border border-gray-200 text-[#0040FC] transition-colors hover:bg-gray-50 active:scale-95 disabled:opacity-40 disabled:pointer-events-none')}
       >
         <Plus size={size === 'sm' ? 14 : 16} />
       </button>

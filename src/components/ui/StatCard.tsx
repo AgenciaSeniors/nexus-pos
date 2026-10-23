@@ -34,7 +34,7 @@ export function StatCard({ label, value, icon, tone = 'default', className }: St
         <p className={cn('text-[10px] font-bold uppercase tracking-wider', featured ? 'text-white/70' : 'text-[#6B7280]')}>
           {label}
         </p>
-        {icon && <span className={cn(featured ? 'text-white/80' : 'text-[#0B3B68]')}>{icon}</span>}
+        {icon && <span className={cn(featured ? 'text-white/80' : 'text-[#0040FC]')}>{icon}</span>}
       </div>
       <p className={cn('relative font-black mt-1 text-2xl', !featured && 'text-[#1F2937]')}>{value}</p>
     </div>

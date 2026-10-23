@@ -37,7 +37,7 @@ export default defineConfig({
         name: 'Senio',
         short_name: 'Senio',
         description: 'Sistema de Punto de Venta Offline-First',
-        theme_color: '#0f172a',
+        theme_color: '#0040FC',
         background_color: '#f8fafc',
         display: 'standalone', // Esto oculta la barra de URL del navegador
         orientation: 'landscape', // Fuerza horizontal (ideal para POS)

@@ -41,7 +41,7 @@ export function SegmentedControl<T extends string | number>({
               'flex items-center justify-center gap-1.5 rounded-lg font-bold transition-all duration-200',
               fullWidth && 'flex-1',
               size === 'sm' ? 'px-3 py-1.5 text-sm' : 'px-4 py-2',
-              active ? 'bg-white text-[#0B3B68] shadow-card' : 'text-[#6B7280] hover:text-[#1F2937]',
+              active ? 'bg-white text-[#0040FC] shadow-card' : 'text-[#6B7280] hover:text-[#1F2937]',
             )}
           >
             {o.icon}

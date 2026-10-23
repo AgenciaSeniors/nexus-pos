@@ -18,8 +18,8 @@ const FIRST_PAGE = 25;
 const VERDICT_STYLE: Record<ShortfallVerdict, string> = {
   no_data: 'bg-gray-100 text-[#1F2937] border-gray-200',
   no_cash: 'bg-blue-50 text-blue-900 border-blue-200',
-  all_ok: 'bg-[#7AC142]/15 text-[#3d6b1a] border-[#7AC142]/40',
-  explained: 'bg-[#7AC142]/15 text-[#3d6b1a] border-[#7AC142]/40',
+  all_ok: 'bg-[#16A34A]/15 text-[#166534] border-[#16A34A]/40',
+  explained: 'bg-[#16A34A]/15 text-[#166534] border-[#16A34A]/40',
   partial: 'bg-[#F59E0B]/15 text-[#92400E] border-[#F59E0B]/40',
   unexplained: 'bg-[#EF4444]/10 text-[#991B1B] border-[#EF4444]/30',
   goods_lost: 'bg-[#F59E0B]/15 text-[#92400E] border-[#F59E0B]/40',
@@ -59,11 +59,11 @@ export function ShortfallFinder({ rows, cashDifference, dateLabel, fmt, onClose 
     : cashDifference > 0 ? `Sobra ${fmt(cashDifference)}` : `Falta ${fmt(Math.abs(cashDifference))}`;
 
   return (
-    <div className="fixed inset-0 bg-[#0B3B68]/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm" data-testid="shortfall-finder">
+    <div className="fixed inset-0 bg-[#0040FC]/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm" data-testid="shortfall-finder">
       <div className="bg-white w-full sm:max-w-2xl max-h-[94vh] rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col overflow-hidden">
         <div className="p-4 border-b border-gray-100 bg-[#F3F4F6] flex items-start justify-between gap-3 flex-shrink-0">
           <div>
-            <h3 className="font-black text-lg text-[#0B3B68] flex items-center gap-2"><Search size={18} /> Buscar el faltante</h3>
+            <h3 className="font-black text-lg text-[#0040FC] flex items-center gap-2"><Search size={18} /> Buscar el faltante</h3>
             <p className="text-xs text-[#6B7280] mt-0.5">{dateLabel} · <span className="font-bold text-[#1F2937]" data-testid="shortfall-cash">{cashLabel}</span></p>
           </div>
           <button onClick={onClose} aria-label="Cerrar"><X className="text-gray-400 hover:text-gray-600" /></button>
@@ -86,7 +86,7 @@ export function ShortfallFinder({ rows, cashDifference, dateLabel, fmt, onClose 
         <div className="px-4 pb-2 flex-shrink-0">
           <input
             type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar producto..."
-            className="w-full p-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0B3B68]"
+            className="w-full p-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0040FC]"
           />
           <p className="text-[10px] text-[#6B7280] mt-1.5">
             Cuenta lo que hay ahora y escríbelo. Empieza por los de arriba: son los que más dinero movieron. Deja en blanco lo que no cuentes.
@@ -98,7 +98,7 @@ export function ShortfallFinder({ rows, cashDifference, dateLabel, fmt, onClose 
           <div className="space-y-2">
             {visible.map(r => {
               const line = summary.lines.find(l => l.product_id === r.product_id)!;
-              const tone = line.value_diff === null ? '' : line.value_diff === 0 ? 'text-[#3d6b1a]' : line.value_diff < 0 ? 'text-[#B91C1C]' : 'text-[#B45309]';
+              const tone = line.value_diff === null ? '' : line.value_diff === 0 ? 'text-[#166534]' : line.value_diff < 0 ? 'text-[#B91C1C]' : 'text-[#B45309]';
               return (
                 <div key={r.product_id} className="border border-gray-200 rounded-xl p-2.5" data-testid="shortfall-row">
                   <div className="flex justify-between items-start gap-2">
@@ -107,20 +107,20 @@ export function ShortfallFinder({ rows, cashDifference, dateLabel, fmt, onClose 
                   </div>
                   <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
                     <label className="flex items-center gap-1.5 text-[11px] text-[#6B7280]">
-                      Vitrina (esperado <b className="text-[#0B3B68]">{qty(r.end_display)}</b>)
+                      Vitrina (esperado <b className="text-[#0040FC]">{qty(r.end_display)}</b>)
                       <input
                         type="number" inputMode="decimal" min="0" step="any" value={counts[r.product_id]?.display ?? ''}
                         onChange={e => set(r.product_id, 'display', e.target.value)} aria-label={`Vitrina de ${r.name}`}
-                        className="w-20 p-1.5 border border-gray-300 rounded-lg text-sm font-bold text-[#1F2937] outline-none focus:ring-2 focus:ring-[#0B3B68]"
+                        className="w-20 p-1.5 border border-gray-300 rounded-lg text-sm font-bold text-[#1F2937] outline-none focus:ring-2 focus:ring-[#0040FC]"
                       />
                     </label>
                     {(hasWarehouse && (r.end_warehouse !== 0 || r.start_warehouse !== 0)) && (
                       <label className="flex items-center gap-1.5 text-[11px] text-[#6B7280]">
-                        Almacén (esperado <b className="text-[#0B3B68]">{qty(r.end_warehouse)}</b>)
+                        Almacén (esperado <b className="text-[#0040FC]">{qty(r.end_warehouse)}</b>)
                         <input
                           type="number" inputMode="decimal" min="0" step="any" value={counts[r.product_id]?.warehouse ?? ''}
                           onChange={e => set(r.product_id, 'warehouse', e.target.value)} aria-label={`Almacén de ${r.name}`}
-                          className="w-20 p-1.5 border border-gray-300 rounded-lg text-sm font-bold text-[#1F2937] outline-none focus:ring-2 focus:ring-[#0B3B68]"
+                          className="w-20 p-1.5 border border-gray-300 rounded-lg text-sm font-bold text-[#1F2937] outline-none focus:ring-2 focus:ring-[#0040FC]"
                         />
                       </label>
                     )}
@@ -135,7 +135,7 @@ export function ShortfallFinder({ rows, cashDifference, dateLabel, fmt, onClose 
             })}
           </div>
           {!search && !showAll && filtered.length > FIRST_PAGE && (
-            <button onClick={() => setShowAll(true)} className="mt-3 w-full py-2 text-xs font-bold text-[#0B3B68] border border-[#0B3B68]/30 rounded-xl hover:bg-[#0B3B68]/5">
+            <button onClick={() => setShowAll(true)} className="mt-3 w-full py-2 text-xs font-bold text-[#0040FC] border border-[#0040FC]/30 rounded-xl hover:bg-[#0040FC]/5">
               Mostrar los {filtered.length - FIRST_PAGE} productos restantes
             </button>
           )}

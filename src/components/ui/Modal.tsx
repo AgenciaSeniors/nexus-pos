@@ -60,7 +60,7 @@ export function Modal({
       aria-modal="true"
       aria-label={rest['aria-label'] ?? labelledByTitle}
       onMouseDown={(e) => { if (closeOnBackdrop && e.target === e.currentTarget) onClose(); }}
-      className="fixed inset-0 bg-[#0B3B68]/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 nx-fade-in"
+      className="fixed inset-0 bg-[#0040FC]/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 nx-fade-in"
       style={{ zIndex }}
     >
       <div

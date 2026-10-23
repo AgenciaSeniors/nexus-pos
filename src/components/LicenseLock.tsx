@@ -57,7 +57,7 @@ export function LicenseLock({ state, retrying, onRetry, onLogout }: LicenseLockP
               href={waUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 w-full py-3.5 rounded-xl bg-[#7AC142] text-white font-bold shadow-lg shadow-[#7AC142]/20 active:scale-95 transition-all"
+              className="flex items-center justify-center gap-2 w-full py-3.5 rounded-xl bg-[#0040FC] text-white font-bold shadow-lg shadow-[#0040FC]/20 active:scale-95 transition-all"
             >
               <MessageCircle className="w-5 h-5" />
               {isSuspended ? 'Contactar al administrador' : 'Renovar / Pagar'}
@@ -67,7 +67,7 @@ export function LicenseLock({ state, retrying, onRetry, onLogout }: LicenseLockP
           <button
             onClick={onRetry}
             disabled={retrying}
-            className="flex items-center justify-center gap-2 w-full py-3.5 rounded-xl bg-[#0B3B68] text-white font-bold active:scale-95 transition-all disabled:opacity-60"
+            className="flex items-center justify-center gap-2 w-full py-3.5 rounded-xl bg-[#0040FC] text-white font-bold active:scale-95 transition-all disabled:opacity-60"
           >
             {retrying ? <Loader2 className="w-5 h-5 animate-spin" /> : <RefreshCw className="w-5 h-5" />}
             {isReval ? 'Reintentar' : 'Ya pagué · Reintentar'}
