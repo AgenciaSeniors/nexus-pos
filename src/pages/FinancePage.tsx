@@ -27,6 +27,7 @@ import { pickActiveShift, sortOpenShifts } from '../lib/activeShift';
 import { salesWindow, isWindowCoveredByBackfill } from '../lib/salesWindow';
 import { buildShiftRecaps, buildZReportText, describeDifference } from '../lib/zReport';
 import { buildDailyInventory } from '../lib/dailyInventory';
+import { summarizePriorRefunds, EMPTY_REFUND_SUMMARY } from '../lib/priorRefunds';
 import { DailyInventoryTable } from '../components/DailyInventoryTable';
 import { ShortfallFinder } from '../components/ShortfallFinder';
 import { computeProductProfitability, computeSaleNet } from '../lib/salesStats';
@@ -425,6 +426,29 @@ export function FinancePage() {
     }
   }, [isAdmin, viewMode]);
 
+  // Ventas anuladas o con devoluciones parciales: de ellas salen las devoluciones de
+  // ventas ANTERIORES (ver lib/priorRefunds). Usa el índice [business_id+status], sin
+  // recorrer todas las ventas.
+  const refundCandidates = useLiveQuery(async () => {
+    const bId = localStorage.getItem('nexus_business_id');
+    if (!bId) return EMPTY_ARRAY as Sale[];
+    return await db.sales.where('[business_id+status]').anyOf([bId, 'voided'], [bId, 'partial_refund']).toArray();
+  }, []) || (EMPTY_ARRAY as Sale[]);
+
+  // Devoluciones de ventas de OTRO turno hechas durante este: el dinero sale hoy, pero
+  // esas ventas no cuentan en las transferencias esperadas de este turno. Sin este
+  // ajuste, devolver por transferencia una venta de ayer dejaba una diferencia falsa
+  // al cuadrar. (El efectivo ya sale por su movimiento de caja.)
+  const priorTransferRefund = useMemo(() => {
+    if (!activeShift) return 0;
+    const fromMs = new Date(activeShift.opened_at).getTime();
+    if (isNaN(fromMs)) return 0;
+    return summarizePriorRefunds(refundCandidates, {
+      fromMs, toMs: Date.now() + 86400000,
+      isPrior: (s) => s.shift_id !== activeShift.id,
+    }).transfer;
+  }, [activeShift, refundCandidates]);
+
   const shiftStats = useMemo(() => {
     if (!activeShift || !shiftData || !shiftData.sales || !shiftData.movements) return null;
 
@@ -477,8 +501,8 @@ export function FinancePage() {
       return { h: h + ':00', v: shiftHourly[h] || 0 };
     });
 
-    return { startAmount, cashSales, transferSales, totalSales, cashIn, cashOut, expectedCash, staffList, hourlyChart };
-  }, [activeShift, shiftData]);
+    return { startAmount, cashSales, transferSales: Math.round((transferSales - priorTransferRefund) * 100) / 100, priorTransferRefund, totalSales, cashIn, cashOut, expectedCash, staffList, hourlyChart };
+  }, [activeShift, shiftData, priorTransferRefund]);
 
   const productMeta = useMemo(() => {
     const costs = new Map<string, number>();
@@ -505,6 +529,7 @@ export function FinancePage() {
     const periodEnd = effectiveReportMode === 'range'
       ? endOfLocalDay(dateTo).getTime()
       : endOfLocalDay(selectedDate).getTime();
+    const periodStart = new Date((effectiveReportMode === 'range' ? dateFrom : selectedDate) + 'T00:00').getTime();
 
     const salesForDay = effectiveReportMode === 'range'
       ? allSales.filter((sale) => saleMatchesRange(sale.date) && isSaleValidAtTime(sale, periodEnd))
@@ -595,6 +620,21 @@ export function FinancePage() {
     let bestSeller = { name: 'N/A', count: 0 };
     Object.entries(productCounts).forEach(([name, count]) => { if (count > bestSeller.count) bestSeller = { name, count }; });
 
+    // DEVOLUCIONES DE VENTAS ANTERIORES: el reporte de los días pasados no se toca
+    // (inmutable), pero el dinero se devolvió HOY: se descuenta del periodo en que
+    // ocurrió, por forma de pago, y se recupera el costo de lo que volvió al stock.
+    const priorRefunds = isNaN(periodStart)
+      ? EMPTY_REFUND_SUMMARY
+      : summarizePriorRefunds(refundCandidates, {
+          fromMs: periodStart, toMs: periodEnd,
+          isPrior: (s) => new Date(s.date).getTime() < periodStart,
+        });
+    revenue -= priorRefunds.total;
+    cost -= priorRefunds.cost_recovered;
+    paymentBreakdown.efectivo -= priorRefunds.cash;
+    paymentBreakdown.transferencia -= priorRefunds.transfer;
+    paymentBreakdown.tarjeta -= priorRefunds.card;
+
     const profit = revenue - cost;
     const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
     const chartData = Object.entries(hourlyCounts)
@@ -627,8 +667,8 @@ export function FinancePage() {
     });
     const staffList = Object.entries(staffCounts).map(([name, d]) => ({ name, ...d })).sort((a, b) => b.total - a.total);
 
-    return { sales: salesForDay, periodEnd, revenue, profit, cost, margin, chartData, rangeChartData, pieData, bestSeller, topProducts, paymentBreakdown, dailyAvg, daysInRange, staffList };
-  }, [allSales, selectedDate, productMeta, effectiveReportMode, dateFrom, dateTo]);
+    return { sales: salesForDay, periodEnd, priorRefunds, revenue, profit, cost, margin, chartData, rangeChartData, pieData, bestSeller, topProducts, paymentBreakdown, dailyAvg, daysInRange, staffList };
+  }, [allSales, selectedDate, productMeta, effectiveReportMode, dateFrom, dateTo, refundCandidates]);
 
   // Rentabilidad por producto del período seleccionado (ganancia y margen reales,
   // no solo cantidad). Reusa las ventas ya filtradas por `dailyStats`.
@@ -730,10 +770,19 @@ export function FinancePage() {
     localDay: localDateStr,
   }), [businessShifts, dayCashMovements, allStaffRows, selectedDate]);
 
+  // Anuladas del día, separadas según CUÁNDO se anularon (los reportes de un día son
+  // inmutables, ver isSaleValidAtTime):
+  //  - dentro del día: ya no cuentan en el total neto;
+  //  - después: SIGUEN contando en este reporte (al cierre eran válidas); el dinero
+  //    sale de la caja del día en que se anuló, no de este.
   const voidedStats = useMemo(() => {
-    const voided = allSales.filter(sale => sale.status === 'voided' && saleMatchesLocalDate(sale.date, selectedDate));
-    return { count: voided.length, total: voided.reduce((acc, sale) => acc + safeFloat(sale.total), 0) };
-  }, [allSales, selectedDate]);
+    const delDia = allSales.filter(sale => sale.status === 'voided' && saleMatchesLocalDate(sale.date, selectedDate));
+    const sum = (list: Sale[]) => ({ count: list.length, total: list.reduce((acc, sale) => acc + safeFloat(sale.total), 0) });
+    return {
+      within: sum(delDia.filter(sale => !isSaleValidAtTime(sale, dailyStats.periodEnd))),
+      later: sum(delDia.filter(sale => isSaleValidAtTime(sale, dailyStats.periodEnd))),
+    };
+  }, [allSales, selectedDate, dailyStats.periodEnd]);
 
   // ── INVENTARIO DEL DÍA (lo que había, lo que entró, lo vendido y lo que debería
   // quedar) ──  Se reconstruye hacia atrás desde el stock de ahora y los movimientos
@@ -808,8 +857,10 @@ export function FinancePage() {
     cashTotal: closingStats.cashTotal,
     cardTotal: closingStats.cardTotal,
     transferTotal: closingStats.transferTotal,
-    netTotal: closingStats.cashTotal + closingStats.transferTotal + closingStats.cardTotal,
-    voided: voidedStats,
+    netTotal: closingStats.cashTotal + closingStats.transferTotal + closingStats.cardTotal - dailyStats.priorRefunds.total,
+    priorRefunds: dailyStats.priorRefunds.count > 0 ? { count: dailyStats.priorRefunds.count, total: dailyStats.priorRefunds.total } : undefined,
+    voided: voidedStats.within,
+    voidedLater: voidedStats.later,
     shifts: shiftRecaps,
     products: closingStats.productsList,
     staff: closingStats.staffList,
@@ -2527,7 +2578,13 @@ export function FinancePage() {
                      <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Efectivo</span><span className="font-bold">{formatMoney(closingStats.cashTotal)}</span></div>
                      <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Tarjeta</span><span className="font-bold">{formatMoney(closingStats.cardTotal)}</span></div>
                      <div className="flex justify-between p-2 bg-gray-50 rounded print:bg-white border border-transparent print:border-gray-100"><span>Transferencia</span><span className="font-bold">{formatMoney(closingStats.transferTotal)}</span></div>
-                     <div className="border-t-2 border-[#0B3B68] pt-3 flex justify-between text-lg font-black mt-2"><span>TOTAL NETO</span><span>{formatMoney(closingStats.cashTotal + closingStats.transferTotal + closingStats.cardTotal)}</span></div>
+                     {dailyStats.priorRefunds.count > 0 && (
+                       <div className="flex justify-between p-2 bg-amber-50 rounded border border-amber-100 text-amber-800" data-testid="z-devoluciones-anteriores">
+                         <span>Devoluciones de ventas anteriores</span>
+                         <span className="font-bold">−{formatMoney(dailyStats.priorRefunds.total)}</span>
+                       </div>
+                     )}
+                     <div className="border-t-2 border-[#0B3B68] pt-3 flex justify-between text-lg font-black mt-2"><span>TOTAL NETO</span><span>{formatMoney(closingStats.cashTotal + closingStats.transferTotal + closingStats.cardTotal - dailyStats.priorRefunds.total)}</span></div>
                  </div>
              </div>
              <div className="mb-8" data-testid="z-cuadre">
@@ -2572,8 +2629,13 @@ export function FinancePage() {
                      })}
                    </div>
                  )}
-                 {voidedStats.count > 0 && (
-                   <p className="mt-3 text-xs text-[#6B7280]">Anuladas: {voidedStats.count} ({formatMoney(voidedStats.total)}) — no incluidas en el total neto.</p>
+                 {voidedStats.within.count > 0 && (
+                   <p className="mt-3 text-xs text-[#6B7280]">Anuladas: {voidedStats.within.count} ({formatMoney(voidedStats.within.total)}) — no incluidas en el total neto.</p>
+                 )}
+                 {voidedStats.later.count > 0 && (
+                   <p className="mt-3 text-xs text-[#6B7280]" data-testid="z-anuladas-despues">
+                     Anuladas después de este día: {voidedStats.later.count} ({formatMoney(voidedStats.later.total)}) — siguen incluidas en este reporte; la devolución salió de la caja del día en que se anuló.
+                   </p>
                  )}
              </div>
              <div className="mb-8">
@@ -3094,6 +3156,9 @@ export function FinancePage() {
                               <span className="text-xs font-bold text-purple-600 uppercase flex items-center gap-1.5"><ArrowRightLeft size={14}/> Transferencias Esperadas</span>
                               <span className="text-lg font-black text-purple-800">{formatMoney(ss.transferSales)}</span>
                           </div>
+                          {(ss.priorTransferRefund ?? 0) > 0 && (
+                            <p className="text-[10px] text-purple-700 mt-1 font-bold">Incluye −{formatMoney(ss.priorTransferRefund)} por devoluciones de ventas de turnos anteriores.</p>
+                          )}
                           <p className="text-[10px] text-purple-400 mt-1">{shiftData?.sales.filter(s => s.status !== 'voided' && ['transferencia','transfer','mixto'].includes(s.payment_method?.toLowerCase() || '')).length || 0} venta(s) con transferencia (incl. mixtas)</p>
                       </div>
                       <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Monto verificado en transferencias</label>

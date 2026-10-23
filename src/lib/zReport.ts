@@ -115,6 +115,10 @@ export interface ZReportInput {
   transferTotal: number;
   netTotal: number;
   voided: { count: number; total: number };
+  /** Anuladas DESPUÉS de este día: siguen contando en su total neto (reporte inmutable) */
+  voidedLater?: { count: number; total: number };
+  /** Devoluciones de ventas de días anteriores hechas este día: restan del total neto */
+  priorRefunds?: { count: number; total: number };
   shifts: ZShiftRecap[];
   products: { name: string; quantity: number; total: number }[];
   staff: { name: string; count: number; total: number }[];
@@ -147,9 +151,15 @@ export function buildZReportText(input: ZReportInput): string {
   lines.push(`Efectivo: ${fmt(input.cashTotal)}`);
   lines.push(`Tarjeta: ${fmt(input.cardTotal)}`);
   lines.push(`Transferencia: ${fmt(input.transferTotal)}`);
+  if (input.priorRefunds && input.priorRefunds.count > 0) {
+    lines.push(`Devoluciones de ventas anteriores: −${fmt(input.priorRefunds.total)}`);
+  }
   lines.push(`*TOTAL NETO: ${fmt(input.netTotal)}*`);
   if (input.voided.count > 0) {
     lines.push(`Anuladas: ${input.voided.count} (${fmt(input.voided.total)}) — no incluidas en el total`);
+  }
+  if (input.voidedLater && input.voidedLater.count > 0) {
+    lines.push(`Anuladas después de este día: ${input.voidedLater.count} (${fmt(input.voidedLater.total)}) — siguen incluidas en el total`);
   }
 
   lines.push(SEP);

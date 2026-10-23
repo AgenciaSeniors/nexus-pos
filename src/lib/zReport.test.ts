@@ -120,6 +120,22 @@ describe('buildZReportText', () => {
     expect(t).toContain('Anuladas: 2 ($80.00) — no incluidas en el total');
   });
 
+  it('las devoluciones de ventas anteriores aparecen como resta antes del total neto', () => {
+    const t = buildZReportText({ ...base, netTotal: 1200, priorRefunds: { count: 1, total: 100 } });
+    expect(t).toContain('Devoluciones de ventas anteriores: −$100.00');
+    expect(t.indexOf('Devoluciones de ventas anteriores')).toBeLessThan(t.indexOf('TOTAL NETO'));
+  });
+
+  it('sin devoluciones anteriores no añade la línea', () => {
+    expect(buildZReportText(base)).not.toContain('Devoluciones de ventas anteriores');
+  });
+
+  it('las anuladas DESPUÉS del día se informan como incluidas en el total', () => {
+    const t = buildZReportText({ ...base, voidedLater: { count: 1, total: 100 } });
+    expect(t).toContain('Anuladas después de este día: 1 ($100.00) — siguen incluidas en el total');
+    expect(t).not.toContain('no incluidas');
+  });
+
   it('recorta la lista de productos y dice cuántos faltan', () => {
     const products = Array.from({ length: 18 }, (_, i) => ({ name: `P${i + 1}`, quantity: 1, total: 10 }));
     const t = buildZReportText({ ...base, products });
