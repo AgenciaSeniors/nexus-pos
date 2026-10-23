@@ -44,9 +44,9 @@ vi.mock('./supabase', () => {
     const obj: Record<string, unknown> = {
       eq: () => obj,
       neq: () => obj,
-      gt: () => obj,
+      gt: (col: string, val: unknown) => { mockState.calls.push({ op: 'gt', key: col, payload: val }); return obj; },
       lt: () => obj,
-      gte: () => obj,
+      gte: (col: string, val: unknown) => { mockState.calls.push({ op: 'gte', key: col, payload: val }); return obj; },
       or: () => obj,
       in: () => obj,
       order: () => obj,
@@ -91,7 +91,7 @@ vi.mock('./supabase', () => {
 
 // Importar DESPUÉS del mock para que sync.ts use el supabase mockeado
 const { db } = await import('./db');
-const { addToQueue, processQueue, syncLiveData, pullSalesRange, isSalesBackfillDone } = await import('./sync');
+const { addToQueue, processQueue, syncLiveData, pullSalesRange, pullMovementsRange, isSalesBackfillDone } = await import('./sync');
 const { persistStaffPin } = await import('./staffPin');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -550,6 +550,44 @@ describe('syncLiveData — pull de fondo multi-dispositivo', () => {
     // Con el relleno hecho sigue consultando (incremental), pero no se vuelve a marcar nada nuevo.
     expect(mockState.calls.some(c => c.op === 'select' && c.key === 'cash_movements')).toBe(true);
     expect(localStorage.getItem('nexus_cash_backfill_v1_b1')).toBe('1');
+  });
+
+  // ── Regresión: "vendió dos huevos y en el Corte Z no sale el movimiento" ──
+  // La hora de un movimiento la pone el TELÉFONO que lo crea y sube después. El pull
+  // incremental cortaba justo en el watermark (hora de servidor del ciclo anterior),
+  // así que un movimiento creado un poco antes pero subido después nunca se bajaba.
+  it('el pull incremental de movimientos y turnos se solapa 15 min con el watermark', async () => {
+    await seedSettings();
+    const watermark = Date.now() - 60_000;
+    localStorage.setItem('nexus_sync_watermark', String(watermark));
+    localStorage.setItem('nexus_cash_backfill_v1_b1', '1');
+    localStorage.setItem('nexus_sales_backfill_v1_b1', '1');
+    mockState.responses['cash_shifts:select'] = { data: [] };
+
+    await syncLiveData();
+
+    const cortes = mockState.calls
+      .filter(c => c.op === 'gt' && c.key === 'created_at')
+      .map(c => new Date(String(c.payload)).getTime());
+    expect(cortes.length).toBeGreaterThan(0); // movimientos de inventario y de caja
+    for (const corte of cortes) {
+      // Tiene que ser ANTERIOR al watermark en al menos 14 minutos (no igual a él)
+      expect(corte).toBeLessThanOrEqual(watermark - 14 * 60_000);
+    }
+  });
+
+  it('pullMovementsRange baja los movimientos desde la fecha, sin depender del watermark', async () => {
+    mockState.responses['inventory_movements:select'] = {
+      data: [{ id: 'mvHuevos', business_id: 'b1', product_id: 'p1', qty_change: -2, reason: 'sale', staff_id: 'v1', created_at: '2026-10-17T14:00:00.000Z' }],
+    };
+
+    const n = await pullMovementsRange('b1', '2026-10-17T04:00:00.000Z');
+
+    expect(n).toBe(1);
+    const guardado = await db.movements.get('mvHuevos');
+    expect(guardado?.qty_change).toBe(-2);
+    expect(guardado?.sync_status).toBe('synced');
+    expect(mockState.calls.some(c => c.op === 'gte' && c.key === 'created_at' && c.payload === '2026-10-17T04:00:00.000Z')).toBe(true);
   });
 
   // ── Regresión: "creo el PIN en un teléfono y en el otro me lo vuelve a pedir" ──

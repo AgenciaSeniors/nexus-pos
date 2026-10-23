@@ -80,6 +80,15 @@ const SYNC_WATERMARK_KEY = 'nexus_sync_watermark';
 // con updated_at idéntico al watermark. Re-bajar filas repetidas es inocuo:
 // safeBulkPut es idempotente.
 const WATERMARK_OVERLAP_MS = 2 * 60_000;
+// Los movimientos de inventario, los turnos y los movimientos de caja llevan la
+// hora del TELÉFONO que los creó (created_at/opened_at/closed_at), no la del
+// servidor, y suben a la nube un rato DESPUÉS (cola, reintentos, sin red). El
+// watermark es hora de servidor del inicio del último ciclo: un movimiento creado
+// antes de ese instante pero subido después quedaba por debajo del corte y no se
+// bajaba NUNCA ("vendió dos huevos y en el Corte Z no sale el movimiento"). Con
+// 2 minutos de solapamiento no alcanzaba; estos reciben una ventana mayor. Re-bajar
+// filas repetidas es inocuo (bulkPut por id).
+const CLIENT_TIMESTAMP_OVERLAP_MS = 15 * 60_000;
 
 function getSyncWatermark(): number {
   return parseInt(localStorage.getItem(SYNC_WATERMARK_KEY) || '0');
@@ -762,7 +771,7 @@ const MOVEMENTS_INITIAL_PULL_DAYS = 90;
 async function fetchMovementsSince(businessId: string, since: number) {
     const sinceIso = since === 0
         ? new Date(Date.now() - MOVEMENTS_INITIAL_PULL_DAYS * 86400000).toISOString()
-        : new Date(since).toISOString();
+        : new Date(Math.max(0, since - CLIENT_TIMESTAMP_OVERLAP_MS)).toISOString();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const allData: any[] = [];
     let page = 0;
@@ -773,6 +782,7 @@ async function fetchMovementsSince(businessId: string, since: number) {
             .from('inventory_movements').select('*')
             .eq('business_id', businessId)
             .gt('created_at', sinceIso)
+            .order('id') // paginación estable
             .range(page * size, (page + 1) * size - 1);
         if (error) throw error;
         if (!data || data.length === 0) break;
@@ -781,6 +791,22 @@ async function fetchMovementsSince(businessId: string, since: number) {
         page++;
     }
     return allData;
+}
+
+/**
+ * Baja TODOS los movimientos de inventario desde una fecha, sin depender del
+ * watermark. Es lo que usa el Corte Z para tener completo el día que se está
+ * mirando (y los posteriores, que hacen falta para reconstruir el inventario):
+ * la hora de un movimiento la pone el teléfono, y el corte por watermark puede
+ * dejar fuera uno que subió tarde.
+ */
+export async function pullMovementsRange(businessId: string, fromIso: string): Promise<number> {
+    const rows = await fetchSalesPaged(q => q.eq('business_id', businessId).gte('created_at', fromIso), 'inventory_movements');
+    if (rows.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await db.movements.bulkPut(rows.map((m: any) => ({ ...m, sync_status: 'synced' as const })));
+    }
+    return rows.length;
 }
 
 async function pullInventoryMovements(businessId: string, since: number): Promise<number> {
@@ -853,7 +879,7 @@ type CashPullSpec =
 async function pullCashRecords(businessId: string, spec: CashPullSpec): Promise<void> {
     const backfillIso = new Date(Date.now() - SALES_BACKFILL_DAYS * 86400000).toISOString();
     const sinceIso = spec.kind === 'incremental'
-        ? new Date(Math.max(0, spec.since - WATERMARK_OVERLAP_MS)).toISOString()
+        ? new Date(Math.max(0, spec.since - CLIENT_TIMESTAMP_OVERLAP_MS)).toISOString()
         : '';
 
     const shifts = await fetchSalesPaged(q => {
@@ -1004,6 +1030,11 @@ async function ensureCashBackfill(businessId: string): Promise<boolean> {
         console.warn('Relleno de turnos de caja falló (se reintenta en el próximo ciclo):', err);
         return false;
     }
+}
+
+/** Turnos y movimientos de caja de un rango (el cuadre del Corte Z), sin depender del watermark. */
+export async function pullCashRange(businessId: string, fromIso: string, toIso: string): Promise<void> {
+    await pullCashRecords(businessId, { kind: 'range', fromIso, toIso });
 }
 
 /**

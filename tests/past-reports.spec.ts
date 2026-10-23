@@ -220,6 +220,43 @@ test.describe('Reportes de días anteriores (admin sin turno abierto)', () => {
     expect(texto).toContain('TOTAL NETO');
   });
 
+  test('un movimiento que este teléfono no tenía (lo vendió otro) aparece en el inventario de HOY', async ({ page }) => {
+    // La vendedora vendió dos huevos desde otro teléfono: el movimiento está en la nube,
+    // pero este teléfono no lo había bajado.
+    await page.route('**/*.supabase.co/**', async route => {
+      const req = route.request();
+      const cors = {
+        'access-control-allow-origin': '*', 'access-control-allow-headers': '*',
+        'access-control-allow-methods': '*', 'access-control-expose-headers': 'content-range',
+      };
+      if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+      if (req.url().includes('/rest/v1/inventory_movements') && req.method() === 'GET') {
+        return route.fulfill({
+          status: 200,
+          headers: { ...cors, 'content-type': 'application/json', 'content-range': '0-0/1' },
+          body: JSON.stringify([{
+            id: '77777777-7777-4777-8777-7777777777aa', business_id: BIZ,
+            product_id: '33333333-3333-4333-8333-3333333333e1', qty_change: -2, reason: 'sale',
+            staff_id: STAFF, created_at: new Date().toISOString(),
+          }]),
+        });
+      }
+      return route.abort('failed');
+    });
+    await sembrar(page, [], { turnos: [], movimientos: [] }, {
+      productos: [{ id: '33333333-3333-4333-8333-3333333333e1', business_id: BIZ, name: 'Huevos', price: 15, cost: 0, stock: 18, stock_warehouse: 0, sku: null, category: 'General', unit: 'un', sync_status: 'synced', deleted_at: null }],
+      movimientos: [],
+    });
+
+    await abrirCorteZ(page, diaLocal(0));
+
+    const huevos = page.getByTestId('z-inventario').locator('tr', { hasText: 'Huevos' });
+    await expect(huevos).toBeVisible({ timeout: 20000 });
+    await expect(huevos).toContainText('20');  // inicial: 18 de ahora + 2 vendidos
+    await expect(huevos).toContainText('−2');
+    await expect(huevos).toContainText('18');  // final esperado
+  });
+
   test('el Corte Z trae el INVENTARIO DEL DÍA: inicial, entradas, ventas y final esperado', async ({ page }) => {
     await page.route('**/*.supabase.co/**', route => route.abort('failed'));
     await sembrar(page, [venta('aaaaaaaa-0000-4000-8000-0000000000d1', 100, mediodiaISO(1))],

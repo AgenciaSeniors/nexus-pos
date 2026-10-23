@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Sale, type Product, type CashShift, type CashMovement, type Staff, type InventoryMovement, type RefundedItem, type RecipeIngredient, type ShiftCount } from '../lib/db';
-import { addToQueue, syncPull, syncPush, isOnline, pullSalesRange, isSalesBackfillDone, SALES_BACKFILL_DAYS } from '../lib/sync';
+import { addToQueue, syncPull, syncPush, isOnline, pullSalesRange, pullMovementsRange, pullCashRange, isSalesBackfillDone, SALES_BACKFILL_DAYS } from '../lib/sync';
 import { hashPin, verifyPin, needsRehash } from '../lib/pin';
 import { supabase } from '../lib/supabase';
 import { logAuditAction } from '../lib/audit';
@@ -769,6 +769,29 @@ export function FinancePage() {
       : []),
     [inventoryAvailable, inventoryProducts, inventoryMovements, dayWindow],
   );
+
+  // Mientras se mira el Corte Z, se traen de la nube los movimientos de inventario y
+  // los turnos de caja del día. La hora de un movimiento la pone el teléfono que lo
+  // creó y sube después, así que el pull de fondo (por watermark) puede dejar fuera
+  // alguno: "vendió dos huevos y en el Corte Z no salía el movimiento". Para HOY se
+  // repite cada 30 s, así quien monitorea ve lo que venden los demás casi al
+  // instante; para un día pasado basta una vez.
+  useEffect(() => {
+    if (viewMode !== 'closing' || !inventoryAvailable) return;
+    const bId = localStorage.getItem('nexus_business_id');
+    if (!bId) return;
+    const fromIso = dayWindow.start.toISOString();
+    const toIso = new Date(Date.now() + 2 * 86400000).toISOString();
+    const run = () => {
+      if (!isOnline()) return;
+      pullMovementsRange(bId, fromIso).catch(err => console.warn('No se pudieron bajar los movimientos del día:', err));
+      pullCashRange(bId, fromIso, toIso).catch(err => console.warn('No se pudieron bajar los turnos del día:', err));
+    };
+    run();
+    if (selectedDate !== today) return;
+    const id = window.setInterval(run, 30_000);
+    return () => window.clearInterval(id);
+  }, [viewMode, selectedDate, inventoryAvailable, dayWindow, today]);
 
   /** Diferencia de EFECTIVO del día (suma de los turnos cerrados). null = ninguno cerrado. */
   const dayCashDifference = useMemo(() => {
