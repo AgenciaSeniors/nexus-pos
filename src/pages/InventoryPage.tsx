@@ -595,7 +595,7 @@ export function InventoryPage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', 'Plantilla_Inventario_Bisne.csv');
+    link.setAttribute('download', 'Plantilla_Inventario_Senio.csv');
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -671,7 +671,7 @@ export function InventoryPage() {
         { label: 'Unidad', value: p => p.unit || 'un' },
         { label: 'Vencimiento', value: p => p.expiration_date || '' },
     ];
-    downloadCsv(`Inventario_Bisne_${new Date().toISOString().split('T')[0]}`, products, columns);
+    downloadCsv(`Inventario_Senio_${new Date().toISOString().split('T')[0]}`, products, columns);
     toast.success(`${products.length} producto(s) exportado(s)`);
   };
 

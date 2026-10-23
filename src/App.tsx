@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
+import logo from './assets/logo.png';
 import { friendlySyncError } from './lib/syncResolution';
 import { type Staff, db } from './lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -251,7 +252,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
       });
       if (rpcError) throw rpcError;
 
-      toast.success('¡Bienvenido a Bisne con Talla! Tienes 7 días de prueba gratuita.', { duration: 6000 });
+      toast.success('¡Bienvenido a Senio! Tienes 7 días de prueba gratuita.', { duration: 6000 });
 
       // Marcar que es un registro nuevo para que Layout muestre la guía rápida
       sessionStorage.setItem('nexus_new_registration', '1');
@@ -397,10 +398,10 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
 
   // ✅ MENSAJE DINÁMICO DE WHATSAPP
   const defaultWhatsAppMessage = mode === 'register'
-        ? "Hola administrador, acabo de registrar mi negocio en Bisne con Talla y necesito que aprueben mi cuenta."
+        ? "Hola administrador, acabo de registrar mi negocio en Senio y necesito que aprueben mi cuenta."
         : mode === 'forgot'
-        ? "Hola soporte de Bisne con Talla, olvidé mi contraseña y necesito restablecerla. Mi negocio se llama: "
-        : "Hola soporte de Bisne con Talla, necesito ayuda para acceder a mi cuenta.";
+        ? "Hola soporte de Senio, olvidé mi contraseña y necesito restablecerla. Mi negocio se llama: "
+        : "Hola soporte de Senio, necesito ayuda para acceder a mi cuenta.";
   const whatsappUrl = `https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=${encodeURIComponent(defaultWhatsAppMessage)}`;
 
   return (
@@ -417,13 +418,13 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
           <div className="relative z-10">
             <div className="flex items-center gap-3 mb-10">
               <div
-                className="bg-[#7AC142] p-2.5 rounded-xl shadow-lg shadow-[#7AC142]/20 select-none"
+                className="bg-white p-2 rounded-xl shadow-lg shadow-black/20 select-none"
                 onPointerDown={startSecretPress}
                 onPointerUp={cancelSecretPress}
                 onPointerLeave={cancelSecretPress}
                 onPointerCancel={cancelSecretPress}
-              ><Store className="w-7 h-7 text-[#0B3B68]" /></div>
-              <span className="text-2xl font-black tracking-tight drop-shadow-md">Bisne con Talla</span>
+              ><img src={logo} alt="Senio" className="w-8 h-8 object-contain" draggable={false} /></div>
+              <span className="text-2xl font-black tracking-tight drop-shadow-md">Senio</span>
             </div>
             
             {/* ✅ TITULARES MEJORADOS Y EN VERDE PARA QUE RESALTEN */}
@@ -451,15 +452,15 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
             {/* ✅ ENCABEZADO MÓVIL */}
             <div className="md:hidden flex flex-col items-center mb-8 text-center animate-in fade-in slide-in-from-top-4 duration-500">
                 <div
-                    className="bg-[#0B3B68] p-3.5 rounded-2xl mb-4 shadow-xl shadow-[#0B3B68]/20 select-none"
+                    className="bg-white p-3 rounded-2xl mb-4 shadow-xl shadow-[#0B3B68]/15 ring-1 ring-gray-100 select-none"
                     onPointerDown={startSecretPress}
                     onPointerUp={cancelSecretPress}
                     onPointerLeave={cancelSecretPress}
                     onPointerCancel={cancelSecretPress}
                 >
-                    <Store className="w-8 h-8 text-[#7AC142]" />
+                    <img src={logo} alt="Senio" className="w-10 h-10 object-contain" draggable={false} />
                 </div>
-                <h1 className="text-3xl font-black text-[#0B3B68] tracking-tight">Bisne con Talla</h1>
+                <h1 className="text-3xl font-black text-[#0B3B68] tracking-tight">Senio</h1>
                 <p className="text-[#7AC142] text-sm mt-1 font-bold">
                     {mode === 'login' ? 'Bienvenido' : mode === 'register' ? 'Crea tu cuenta ahora' : 'Restablecer Acceso'}
                 </p>
@@ -1071,7 +1072,7 @@ function BusinessApp() {
          <div className="flex flex-col items-center gap-2">
             <Loader2 className="animate-spin text-[#0B3B68] w-10 h-10 mb-4" />
             <p className="text-slate-700 font-bold text-lg tracking-tight">Verificando Credenciales...</p>
-            <p className="text-slate-400 text-xs mt-2">Conectando con Bisne con Talla</p>
+            <p className="text-slate-400 text-xs mt-2">Conectando con Senio</p>
          </div>
          {/* Botón de pánico oculto por si acaso */}
          <button onClick={handleForceLogout} className="mt-8 text-xs text-slate-400 underline hover:text-slate-600">

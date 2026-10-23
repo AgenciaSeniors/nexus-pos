@@ -306,7 +306,7 @@ export function CustomersPage() {
           { label: 'Fecha registro', value: c => formatLocalDateTime(c.created_at) },
       ];
       const today = new Date().toISOString().split('T')[0];
-      downloadCsv(`Clientes_Bisne_${today}`, customers, columns);
+      downloadCsv(`Clientes_Senio_${today}`, customers, columns);
       toast.success(`${customers.length} cliente(s) exportado(s)`);
   };
 

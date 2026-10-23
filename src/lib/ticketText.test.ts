@@ -64,7 +64,7 @@ describe('buildTicketText — recibo final', () => {
 
   it('usa nombre por defecto si no hay config', () => {
     const text = buildTicketText(makeSale(), null);
-    expect(text).toContain('*BISNE CON TALLA*');
+    expect(text).toContain('*SENIO*');
     expect(text).toContain('¡Gracias por su compra!');
   });
 });

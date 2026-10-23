@@ -93,7 +93,7 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
           <div className="text-center mb-4">
             <img src={logo} alt="" className="w-14 h-14 mx-auto mb-2 object-contain" />
             <h2 className="text-xl font-black uppercase tracking-wider mb-1">
-               {config?.name || 'BISNE CON TALLA'}
+               {config?.name || 'SENIO'}
             </h2>
             {config?.address && <p className="text-[10px] text-slate-500 uppercase">{config.address}</p>}
             {config?.phone && <p className="text-[10px] text-slate-500">Tel: {config.phone}</p>}

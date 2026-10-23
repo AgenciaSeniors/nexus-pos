@@ -29,7 +29,7 @@ export function buildTicketText(
   const lines: string[] = [];
 
   // --- Encabezado ---
-  lines.push(`*${(config?.name || 'BISNE CON TALLA').toUpperCase()}*`);
+  lines.push(`*${(config?.name || 'SENIO').toUpperCase()}*`);
   if (config?.address) lines.push(config.address);
   if (config?.phone) lines.push(`Tel: ${config.phone}`);
   lines.push(SEP);

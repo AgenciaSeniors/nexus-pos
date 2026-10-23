@@ -563,7 +563,7 @@ export function SuperAdminPage() {
               <Shield className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold tracking-tight leading-none">BISNE CON TALLA ADMIN</h1>
+              <h1 className="text-lg font-bold tracking-tight leading-none">SENIO ADMIN</h1>
               <p className="text-[10px] text-slate-400 font-medium tracking-wide uppercase">Panel Maestro</p>
             </div>
           </div>
@@ -641,7 +641,7 @@ export function SuperAdminPage() {
           const RowCard = ({ row, accent }: { row: SubscriptionRow; accent: string }) => {
             const days = getDays(row.subscription_expires_at);
             const phone = row.owner_phone || row.business_phone || '';
-            const waMsg = encodeURIComponent(`Hola ${row.owner_name}, te contactamos de Bisne con Talla sobre tu suscripción del negocio "${row.business_name}".`);
+            const waMsg = encodeURIComponent(`Hola ${row.owner_name}, te contactamos de Senio sobre tu suscripción del negocio "${row.business_name}".`);
             return (
               <div className={`bg-white rounded-2xl border ${accent} shadow-sm p-4 flex flex-col sm:flex-row sm:items-center gap-3`}>
                 <div className="flex-1 min-w-0">

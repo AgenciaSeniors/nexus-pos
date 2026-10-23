@@ -112,9 +112,9 @@ jobs:
       - name: Rename APK
         run: |
           if [ "${{ steps.keystore.outputs.hay }}" = "true" ]; then
-            cp android/app/build/outputs/apk/release/app-release.apk bisne-con-talla.apk
+            cp android/app/build/outputs/apk/release/app-release.apk senio.apk
           else
-            cp android/app/build/outputs/apk/debug/app-debug.apk bisne-con-talla.apk
+            cp android/app/build/outputs/apk/debug/app-debug.apk senio.apk
           fi
 
       - name: Borrar el keystore del runner
@@ -124,8 +124,8 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v5
         with:
-          name: bisne-con-talla-apk
-          path: bisne-con-talla.apk
+          name: senio-apk
+          path: senio.apk
           if-no-files-found: error
 
       - name: Publish to "android-latest" prerelease
@@ -135,11 +135,11 @@ jobs:
           name: APK Android (última build)
           prerelease: true
           body: |
-            APK de **Bisne con Talla** para Android 7.0+. Descarga `bisne-con-talla.apk`,
+            APK de **Senio** para Android 7.0+. Descarga `senio.apk`,
             ábrelo en el teléfono y permite "instalar apps de orígenes desconocidos".
 
             **Actualizar:** instala encima, sin desinstalar. Antes de hacerlo, abre la app
             con internet y espera a que termine de sincronizar.
 
             Generado automáticamente desde el workflow *Android APK* en cada cambio de `main`.
-          files: bisne-con-talla.apk
+          files: senio.apk

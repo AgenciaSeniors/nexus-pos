@@ -4,7 +4,7 @@
     "version": "1.6.0",
     "type": "module",
     "main": "electron/main.js",
-    "description": "Bisne con Talla System",
+    "description": "Senio - Sistema de punto de venta",
     "author": "Agencia Señores",
     "scripts": {
         "dev": "vite",
@@ -29,7 +29,7 @@
         ],
         "win": {
             "target": "nsis",
-            "artifactName": "${productName} Setup ${version}.${ext}",
+            "artifactName": "Senio Setup ${version}.${ext}",
             "icon": "public/icon.ico"
         },
         "nsis": {
@@ -37,7 +37,7 @@
             "perMachine": false,
             "allowElevation": true,
             "deleteAppDataOnUninstall": false,
-            "shortcutName": "Bisne con Talla",
+            "shortcutName": "Senio",
             "createDesktopShortcut": true,
             "createStartMenuShortcut": true
         }

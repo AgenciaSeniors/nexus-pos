@@ -70,10 +70,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Nexus POS ${{ github.ref_name }}
+          name: Senio ${{ github.ref_name }}
           target_commitish: ${{ github.sha }}
           body: |
-            Instalador de escritorio para Windows (NSIS) de Nexus POS ${{ github.ref_name }}.
+            Instalador de escritorio para Windows (NSIS) de Senio ${{ github.ref_name }}.
 
             Descarga el `.exe` de abajo y ejecutalo. Las notas de esta version
             estan en el CHANGELOG del repositorio.

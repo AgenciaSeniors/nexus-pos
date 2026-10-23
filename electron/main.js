@@ -32,7 +32,7 @@ function createWindow() {
         height: saved.height || 800,
         x: saved.x,
         y: saved.y,
-        title: "Nexus POS",
+        title: "Senio",
         webPreferences: {
             nodeIntegration: false, // Bloqueamos acceso directo a Node (Seguridad)
             contextIsolation: true, // Aislamos el contexto (Seguridad)

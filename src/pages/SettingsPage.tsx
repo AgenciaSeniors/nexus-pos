@@ -378,7 +378,7 @@ export function SettingsPage() {
           const a = document.createElement('a');
           a.href = url;
           const date = new Date().toISOString().split('T')[0];
-          a.download = `Respaldo_Bisne_${date}.json`;
+          a.download = `Respaldo_Senio_${date}.json`;
           
           document.body.appendChild(a);
           a.click();
@@ -490,7 +490,7 @@ export function SettingsPage() {
                             <div>
                                 <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Nombre del Negocio</label>
                                 <input type="text" required value={businessForm.name} onChange={e => setBusinessForm({...businessForm, name: e.target.value})}
-                                    className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none transition-all font-bold text-[#1F2937]" placeholder="Ej. Bisne con Talla" />
+                                    className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0B3B68] outline-none transition-all font-bold text-[#1F2937]" placeholder="Ej. Senio" />
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Teléfono</label>
@@ -584,7 +584,7 @@ export function SettingsPage() {
                         : null;
                       const isOk = days === null || days > 7;
                       const isWarning = days !== null && days >= 0 && days <= 7;
-                      const waMsg = encodeURIComponent('Hola, quiero renovar mi suscripción de Bisne con Talla.');
+                      const waMsg = encodeURIComponent('Hola, quiero renovar mi suscripción de Senio.');
                       return (
                         <div className={`mt-6 rounded-2xl border p-5 flex items-center gap-4 ${isOk ? 'bg-[#7AC142]/5 border-[#7AC142]/20' : isWarning ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200'}`}>
                           <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${isOk ? 'bg-[#7AC142]/10 text-[#7AC142]' : isWarning ? 'bg-amber-100 text-amber-600' : 'bg-red-100 text-red-500'}`}>
@@ -762,7 +762,7 @@ export function SettingsPage() {
                         <div>
                             <h4 className="font-bold text-[#1F2937] text-sm">Modo Híbrido</h4>
                             <p className="text-xs text-[#6B7280] mt-1">
-                                Si estás usando Bisne en un celular, la impresión se realizará a través del navegador o la app nativa instalada.
+                                Si estás usando Senio en un celular, la impresión se realizará a través del navegador o la app nativa instalada.
                             </p>
                         </div>
                     </div>
@@ -992,7 +992,7 @@ export function SettingsPage() {
                             <div className="text-right pl-6 flex-shrink-0">
                                 <p className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Versión</p>
                                 <p className="text-lg font-black text-[#0B3B68]">v{__APP_VERSION__}</p>
-                                <p className="text-[10px] text-[#6B7280] mb-2">Bisne con Talla</p>
+                                <p className="text-[10px] text-[#6B7280] mb-2">Senio</p>
                                 <button
                                   onClick={handleCheckUpdate}
                                   disabled={checkingUpdate}
@@ -1078,14 +1078,14 @@ export function SettingsPage() {
             <h2 className="text-xl font-bold text-[#1F2937] mb-1 flex items-center gap-2">
               <ScrollText size={22} className="text-[#0B3B68]" /> Términos de Uso y Política de Privacidad
             </h2>
-            <p className="text-xs text-[#6B7280]">Bisne con Talla · Agencia Señores · Versión 1.0 · Sancti Spíritus, Cuba · 2025</p>
+            <p className="text-xs text-[#6B7280]">Senio · Agencia Señores · Versión 1.0 · Sancti Spíritus, Cuba · 2025</p>
           </div>
 
           {/* Sección 1 — Aceptación */}
           <div className="border border-gray-100 rounded-2xl p-4 space-y-1">
             <h3 className="font-black text-[#0B3B68] text-sm flex items-center gap-2"><Info size={15}/> 1. Aceptación de los Términos</h3>
             <p className="text-sm text-[#4B5563] leading-relaxed">
-              Al registrarte y utilizar <strong>Bisne con Talla</strong>, aceptas de forma plena y sin reservas los presentes Términos de Uso y la Política de Privacidad. Si no estás de acuerdo con alguno de estos términos, debes abstenerte de usar la aplicación.
+              Al registrarte y utilizar <strong>Senio</strong>, aceptas de forma plena y sin reservas los presentes Términos de Uso y la Política de Privacidad. Si no estás de acuerdo con alguno de estos términos, debes abstenerte de usar la aplicación.
             </p>
           </div>
 
@@ -1093,7 +1093,7 @@ export function SettingsPage() {
           <div className="border border-gray-100 rounded-2xl p-4 space-y-1">
             <h3 className="font-black text-[#0B3B68] text-sm flex items-center gap-2"><Info size={15}/> 2. Descripción del Servicio</h3>
             <p className="text-sm text-[#4B5563] leading-relaxed">
-              <strong>Bisne con Talla</strong> es un sistema de punto de venta (POS) <em>offline-first</em> desarrollado por <strong>Agencia Señores</strong> para negocios ubicados en Cuba. La aplicación opera de forma local en el dispositivo del usuario y sincroniza datos con la nube cuando existe conexión a internet disponible.
+              <strong>Senio</strong> es un sistema de punto de venta (POS) <em>offline-first</em> desarrollado por <strong>Agencia Señores</strong> para negocios ubicados en Cuba. La aplicación opera de forma local en el dispositivo del usuario y sincroniza datos con la nube cuando existe conexión a internet disponible.
             </p>
             <p className="text-sm text-[#4B5563] leading-relaxed mt-2">
               El servicio incluye: gestión de ventas, inventario, clientes, turnos de caja, reportes financieros y sincronización multi-dispositivo.
@@ -1196,7 +1196,7 @@ export function SettingsPage() {
               <div className="flex items-center gap-2 text-white/80"><MapPin size={14}/> <span>Sancti Spíritus, Cuba</span></div>
             </div>
             <a
-              href={`https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=Hola%2C%20tengo%20una%20consulta%20sobre%20los%20T%C3%A9rminos%20de%20Bisne%20con%20Talla`}
+              href={`https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=Hola%2C%20tengo%20una%20consulta%20sobre%20los%20T%C3%A9rminos%20de%20Senio`}
               target="_blank" rel="noopener noreferrer"
               className="mt-4 inline-flex items-center gap-2 bg-[#7AC142] text-[#0B3B68] font-black text-xs px-4 py-2 rounded-xl hover:bg-[#7AC142]/90 transition-colors"
             >
@@ -1211,7 +1211,7 @@ export function SettingsPage() {
           <h2 className="text-xl font-bold text-[#1F2937] mb-1 flex items-center gap-2">
             <HelpCircle size={22} className="text-[#0B3B68]" /> Guía Rápida
           </h2>
-          <p className="text-sm text-[#6B7280] mb-6">Aprende a sacarle el máximo provecho a Bisne con Talla</p>
+          <p className="text-sm text-[#6B7280] mb-6">Aprende a sacarle el máximo provecho a Senio</p>
 
           {/* Flujo diario */}
           <div className="mb-8">
@@ -1391,7 +1391,7 @@ export function SettingsPage() {
               <p className="text-xs text-[#6B7280]">Contáctanos por WhatsApp y te asistimos en minutos</p>
             </div>
             <a
-              href={`https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=Hola,%20necesito%20ayuda%20con%20Bisne%20con%20Talla`}
+              href={`https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=Hola,%20necesito%20ayuda%20con%20Senio`}
               target="_blank"
               rel="noopener noreferrer"
               className="ml-auto flex-shrink-0 bg-[#25D366] text-white text-xs font-bold px-3 py-2 rounded-xl hover:bg-[#25D366]/90 transition-colors"

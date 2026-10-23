@@ -2570,7 +2570,7 @@ export function FinancePage() {
           <div id="printable-report" className="bg-white p-8 rounded-none md:rounded-3xl shadow-lg border border-gray-200 print:shadow-none print:border-none print:p-0">
              <div className="text-center mb-8 border-b border-dashed border-gray-300 pb-6">
                  <h1 className="text-2xl font-black text-[#0B3B68] uppercase tracking-widest mb-2">REPORTE Z</h1>
-                 <p className="text-[#6B7280] font-mono text-xs">Bisne con Talla POS</p>
+                 <p className="text-[#6B7280] font-mono text-xs">Senio POS</p>
                  <p className="text-sm text-[#6B7280] mt-1">Fecha: {new Date(selectedDate + 'T00:00').toLocaleDateString()}</p>
              </div>
              <div className="mb-8">

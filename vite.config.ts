@@ -21,10 +21,10 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+      includeAssets: ['favicon.ico', 'favicon-64.png', 'apple-touch-icon.png'],
       manifest: {
-        name: 'Bisne con Talla',
-        short_name: 'Bisne',
+        name: 'Senio',
+        short_name: 'Senio',
         description: 'Sistema de Punto de Venta Offline-First',
         theme_color: '#0f172a',
         background_color: '#f8fafc',
@@ -40,6 +40,12 @@ export default defineConfig({
             src: 'pwa-512x512.png',
             sizes: '512x512',
             type: 'image/png'
+          },
+          {
+            src: 'pwa-maskable-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable'
           }
         ]
       }

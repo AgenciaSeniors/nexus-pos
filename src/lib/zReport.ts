@@ -144,7 +144,7 @@ export function buildZReportText(input: ZReportInput): string {
   const fmt = input.fmt ?? ((n: number) => `$${(isNaN(n) ? 0 : n).toFixed(2)}`);
   const lines: string[] = [];
 
-  lines.push(`*REPORTE Z — ${(input.businessName || 'BISNE CON TALLA').toUpperCase()}*`);
+  lines.push(`*REPORTE Z — ${(input.businessName || 'SENIO').toUpperCase()}*`);
   lines.push(`Fecha: ${input.dateLabel}`);
   lines.push(SEP);
   lines.push(`Tickets: ${input.ticketCount}`);

@@ -1,4 +1,4 @@
-# 🚀 Bisne con Talla / Nexus POS
+# 🚀 Senio
 
 > **Sistema de Punto de Venta (POS) Offline-First con arquitectura SaaS multi-tenant.**
 > Diseñado para negocios cubanos con conectividad inestable.
@@ -11,7 +11,7 @@
 
 ## 📋 Descripción
 
-**Bisne con Talla** (también conocido como *Nexus POS*) es una aplicación de punto de venta diseñada específicamente para negocios cubanos donde la conexión a internet es intermitente. A diferencia de los POS tradicionales, esta app prioriza la **autonomía local**: permite vender, gestionar inventario y controlar finanzas sin internet, sincronizando con la nube cuando la conexión regresa.
+**Senio** (antes *Bisne con Talla* / *Nexus POS*) es una aplicación de punto de venta diseñada específicamente para negocios cubanos donde la conexión a internet es intermitente. A diferencia de los POS tradicionales, esta app prioriza la **autonomía local**: permite vender, gestionar inventario y controlar finanzas sin internet, sincronizando con la nube cuando la conexión regresa.
 
 El sistema opera en **3 plataformas**:
 - 🌐 **Web/PWA** (cualquier navegador moderno)

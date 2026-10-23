@@ -28,12 +28,12 @@ export function LicenseLock({ state, retrying, onRetry, onLogout }: LicenseLockP
     ? 'Llevas más de 7 días sin conexión. Conéctate a internet un momento para validar tu licencia y seguir trabajando. Tus datos están a salvo.'
     : isSuspended
       ? 'Tu cuenta fue suspendida. Contacta al administrador para reactivarla.'
-      : 'Tu semana gratis (o tu licencia) venció. Renueva para seguir vendiendo con Bisne con Talla.';
+      : 'Tu semana gratis (o tu licencia) venció. Renueva para seguir vendiendo con Senio.';
 
   const waMsg = encodeURIComponent(
     isSuspended
-      ? 'Hola, mi cuenta de Bisne con Talla aparece suspendida. ¿Pueden ayudarme?'
-      : 'Hola, quiero renovar / pagar mi licencia de Bisne con Talla.',
+      ? 'Hola, mi cuenta de Senio aparece suspendida. ¿Pueden ayudarme?'
+      : 'Hola, quiero renovar / pagar mi licencia de Senio.',
   );
   const waUrl = `https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=${waMsg}`;
 
@@ -81,7 +81,7 @@ export function LicenseLock({ state, retrying, onRetry, onLogout }: LicenseLockP
           </button>
         </div>
 
-        <p className="text-slate-600 text-xs mt-8">Bisne con Talla · Agencia Señores</p>
+        <p className="text-slate-600 text-xs mt-8">Senio · Agencia Señores</p>
       </div>
     </div>
   );

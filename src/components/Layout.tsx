@@ -136,7 +136,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   };
 
   const renewWaUrl = (() => {
-    const msg = encodeURIComponent('Hola, quiero renovar mi suscripción de Bisne con Talla.');
+    const msg = encodeURIComponent('Hola, quiero renovar mi suscripción de Senio.');
     return `https://wa.me/${ADMIN_WHATSAPP_PHONE}?text=${msg}`;
   })();
 
@@ -402,7 +402,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
                 <div className="bg-white p-1 rounded-md shadow-sm w-8 h-8 flex items-center justify-center">
                     <img src={logo} alt="Logo" className="w-full h-full object-contain" />
                 </div>
-                <span>Bisne con Talla</span>
+                <span>Senio</span>
             </div>
 
             <div className="flex items-center gap-3">
