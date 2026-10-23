@@ -28,6 +28,7 @@ import {
 } from './db';
 import { supabase } from './supabase';
 import { fetchServerTime, getTrustedNow, getServerNow } from './licenseClock';
+import { ensureValidSession } from './authHealth';
 import type { Table } from 'dexie';
 import {
   filterRemoteItemsForBulkPut,
@@ -37,6 +38,7 @@ import {
   computeStockSyncBlockers,
   decideQueueItemOutcome,
   decideStaffPinMerge,
+  isAuthRelatedError,
   QUEUE_TYPE_LABELS,
 } from './syncResolution';
 
@@ -549,6 +551,13 @@ async function _runQueue() {
   const allPending = await db.action_queue.where('status').equals('pending').toArray();
   if (allPending.length === 0) return;
 
+  // Sin sesión válida el servidor rechaza todo con errores de permisos (RLS) que
+  // parecen un fallo de la base de datos y gastaban los 5 reintentos de cada
+  // operación hasta darla por fallida. Con sesión perdida NO se intenta: todo queda
+  // pendiente, intacto, y la interfaz avisa UNA vez de que hay que volver a entrar
+  // (ver lib/authHealth). Si la sesión estaba por caducar, aquí mismo se renueva.
+  if ((await ensureValidSession()) === 'lost') return;
+
   // Ordenar por dependencia de foreign key (entidades base primero) y luego
   // FIFO, con una restricción causal extra: un PRODUCT_SYNC (stock ABSOLUTO)
   // va DESPUÉS de las ventas pendientes más antiguas que tocan su producto —
@@ -584,6 +593,21 @@ async function _runQueue() {
       completedThisRun.add(item.id);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+
+      // Un error de permisos casi siempre significa "la sesión ya no vale", no que el
+      // dato esté mal. Se comprueba la sesión: si se perdió o se acaba de renovar, la
+      // operación NO gasta un reintento (vuelve a pendiente tal cual). Solo si la
+      // sesión está bien, el error se trata como lo que parece (dato de otro negocio...).
+      if (isAuthRelatedError(errorMessage)) {
+        const health = await ensureValidSession();
+        if (health === 'lost' || health === 'refreshed') {
+          await db.action_queue.update(item.id, {
+            status: 'pending', error: `Sesión: ${errorMessage}`, timestamp: Date.now(),
+          });
+          if (health === 'lost') break; // el resto fallaría igual
+          continue;                     // renovada: se reintenta ya
+        }
+      }
 
       // Decide el resultado: los errores de RED son transitorios y NUNCA mandan
       // el item a `failed` — se reintentan indefinidamente hasta que la conexión
@@ -1298,6 +1322,9 @@ export async function syncLiveData() {
     if (settings.length === 0) return;
     const businessId = settings[0].id;
 
+    // Sin sesión, las consultas devuelven vacío por permisos: no tiene sentido pedir nada.
+    if ((await ensureValidSession()) === 'lost') return;
+
     try {
         // Candidato a watermark capturado ANTES de los pulls: lo que cambie en el
         // servidor DURANTE este ciclo queda por encima y se baja en el siguiente.
@@ -1541,6 +1568,7 @@ export async function syncLiveData() {
 let _syncIntervalId: ReturnType<typeof setInterval> | null = null;
 let _onlineHandler: (() => void) | null = null;
 let _visibilityHandler: (() => void) | null = null;
+let _authRestoredHandler: (() => void) | null = null;
 
 export function startSyncListeners() {
   if (_syncIntervalId !== null) return; // Ya inicializado
@@ -1560,6 +1588,19 @@ export function startSyncListeners() {
       .catch(err => console.error("Error al procesar cola tras reconexión:", err));
   };
   window.addEventListener('online', _onlineHandler);
+
+  // Al recuperar la sesión (volvió a entrar o se renovó): lo que quedó marcado como
+  // fallido por culpa de la sesión vuelve a la cola y se reanuda la sincronización.
+  _authRestoredHandler = () => {
+    if (!db.isOpen()) return;
+    db.action_queue
+      .where('status').equals('failed')
+      .modify({ status: 'pending', retries: 0, error: undefined })
+      .then(() => processQueue())
+      .then(() => syncLiveData())
+      .catch(err => console.error('Error al reanudar tras recuperar la sesión:', err));
+  };
+  window.addEventListener('nexus-auth-restored', _authRestoredHandler);
 
   _visibilityHandler = () => {
     if (!document.hidden && isOnline() && db.isOpen()) {
@@ -1607,6 +1648,10 @@ export function stopSyncListeners() {
   if (_visibilityHandler) {
     document.removeEventListener('visibilitychange', _visibilityHandler);
     _visibilityHandler = null;
+  }
+  if (_authRestoredHandler) {
+    window.removeEventListener('nexus-auth-restored', _authRestoredHandler);
+    _authRestoredHandler = null;
   }
 }
 

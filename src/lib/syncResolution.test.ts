@@ -14,6 +14,8 @@ import {
   QUEUE_TYPE_LABELS,
   RETRY_CONFIG,
   decideStaffPinMerge,
+  isAuthRelatedError,
+  friendlySyncError,
 } from './syncResolution';
 
 // =============================================================================
@@ -615,6 +617,47 @@ describe('sortQueueForUpload', () => {
     expect(enqueueOrderOf(queue[0])).toBe(100);
     const order = sortQueueForUpload(queue).map(i => i.id);
     expect(order).toEqual(['sale1', 'ps1']);
+  });
+});
+
+describe('isAuthRelatedError — errores que en realidad son "no hay sesión"', () => {
+  it('reconoce los mensajes de permisos que salen cuando el cliente se queda sin sesión', () => {
+    expect(isAuthRelatedError('Error audit: new row violates row-level security for table "audit_logs"')).toBe(true);
+    expect(isAuthRelatedError('Error producto: new row violates row-level security policy for table "products"')).toBe(true);
+    expect(isAuthRelatedError('Fallo venta: forbidden')).toBe(true);
+    expect(isAuthRelatedError('JWT expired')).toBe(true);
+    expect(isAuthRelatedError('Invalid Refresh Token: Refresh Token Not Found')).toBe(true);
+    expect(isAuthRelatedError('Auth session missing!')).toBe(true);
+    expect(isAuthRelatedError('permission denied for table sales')).toBe(true);
+    expect(isAuthRelatedError('Request failed with status 401')).toBe(true);
+  });
+
+  it('no confunde errores de dato o de red con errores de sesión', () => {
+    expect(isAuthRelatedError('insert or update on table "sales" violates foreign key constraint')).toBe(false);
+    expect(isAuthRelatedError('invalid input syntax for type timestamp')).toBe(false);
+    expect(isAuthRelatedError('Failed to fetch')).toBe(false);
+    expect(isAuthRelatedError('Tiempo de espera agotado (35s) procesando SALE')).toBe(false);
+    expect(isAuthRelatedError('')).toBe(false);
+  });
+});
+
+describe('friendlySyncError — el aviso rojo en lenguaje de persona', () => {
+  it('un error de permisos se explica como sesión no válida y dice qué hacer', () => {
+    const t = friendlySyncError('Producto', 'Error producto: new row violates row-level security policy for table "products"');
+    expect(t).toContain('La sesión no es válida');
+    expect(t).toContain('vuelve a entrar');
+    expect(t).not.toContain('row-level');
+  });
+  it('sin conexión dice que se reintentará solo', () => {
+    expect(friendlySyncError('Venta', 'Failed to fetch')).toContain('se reintentará solo');
+  });
+  it('clave foránea y duplicado, claros', () => {
+    expect(friendlySyncError('Movimiento', 'violates foreign key constraint "x"')).toContain('dato relacionado');
+    expect(friendlySyncError('Producto', 'duplicate key value violates unique constraint')).toContain('ya existe');
+  });
+  it('un error desconocido se muestra recortado', () => {
+    expect(friendlySyncError('Venta', 'x'.repeat(200)).length).toBeLessThan(140);
+    expect(friendlySyncError('Venta', null)).toContain('desconocido');
   });
 });
 

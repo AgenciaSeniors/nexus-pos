@@ -24,11 +24,18 @@ const mockState = {
   // cash_shifts: primero el select de turno abierto, luego el .single() del turno cerrado).
   responses: {} as Record<string, MockResult | MockResult[]>,
   calls: [] as Array<{ op: string; key: string; payload?: unknown }>,
+  // Sesión de Supabase simulada. Por defecto: válida por una hora.
+  session: null as null | { expires_at: number },
+  refresh: { ok: true, message: '' },
 };
+const validSession = () => ({ expires_at: Math.floor(Date.now() / 1000) + 3600 });
+mockState.session = validSession();
 
 function resetMock() {
   mockState.responses = {};
   mockState.calls = [];
+  mockState.session = validSession();
+  mockState.refresh = { ok: true, message: '' };
 }
 
 vi.mock('./supabase', () => {
@@ -84,6 +91,14 @@ vi.mock('./supabase', () => {
       }),
       auth: {
         getUser: () => Promise.resolve({ data: { user: { id: 'admin-test-id' } } }),
+        getSession: () => Promise.resolve({ data: { session: mockState.session }, error: null }),
+        refreshSession: () => {
+          if (mockState.refresh.ok) {
+            mockState.session = validSession();
+            return Promise.resolve({ data: { session: mockState.session }, error: null });
+          }
+          return Promise.resolve({ data: { session: null }, error: { message: mockState.refresh.message } });
+        },
       },
     },
   };
@@ -93,6 +108,7 @@ vi.mock('./supabase', () => {
 const { db } = await import('./db');
 const { addToQueue, processQueue, syncLiveData, pullSalesRange, pullMovementsRange, isSalesBackfillDone } = await import('./sync');
 const { persistStaffPin } = await import('./staffPin');
+const { __resetAuthHealth, isAuthLost } = await import('./authHealth');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 async function clearDb() {
@@ -938,5 +954,116 @@ describe('Modo restaurante — sync de mesas/comandas', () => {
 
     expect(await db.action_queue.count()).toBe(0);
     expect((await db.recipe_ingredients.get('r1'))?.sync_status).toBe('synced');
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Regresión: "Sincronización fallida: Producto. new row violates row-level security
+// policy" que desaparecía al cerrar sesión y volver a entrar. Sin sesión, supabase-js
+// manda las peticiones como anónimo y el servidor responde con errores de permisos:
+// la cola gastaba los reintentos y daba por fallido un dato perfecto.
+describe('sesión caducada o perdida', () => {
+  beforeEach(async () => {
+    await clearDb();
+    // Un test sustituye `session` por un getter: aquí vuelve a ser una propiedad normal
+    Object.defineProperty(mockState, 'session', { value: validSession(), writable: true, configurable: true, enumerable: true });
+    resetMock();
+    __resetAuthHealth();
+    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+  });
+
+  const eventosDe = async (nombre: string, fn: () => Promise<void>) => {
+    let n = 0;
+    const h = () => { n++; };
+    window.addEventListener(nombre, h);
+    try { await fn(); } finally { window.removeEventListener(nombre, h); }
+    return n;
+  };
+
+  it('sin sesión NO se intenta subir: todo queda pendiente, sin gastar reintentos, y se avisa una vez', async () => {
+    mockState.session = null;
+    mockState.refresh = { ok: false, message: 'Auth session missing!' };
+    const id = await seedQueueItem({ type: 'AUDIT', payload: { id: 'a1', business_id: 'b1' } });
+
+    const avisos = await eventosDe('nexus-auth-lost', async () => {
+      await processQueue();
+      await processQueue(); // un segundo intento no repite el aviso
+    });
+
+    const item = await db.action_queue.get(id);
+    expect(item?.status).toBe('pending');
+    expect(item?.retries).toBe(0);
+    expect(mockState.calls.some(c => c.op === 'insert' && c.key === 'audit_logs')).toBe(false);
+    expect(isAuthLost()).toBe(true);
+    expect(avisos).toBe(1);
+  });
+
+  it('una sesión caducada se renueva sola y la cola sube normalmente', async () => {
+    mockState.session = { expires_at: Math.floor(Date.now() / 1000) - 60 }; // ya caducó
+    const id = await seedQueueItem({ type: 'AUDIT', payload: { id: 'a2', business_id: 'b1' } });
+
+    await processQueue();
+
+    expect(await db.action_queue.get(id)).toBeUndefined(); // subido y borrado de la cola
+    expect(mockState.calls.some(c => c.op === 'insert' && c.key === 'audit_logs')).toBe(true);
+    expect(isAuthLost()).toBe(false);
+  });
+
+  it('un error de permisos con la sesión perdida a mitad de camino vuelve a pendiente SIN gastar el reintento', async () => {
+    // Al empezar la sesión parece vigente, pero el servidor responde RLS (token revocado)
+    const id = await seedQueueItem({ type: 'PRODUCT_SYNC', payload: { id: 'p1', business_id: 'b1', name: 'X', sku: null } });
+    mockState.responses['products:upsert'] = { error: { message: 'new row violates row-level security policy for table "products"' } };
+    // …y al volver a comprobar, ya no hay sesión ni se puede renovar
+    const original = mockState.session;
+    let llamadas = 0;
+    Object.defineProperty(mockState, 'session', {
+      configurable: true,
+      get() { llamadas++; return llamadas <= 1 ? original : null; },
+      set() { /* ignorar */ },
+    });
+    mockState.refresh = { ok: false, message: 'Invalid Refresh Token: Refresh Token Not Found' };
+
+    await processQueue();
+
+    const item = await db.action_queue.get(id);
+    expect(item?.status).toBe('pending');
+    expect(item?.retries).toBe(0);
+    expect(item?.status).not.toBe('failed');
+    expect(isAuthLost()).toBe(true);
+  });
+
+  it('con la sesión BIEN, un error de permisos sí es del dato y sigue el camino de siempre (cuenta el reintento)', async () => {
+    const id = await seedQueueItem({ type: 'PRODUCT_SYNC', payload: { id: 'p2', business_id: 'otro-negocio', name: 'Y', sku: null } });
+    mockState.responses['products:upsert'] = { error: { message: 'new row violates row-level security policy for table "products"' } };
+
+    await processQueue();
+
+    const item = await db.action_queue.get(id);
+    expect(item?.status).toBe('pending');
+    expect(item?.retries).toBe(1);
+  });
+
+  it('al recuperar la sesión se emite el evento para reanudar', async () => {
+    mockState.session = null;
+    mockState.refresh = { ok: false, message: 'Auth session missing!' };
+    await seedQueueItem({ type: 'AUDIT', payload: { id: 'a3', business_id: 'b1' } });
+    await processQueue();
+    expect(isAuthLost()).toBe(true);
+
+    mockState.session = validSession();
+    const restaurado = await eventosDe('nexus-auth-restored', async () => { await processQueue(); });
+
+    expect(restaurado).toBe(1);
+    expect(isAuthLost()).toBe(false);
+  });
+
+  it('sin red no se concluye que se perdió la sesión', async () => {
+    mockState.session = null;
+    mockState.refresh = { ok: false, message: 'AuthRetryableFetchError: Failed to fetch' };
+    await seedQueueItem({ type: 'AUDIT', payload: { id: 'a4', business_id: 'b1' } });
+
+    await processQueue();
+
+    expect(isAuthLost()).toBe(false);
   });
 });

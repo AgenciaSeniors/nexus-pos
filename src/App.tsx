@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
+import { friendlySyncError } from './lib/syncResolution';
 import { type Staff, db } from './lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { isRestaurantMode } from './lib/businessType';
@@ -981,6 +982,9 @@ function BusinessApp() {
         if (!window.location.hash.includes('type=recovery')) {
             setLoading(true);
             await fetchProfileAndSync(newSession.user.id, false);
+            import('./lib/sync').then(({ retryFailedItems }) =>
+              retryFailedItems().catch(err => console.warn('Retry tras entrar falló:', err))
+            );
         }
       }
       else if (event === 'TOKEN_REFRESHED' && newSession) {
@@ -1003,9 +1007,10 @@ function BusinessApp() {
           // El token expiró (no fue logout del usuario).
           // Mantenemos al usuario en la app: sus datos están en IndexedDB y puede seguir
           // trabajando. El sync fallará hasta que reconecte y Supabase renueve el token.
-          toast.warning("Tu sesión expiró, pero tus datos están seguros. Reconecta cuando puedas.", {
-            duration: 8000
-          });
+          // OJO: sin sesión Supabase NO renueva nada por su cuenta —hay que volver a
+          // entrar—, así que antes se quedaba sin enviar nada. ensureValidSession lo
+          // intenta renovar y, si no se puede, muestra el aviso fijo con "Volver a entrar".
+          import('./lib/authHealth').then(({ ensureValidSession }) => ensureValidSession()).catch(() => {});
           // NO limpiar currentStaff ni showStaffSelector → usuario permanece en la app
           return;
         }
@@ -1239,15 +1244,44 @@ function SyncEventToasts() {
     };
     const handleSyncFailed = (e: Event) => {
       const { type, error } = (e as CustomEvent).detail;
-      toast.error(`Sincronización fallida: ${type}. ${error?.includes('Failed to fetch') ? 'Sin conexión al servidor.' : error?.slice(0, 80) || 'Error desconocido.'}`, { duration: 8000 });
+      // Los mensajes crudos del servidor ("new row violates row-level security policy
+      // for table products") asustaban y no decían qué hacer: se traducen.
+      toast.error(friendlySyncError(type, error), { duration: 10000 });
+    };
+    // Sin sesión válida NO se está enviando nada. Antes cada operación agotaba sus
+    // reintentos y salía un aviso rojo por cada una; ahora un solo aviso, fijo, con
+    // el botón para volver a entrar (los datos siguen a salvo en el teléfono).
+    const handleAuthLost = () => {
+      toast.error('Se perdió la sesión: lo que vendes se guarda en el teléfono pero NO se está enviando. Vuelve a entrar para reanudar; no pierdes datos.', {
+        id: 'auth-lost',
+        duration: Infinity,
+        action: {
+          label: 'Volver a entrar',
+          onClick: () => {
+            // Mismo recorrido que "Cerrar sesión": al recargar se ve el inicio de sesión y,
+            // al entrar, la cola pendiente se envía sola.
+            localStorage.removeItem('nexus_business_id');
+            localStorage.removeItem('nexus_staff_id');
+            supabase.auth.signOut().catch(() => {}).finally(() => window.location.reload());
+          },
+        },
+      });
+    };
+    const handleAuthRestored = () => {
+      toast.dismiss('auth-lost');
+      toast.success('Sesión restablecida. Sincronizando…', { duration: 4000 });
     };
     window.addEventListener('nexus-stock-alert', handleStockAlert);
     window.addEventListener('nexus-stock-conflict', handleStockConflict);
     window.addEventListener('nexus-sync-failed', handleSyncFailed);
+    window.addEventListener('nexus-auth-lost', handleAuthLost);
+    window.addEventListener('nexus-auth-restored', handleAuthRestored);
     return () => {
       window.removeEventListener('nexus-stock-alert', handleStockAlert);
       window.removeEventListener('nexus-stock-conflict', handleStockConflict);
       window.removeEventListener('nexus-sync-failed', handleSyncFailed);
+      window.removeEventListener('nexus-auth-lost', handleAuthLost);
+      window.removeEventListener('nexus-auth-restored', handleAuthRestored);
     };
   }, []);
   return null;

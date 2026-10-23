@@ -475,3 +475,58 @@ export function decideStaffPinMerge(
   if (remotePin && remotePin !== localPin) return 'adopt_remote_pin';
   return 'keep';
 }
+
+/**
+ * ¿El error viene de que la SESIÓN ya no vale (token caducado, sin sesión) y no del
+ * dato en sí?
+ *
+ * Cuando el cliente de Supabase se queda sin sesión, NO falla con "401": manda las
+ * peticiones con la clave anónima, y el servidor responde con errores de permisos
+ * ("new row violates row-level security policy", "forbidden"). Parecen un fallo de
+ * la base de datos, pero en realidad significan "no hay usuario autenticado". Contarlos
+ * como errores permanentes agotaba los reintentos y dejaba las ventas marcadas como
+ * fallidas aunque el dato estuviera perfecto.
+ */
+export function isAuthRelatedError(errorMessage: string): boolean {
+  if (!errorMessage) return false;
+  const m = errorMessage.toLowerCase();
+  return (
+    m.includes('row-level security') ||
+    m.includes('row level security') ||
+    m.includes('jwt') ||
+    m.includes('forbidden') ||
+    m.includes('unauthorized') ||
+    m.includes('not authenticated') ||
+    m.includes('auth session missing') ||
+    m.includes('invalid refresh token') ||
+    m.includes('refresh token') ||
+    m.includes('pgrst301') ||
+    m.includes('permission denied') ||
+    /\b401\b/.test(m)
+  );
+}
+
+/**
+ * Mensaje del aviso rojo de "Sincronización fallida", en lenguaje de persona.
+ * Los mensajes crudos del servidor ("new row violates row-level security policy for
+ * table products") asustaban y no decían qué hacer.
+ */
+export function friendlySyncError(label: string, rawError: string | undefined | null): string {
+  const raw = (rawError || '').trim();
+  const m = raw.toLowerCase();
+  const head = `No se pudo enviar (${label}).`;
+  if (!raw) return `${head} Error desconocido.`;
+  if (m.includes('failed to fetch') || m.includes('networkerror') || m.includes('tiempo de espera')) {
+    return `${head} Sin conexión con el servidor; se reintentará solo.`;
+  }
+  if (isAuthRelatedError(raw)) {
+    return `${head} La sesión no es válida. Cierra sesión y vuelve a entrar; tus datos están a salvo.`;
+  }
+  if (m.includes('foreign key') || m.includes('violates foreign key')) {
+    return `${head} Falta un dato relacionado (por ejemplo, un producto o un empleado que aún no se ha enviado).`;
+  }
+  if (m.includes('duplicate key') || m.includes('unique constraint')) {
+    return `${head} Ese registro ya existe en el servidor.`;
+  }
+  return `${head} ${raw.slice(0, 80)}`;
+}
