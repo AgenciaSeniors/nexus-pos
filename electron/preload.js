@@ -4,6 +4,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Función para pedir la versión de la app
     getVersion: () => ipcRenderer.invoke('get-version'),
 
+    // Impresión térmica directa por red: devuelve { ok } o { ok:false, error }
+    printRaw: (host, port, bytes) => ipcRenderer.invoke('print-raw', host, port, bytes),
+
     // Función para imprimir
     printTicket: () => ipcRenderer.send('print-ticket'),
 

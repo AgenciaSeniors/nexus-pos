@@ -8,6 +8,8 @@ import { supabase } from '../lib/supabase';
 import { logAuditAction } from '../lib/audit';
 import { currency } from '../lib/currency';
 import { TicketModal } from '../components/TicketModal';
+import { loadPrinterConfig, isPrinterReady } from '../lib/printer/config';
+import { printPlainText } from '../lib/printer/service';
 import { toast } from 'sonner';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -1634,7 +1636,15 @@ export function FinancePage() {
   };
 
   // En Electron usar el IPC nativo (evita el "no admite vista previa" de Chromium)
-  const handlePrint = () => {
+  const handlePrint = async () => {
+    // Impresora térmica configurada: el Corte Z sale directo en ESC/POS.
+    const printerCfg = loadPrinterConfig();
+    if (isPrinterReady(printerCfg)) {
+      const r = await printPlainText(buildZText(), null, printerCfg);
+      if (r.ok) toast.success('Reporte enviado a la impresora');
+      else toast.error(r.error, { duration: 8000 });
+      return;
+    }
     if (window.electronAPI) {
       window.electronAPI.printTicket();
     } else {

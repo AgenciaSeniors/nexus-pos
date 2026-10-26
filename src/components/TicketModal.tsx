@@ -6,6 +6,8 @@ import { Printer, X, User, Star, MessageCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { buildTicketText } from '../lib/ticketText';
 import logo from '../assets/logo.png';
+import { loadPrinterConfig, isPrinterReady } from '../lib/printer/config';
+import { printTicket } from '../lib/printer/service';
 
 interface TicketModalProps {
   sale?: Sale | null;
@@ -58,7 +60,17 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
   // Subtotal antes de descuento (suma de ítems)
   const itemsSubtotal = doc.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
-  const handlePrint = () => {
+  const printerCfg = loadPrinterConfig();
+  const thermalReady = isPrinterReady(printerCfg);
+
+  const handlePrint = async () => {
+    // Impresora térmica configurada: ESC/POS directo, sin cuadros de diálogo.
+    if (thermalReady) {
+      const r = await printTicket(doc, config, isPreBill, printerCfg);
+      if (r.ok) toast.success('Ticket enviado a la impresora');
+      else toast.error(r.error, { duration: 8000 });
+      return;
+    }
     if (window.electronAPI) {
       window.electronAPI.printTicket();
     } else {
@@ -303,7 +315,7 @@ export function TicketModal({ sale, order, onClose }: TicketModalProps) {
               autoFocus
               className={`flex-1 text-white font-bold py-3 rounded-xl transition-colors flex justify-center items-center gap-2 shadow-lg ${isPreBill ? 'bg-orange-500 hover:bg-orange-600' : 'bg-[#0040FC] hover:bg-[#0040FC]/90'}`}
             >
-              <Printer size={18} /> Imprimir / PDF
+              <Printer size={18} /> {thermalReady ? 'Imprimir' : 'Imprimir / PDF'}
             </button>
           </div>
         </div>

@@ -9,6 +9,7 @@ import { round3 } from '../lib/recipe';
 import { matchesSearch, normalizeText } from '../lib/textSearch';
 import { pickActiveShift } from '../lib/activeShift';
 import { TicketModal } from '../components/TicketModal';
+import { autoPrintSale } from '../lib/printer/service';
 import { PaymentModal } from '../components/PaymentModal';
 import { ParkedOrdersModal } from '../components/ParkedOrdersModal';
 import { CustomerSelect } from '../components/CustomerSelect';
@@ -520,6 +521,11 @@ export function PosPage() {
         });
 
         setLastSale(sale);
+        // Impresora térmica (si está configurada): el ticket sale solo al cobrar. Un fallo
+        // de impresión NUNCA afecta a la venta, que ya está guardada.
+        db.settings.get(sale.business_id).then(biz => autoPrintSale(sale, biz)).then(r => {
+            if (r && !r.ok) toast.error(`Venta guardada, pero el ticket no salió: ${r.error}`, { duration: 8000 });
+        }).catch(() => {});
         setCart([]);
         setSelectedCustomer(null);
         setOrderNote('');

@@ -18,6 +18,8 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // ANTES de que exista el WebView: nada lo está usando todavía.
         limpiarCopiaViejaSiSeActualizo();
+        // Los plugins propios se registran ANTES de super.onCreate (así lo exige Capacitor).
+        registerPlugin(LanPrinterPlugin.class);
         super.onCreate(savedInstanceState);
     }
 

@@ -23,24 +23,19 @@ test('el botón Cerrar Sesión queda dentro de la pantalla en ventanas bajas', a
   await page.route('**/*.supabase.co/**', route => route.abort('failed'));
 
   await page.goto('/');
-  await page.waitForFunction(
-    async () => !!(await indexedDB.databases?.())?.some(d => d.name === 'NexusPOS_DB'),
-    null,
-    { timeout: 15000 },
-  );
+  await page.waitForFunction(async () => {
+    const d = (window as unknown as { dbDebug?: { db: { open: () => Promise<unknown> } } }).dbDebug;
+    if (!d) return false;
+    await d.db.open();
+    return true;
+  }, null, { timeout: 30000 });
 
   await page.evaluate(async ({ BIZ, STAFF }) => {
-    const db = await new Promise<IDBDatabase>((res, rej) => {
-      const r = indexedDB.open('NexusPOS_DB');
-      r.onsuccess = () => res(r.result);
-      r.onerror = () => rej(r.error);
-    });
-    const put = (store: string, value: unknown) => new Promise<void>((res, rej) => {
-      const tx = db.transaction(store, 'readwrite');
-      tx.objectStore(store).put(value);
-      tx.oncomplete = () => res();
-      tx.onerror = () => rej(tx.error);
-    });
+    // Siembra con la propia Dexie de la app: el esquema está garantizado (abrir IndexedDB a mano
+    // fallaba al azar con "almacén no encontrado" mientras la app creaba las tablas).
+    const { db } = (window as unknown as { dbDebug: { db: { open: () => Promise<unknown>; table: (n: string) => { put: (v: unknown) => Promise<unknown> } } } }).dbDebug;
+    await db.open();
+    const put = (store: string, value: unknown) => db.table(store).put(value).then(() => undefined);
     await put('staff', { id: STAFF, business_id: BIZ, name: 'Dueña', role: 'admin', pin: '', active: true, sync_status: 'synced' });
     await put('settings', {
       id: BIZ, name: 'Negocio Prueba', business_type: 'retail', status: 'active',

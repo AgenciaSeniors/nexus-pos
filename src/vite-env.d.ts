@@ -8,6 +8,7 @@ interface Window {
   electronAPI?: {
     getVersion: () => Promise<string>;
     printTicket: () => void;
+    printRaw?: (host: string, port: number, bytes: number[]) => Promise<{ ok: boolean; error?: string }>;
     onPrintResult: (callback: (success: boolean, errorType: string | null) => void) => void;
     onNavigate: (callback: (path: string) => void) => (() => void);
   };

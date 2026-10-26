@@ -35,24 +35,20 @@ async function sembrarNegocio(page: Page, opts: { countMode: boolean }) {
   await aislarDeLaNube(page);
   await page.goto('/');
   // Espera a que Dexie haya creado la base con el esquema actual.
+  // Se espera a que la propia Dexie de la app esté abierta (con su esquema completo): abrir IndexedDB
+  // a mano apenas aparece la base fallaba al azar con "almacén no encontrado".
   await page.waitForFunction(async () => {
-    const dbs = await indexedDB.databases?.();
-    return !!dbs?.some(d => d.name === 'NexusPOS_DB');
-  }, null, { timeout: 15000 });
+    const d = (window as unknown as { dbDebug?: { db: { open: () => Promise<unknown> } } }).dbDebug;
+    if (!d) return false;
+    await d.db.open();
+    return true;
+  }, null, { timeout: 30000 });
 
   await page.evaluate(async ({ BIZ, STAFF, PRODUCTS, countMode }) => {
-    const open = () => new Promise<IDBDatabase>((res, rej) => {
-      const r = indexedDB.open('NexusPOS_DB');
-      r.onsuccess = () => res(r.result);
-      r.onerror = () => rej(r.error);
-    });
-    const db = await open();
-    const put = (store: string, value: unknown) => new Promise<void>((res, rej) => {
-      const tx = db.transaction(store, 'readwrite');
-      tx.objectStore(store).put(value);
-      tx.oncomplete = () => res();
-      tx.onerror = () => rej(tx.error);
-    });
+    // Siembra con la propia Dexie de la app (esquema garantizado; a mano fallaba al azar).
+    const { db } = (window as unknown as { dbDebug: { db: { open: () => Promise<unknown>; table: (n: string) => { put: (v: unknown) => Promise<unknown> } } } }).dbDebug;
+    await db.open();
+    const put = (store: string, value: unknown) => db.table(store).put(value).then(() => undefined);
 
     await put('staff', {
       id: STAFF, business_id: BIZ, name: 'Dependiente Prueba',

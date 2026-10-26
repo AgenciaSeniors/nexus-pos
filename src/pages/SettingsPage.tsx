@@ -19,6 +19,8 @@ import {
 import { supabase } from '../lib/supabase';
 import { checkForUpdate, type AppVersionInfo } from '../lib/version';
 import { downloadUrlForPlatform } from '../lib/platform';
+import { loadPrinterConfig, savePrinterConfig, isValidIPv4, type PrinterConfig } from '../lib/printer/config';
+import { printTestPage, canPrintToNetwork } from '../lib/printer/service';
 import { RestaurantAdmin } from '../components/RestaurantAdmin';
 import { MenuModifiersAdmin } from '../components/MenuModifiersAdmin';
 import { RecipeAdmin } from '../components/RecipeAdmin';
@@ -243,13 +245,8 @@ export function SettingsPage() {
     }
   };
 
-  const [printerConfig, setPrinterConfig] = useState(() => {
-    try {
-      const saved = localStorage.getItem('nexus_printer_config');
-      if (saved) return JSON.parse(saved);
-    } catch { /* ignore */ }
-    return { name: 'Impresora Térmica', ip: '192.168.1.200', width: '80mm', autoPrint: true };
-  });
+  const [printerConfig, setPrinterConfig] = useState<PrinterConfig>(() => loadPrinterConfig());
+  const [printerTesting, setPrinterTesting] = useState(false);
 
   const settings = useLiveQuery(async () => {
     if (!businessId) return null;
@@ -351,9 +348,13 @@ export function SettingsPage() {
       }
   };
 
-  const handleTestPrint = () => {
-      toast.info(`🖨️ Imprimiendo prueba en ${printerConfig.ip}...`);
-      setTimeout(() => toast.success('Prueba enviada'), 1000);
+  const handleTestPrint = async () => {
+      if (!isValidIPv4(printerConfig.ip)) { toast.error('Escribe la IP de la impresora (ej. 192.168.1.50)'); return; }
+      setPrinterTesting(true);
+      const r = await printTestPage(printerConfig);
+      setPrinterTesting(false);
+      if (r.ok) toast.success('Prueba enviada: revisa que haya salido el papel');
+      else toast.error(r.error);
   };
 
   // ✅ NUEVA FUNCIÓN: EXPORTAR RESPALDO DE TODA LA BASE DE DATOS
@@ -760,43 +761,73 @@ export function SettingsPage() {
                     <div className="bg-[#F3F4F6] p-4 rounded-xl mb-6 flex items-start gap-3 border border-gray-200">
                         <Smartphone className="text-[#0040FC] mt-1" size={20}/>
                         <div>
-                            <h4 className="font-bold text-[#1F2937] text-sm">Modo Híbrido</h4>
+                            <h4 className="font-bold text-[#1F2937] text-sm">Impresora de red (Wi-Fi / cable)</h4>
                             <p className="text-xs text-[#6B7280] mt-1">
-                                Si estás usando Senio en un celular, la impresión se realizará a través del navegador o la app nativa instalada.
+                                Este dispositivo y la impresora deben estar en la misma red. Para saber la IP de la impresora, apágala, mantén pulsado el botón FEED y enciéndela: imprime una hoja de prueba con su IP.
+                                {!canPrintToNetwork() && ' Desde el navegador no se puede imprimir directo: usa la app de Android o la de Windows.'}
                             </p>
                         </div>
                     </div>
 
                     <div className="space-y-5">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div className="flex items-center gap-2">
+                            <input type="checkbox" id="printerEnabled" checked={printerConfig.enabled} onChange={e => setPrinterConfig({...printerConfig, enabled: e.target.checked})}
+                                className="w-5 h-5 text-[#0040FC] rounded focus:ring-[#0040FC] border-gray-300"/>
+                            <label htmlFor="printerEnabled" className="text-sm font-bold text-[#1F2937]">Usar impresora térmica en este dispositivo</label>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                            <div className="md:col-span-2">
+                                <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Dirección IP</label>
+                                <input type="text" inputMode="decimal" placeholder="192.168.1.50" value={printerConfig.ip} onChange={e => setPrinterConfig({...printerConfig, ip: e.target.value})}
+                                    className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none font-mono" />
+                            </div>
                             <div>
-                                <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Dirección IP / Host</label>
-                                <input type="text" value={printerConfig.ip} onChange={e => setPrinterConfig({...printerConfig, ip: e.target.value})}
+                                <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Puerto</label>
+                                <input type="number" value={printerConfig.port} onChange={e => setPrinterConfig({...printerConfig, port: Number(e.target.value) || 9100})}
                                     className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none font-mono" />
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Ancho de Papel</label>
-                                <select value={printerConfig.width} onChange={e => setPrinterConfig({...printerConfig, width: e.target.value})}
+                                <select value={printerConfig.width} onChange={e => setPrinterConfig({...printerConfig, width: e.target.value as PrinterConfig['width']})}
                                     className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none bg-white">
-                                    <option value="58mm">58mm (Estándar)</option>
-                                    <option value="80mm">80mm (Ancho)</option>
+                                    <option value="58mm">58mm (32 columnas)</option>
+                                    <option value="80mm">80mm (48 columnas)</option>
                                 </select>
                             </div>
+                            <div className="md:col-span-2">
+                                <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Tildes y ñ</label>
+                                <select value={printerConfig.codepage} onChange={e => setPrinterConfig({...printerConfig, codepage: e.target.value as PrinterConfig['codepage']})}
+                                    className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none bg-white">
+                                    <option value="cp858">Normal (CP858, recomendada)</option>
+                                    <option value="cp437">Alternativa (CP437)</option>
+                                    <option value="ascii">Sin tildes (siempre sale bien)</option>
+                                </select>
+                                <p className="text-xs text-[#6B7280] mt-1">Si en la hoja de prueba las tildes salen raras, prueba otra opción.</p>
+                            </div>
                         </div>
-                        
+
                         <div className="flex items-center gap-2">
-                            <input type="checkbox" id="autoPrint" checked={printerConfig.autoPrint} onChange={e => setPrinterConfig({...printerConfig, autoPrint: e.target.checked})} 
+                            <input type="checkbox" id="autoPrint" checked={printerConfig.autoPrint} onChange={e => setPrinterConfig({...printerConfig, autoPrint: e.target.checked})}
                                 className="w-5 h-5 text-[#0040FC] rounded focus:ring-[#0040FC] border-gray-300"/>
                             <label htmlFor="autoPrint" className="text-sm font-bold text-[#1F2937]">Imprimir ticket automáticamente al cobrar</label>
                         </div>
+                        <div className="flex items-center gap-2">
+                            <input type="checkbox" id="openDrawer" checked={printerConfig.openDrawer} onChange={e => setPrinterConfig({...printerConfig, openDrawer: e.target.checked})}
+                                className="w-5 h-5 text-[#0040FC] rounded focus:ring-[#0040FC] border-gray-300"/>
+                            <label htmlFor="openDrawer" className="text-sm font-bold text-[#1F2937]">Abrir la gaveta de dinero en cobros con efectivo</label>
+                        </div>
 
-                        <div className="pt-4 border-t border-gray-100 flex justify-end gap-3">
-                            <button onClick={handleTestPrint} className="px-6 py-3 border border-[#0040FC] text-[#0040FC] font-bold rounded-xl hover:bg-[#0040FC]/5 transition-colors">
-                                Probar Conexión
+                        <div className="pt-4 border-t border-gray-100 flex flex-col sm:flex-row sm:justify-end gap-3">
+                            <button onClick={handleTestPrint} disabled={printerTesting} className="px-6 py-3 border border-[#0040FC] text-[#0040FC] font-bold rounded-xl hover:bg-[#0040FC]/5 transition-colors disabled:opacity-50">
+                                {printerTesting ? 'Enviando…' : 'Imprimir página de prueba'}
                             </button>
                             <button
                                 onClick={() => {
-                                    localStorage.setItem('nexus_printer_config', JSON.stringify(printerConfig));
+                                    const clean = { ...printerConfig, ip: printerConfig.ip.trim() };
+                                    if (clean.enabled && !isValidIPv4(clean.ip)) { toast.error('Para activar la impresora escribe una IP válida (ej. 192.168.1.50)'); return; }
+                                    setPrinterConfig(clean);
+                                    savePrinterConfig(clean);
                                     toast.success('Configuración de impresora guardada');
                                 }}
                                 className="bg-[#0040FC] text-white font-bold py-3 px-8 rounded-xl shadow-lg hover:bg-[#0040FC]/90 transition-all"
@@ -1258,6 +1289,7 @@ export function SettingsPage() {
                   'Cambio de vendedor: si hay varios en el equipo, toca el badge con el nombre en la parte superior del carrito',
                   'Notas por ítem: toca el lápiz ✏️ en cualquier producto del carrito para agregar una nota (ej: "variada con extra queso") y/o cambiar el precio de ese ítem específico',
                   'Toca "Cobrar" → elige método → confirma → el ticket se genera automáticamente con las notas incluidas',
+                  'Impresora térmica: en Ajustes → Hardware escribe la IP de la impresora (la imprime ella misma al encenderla con el botón FEED pulsado), pulsa "Imprimir página de prueba" y guarda. Desde ahí cada venta imprime su ticket sola, el botón "Imprimir" reimprime y el Corte Z también sale por la impresora. El teléfono y la impresora deben estar en el mismo Wi-Fi',
                 ],
               },
               {

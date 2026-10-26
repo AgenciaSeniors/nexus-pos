@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, session, shell, Menu } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { sendRaw } from './rawPrint.js';
 
 const __dirname = path.dirname(fileURLToPath(
     import.meta.url));
@@ -147,6 +148,9 @@ app.whenReady().then(() => {
 
     // 1. Obtener versión
     ipcMain.handle('get-version', () => app.getVersion());
+
+    // 1b. Impresión térmica directa por red (ESC/POS por TCP 9100)
+    ipcMain.handle('print-raw', (_event, host, port, bytes) => sendRaw(host, port, bytes));
 
     // 2. Manejar impresión (LÓGICA IMPLEMENTADA)
     ipcMain.on('print-ticket', (event) => {
