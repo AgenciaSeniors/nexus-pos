@@ -3,6 +3,7 @@ import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff, type BusinessConfig } from '../lib/db';
 import { syncManualFull, syncPush, isOnline, addToQueue, retryFailedItems } from '../lib/sync';
+import { describeSyncSummary, NO_CONNECTION_MESSAGE } from '../lib/syncReport';
 import { ADMIN_WHATSAPP_PHONE } from '../lib/config';
 import { hashPin, verifyPin, isPinHashed } from '../lib/pin';
 import { logAuditAction } from '../lib/audit';
@@ -315,21 +316,24 @@ export function SettingsPage() {
   };
 
   const handleManualSync = async () => {
-      if (!isOnline()) {
-          toast.error('Sin conexión a internet');
-          return;
-      }
       setIsSyncing(true);
       const timeout = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('timeout')), 45000)
       );
       try {
-          await Promise.race([syncManualFull(), timeout]);
-          toast.success('Sincronización completada');
+          const resumen = await Promise.race([syncManualFull(), timeout]);
+          const { level, message } = describeSyncSummary(resumen);
+          if (resumen.authLost && level === 'error') return; // ya hay un aviso fijo de sesión perdida
+          if (level === 'success') toast.success('Sincronización completada');
+          else if (level === 'error') toast.error(message, { duration: 12000 });
+          else toast.warning(message, { duration: 8000 });
       } catch (error) {
-          const isTimeout = error instanceof Error && error.message === 'timeout';
+          const msg = error instanceof Error ? error.message : '';
           console.error(error);
-          toast.error(isTimeout ? 'La sincronización tardó demasiado. Reintenta más tarde.' : 'Error de sincronización');
+          if (msg === 'timeout') toast.error('La sincronización tardó demasiado. Reintenta más tarde.');
+          else if (msg.startsWith('Sin conexión')) toast.error(NO_CONNECTION_MESSAGE);
+          else if (msg.startsWith('Sincronización parcial')) toast.warning(msg, { duration: 8000 });
+          else toast.error('Error de sincronización');
       } finally {
           setIsSyncing(false);
       }
@@ -1353,6 +1357,9 @@ export function SettingsPage() {
                   'El ícono en la barra lateral muestra el tiempo desde la última sync y el estado: 🟢 al día · 🟡 subiendo · 🟠 error',
                   'Sin internet: la app funciona igual, los cambios quedan en cola y suben solos al reconectarse',
                   'Si el ícono queda en 🟠 (error), al reconectarte se reintenta automáticamente — también puedes forzarlo manualmente',
+                  'El botón de sincronizar (arriba a la derecha) siempre se puede tocar: comprueba de verdad si hay internet, intenta subir todo AL MOMENTO y te dice cuántos cambios quedaron sin enviar, si quedó alguno',
+                  'Si vuelve el internet, la app lo detecta sola en unos segundos (aunque el teléfono no lo avise) y sube lo pendiente sin que hagas nada. Ya no hace falta cerrar sesión y volver a entrar',
+                  'Inicio de sesión: el correo de la última cuenta queda escrito. La contraseña la guarda el gestor de contraseñas de tu teléfono (Google/Samsung): acepta cuando te ofrezca guardarla',
                   'Aviso amarillo en el POS: si el stock tiene más de 2 horas sin actualizarse desde la nube, aparece una alerta — útil cuando hay varios dispositivos',
                   'Aviso naranja: si llevas 3 o más días sin sincronizar, la app te recuerda que tus datos solo existen en ese dispositivo',
                   'Varios dispositivos: la app funciona en múltiples teléfonos — los puntos de lealtad y el stock se sincronizan correctamente aunque cada uno haya trabajado offline',

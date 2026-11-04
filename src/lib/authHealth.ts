@@ -30,6 +30,14 @@ const GET_SESSION_TIMEOUT_MS = 8_000;
 const REFRESH_TIMEOUT_MS = 15_000;
 
 let authLost = false;
+/** Comprobaciones seguidas en las que getSession() no respondió. */
+let consecutiveHangs = 0;
+// Cuántas veces seguidas puede colgarse antes de dar la sesión por inservible. Un cuelgue puntual
+// puede ser red lenta renovando el token; dos seguidos (16 s) es un cliente trabado de verdad
+// (p. ej. un punto muerto con el bloqueo de la sesión): nunca se destraba solo y lo único que lo
+// arregla es volver a entrar. Así el usuario recibe YA el aviso con su botón, en vez de esperar
+// minutos a que el vigilante de sesión lo detecte.
+const HANGS_TO_CONSIDER_STUCK = 2;
 
 /** ¿La última comprobación dijo que no hay sesión? */
 export function isAuthLost(): boolean {
@@ -39,6 +47,7 @@ export function isAuthLost(): boolean {
 /** Solo para tests */
 export function __resetAuthHealth(): void {
   authLost = false;
+  consecutiveHangs = 0;
 }
 
 function setLost(lost: boolean) {
@@ -72,7 +81,15 @@ export async function ensureValidSession(): Promise<SessionHealth> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) return 'unknown';
   try {
     const got = await within(supabase.auth.getSession(), GET_SESSION_TIMEOUT_MS);
-    if (got === 'timeout') return 'unknown'; // cliente colgado: lo trata el vigilante de sesión
+    if (got === 'timeout') {
+      consecutiveHangs += 1;
+      if (consecutiveHangs >= HANGS_TO_CONSIDER_STUCK) {
+        setLost(true); // cliente trabado: hay que volver a entrar (aviso fijo con el botón)
+        return 'lost';
+      }
+      return 'unknown'; // puede ser red lenta: se vuelve a comprobar
+    }
+    consecutiveHangs = 0;
 
     const session = got.data?.session;
     if (session && (session.expires_at ?? 0) * 1000 - Date.now() > MIN_VALIDITY_MS) {

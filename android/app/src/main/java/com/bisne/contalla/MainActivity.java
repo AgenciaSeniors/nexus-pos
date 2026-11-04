@@ -1,8 +1,10 @@
 package com.bisne.contalla;
 
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.View;
 
 import com.getcapacitor.BridgeActivity;
 
@@ -21,6 +23,11 @@ public class MainActivity extends BridgeActivity {
         // Los plugins propios se registran ANTES de super.onCreate (así lo exige Capacitor).
         registerPlugin(LanPrinterPlugin.class);
         super.onCreate(savedInstanceState);
+        // Que el gestor de contraseñas del teléfono (Google, Samsung...) pueda ofrecer guardar y
+        // rellenar el correo y la contraseña del inicio de sesión dentro de la app.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && getBridge() != null && getBridge().getWebView() != null) {
+            getBridge().getWebView().setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_YES);
+        }
     }
 
     /**

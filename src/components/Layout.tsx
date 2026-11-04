@@ -11,7 +11,9 @@ import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff } from '../lib/db';
 import { isRestaurantMode } from '../lib/businessType';
-import { syncManualFull, getLastSyncTimestamp } from '../lib/sync';
+import { syncManualFull, getLastSyncTimestamp, type SyncSummary } from '../lib/sync';
+import { getConnectivity, subscribeConnectivity } from '../lib/connectivity';
+import { describeSyncSummary, NO_CONNECTION_MESSAGE } from '../lib/syncReport';
 import { checkForUpdate } from '../lib/version';
 import { supabase } from '../lib/supabase';
 import { toast } from 'sonner';
@@ -29,8 +31,12 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   const navigate = useNavigate();
   
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isOnline, setIsOnline] = useState(getConnectivity());
   const [isSyncing, setIsSyncing] = useState(false);
+  // true mientras una sincronización manual está en curso (evita duplicarla con la automática al reconectar)
+  const manualSyncRunning = useRef(false);
+  // ídem para la automática al reconectar (el evento del navegador y el sondeo propio pueden llegar juntos)
+  const autoSyncRunning = useRef(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [isBillCounterOpen, setIsBillCounterOpen] = useState(false);
   const [showGuidePrompt, setShowGuidePrompt] = useState(false);
@@ -76,32 +82,53 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   // Mejora 5: Trial expirado detectado durante uso
   const [trialJustExpired, setTrialJustExpired] = useState(false);
 
+  // Reporta el resultado de una sincronización con lo que REALMENTE quedó (no un "éxito" a ciegas).
+  const reportSync = (r: SyncSummary, silentWhenOk = false) => {
+    // Con la sesión perdida ya hay un aviso fijo (con su botón "Volver a entrar"): no se duplica.
+    if (r.authLost && (r.pending > 0 || r.failed > 0)) return;
+    const { level, message } = describeSyncSummary(r);
+    if (level === 'success') { if (!silentWhenOk) toast.success(message); return; }
+    if (level === 'error') toast.error(message, { id: 'sync-report', duration: 12000 });
+    else toast.warning(message, { id: 'sync-report', duration: 8000 });
+  };
+
+  // Sincronización automática al volver la conexión (una sola a la vez, y nunca encima del botón).
+  const autoSyncOnReconnect = () => {
+    if (manualSyncRunning.current || autoSyncRunning.current) return;
+    autoSyncRunning.current = true;
+    setIsSyncing(true);
+    syncManualFull()
+      .then(r => reportSync(r, true))
+      .catch(() => {})
+      .finally(() => {
+        autoSyncRunning.current = false;
+        setIsSyncing(false);
+        setTimeout(() => setJustReconnected(false), 3000);
+      });
+  };
+
   useEffect(() => {
-    const handleOnline = () => {
-      setIsOnline(true);
+    // La conexión viene del módulo de conectividad: además de los eventos del navegador, sondea
+    // al servidor cuando cree que no hay red, así que se recupera aunque el WebView no avise.
+    setIsOnline(getConnectivity());
+    const unsubscribe = subscribeConnectivity((online) => {
+      setIsOnline(online);
+      if (!online) { setJustReconnected(false); return; }
       setJustReconnected(true);
       toast.success("Conexión restaurada");
-      // Auto-sync al reconectar
-      setIsSyncing(true);
-      syncManualFull()
-        .then(() => toast.success('Datos sincronizados automáticamente'))
-        .catch(() => {})
-        .finally(() => {
-          setIsSyncing(false);
-          setTimeout(() => setJustReconnected(false), 3000);
-        });
-    };
-    const handleOffline = () => { setIsOnline(false); setJustReconnected(false); };
+      autoSyncOnReconnect();
+    });
+    // El evento del navegador también sincroniza aunque la interfaz ya creyera que había red
+    // (p. ej. un cambio de Wi-Fi a datos): es lo que hacía siempre.
+    window.addEventListener('online', autoSyncOnReconnect);
     const handleTrialExpired = () => {
       setTrialJustExpired(true);
       toast.error('Tu período de prueba ha vencido. Contacta al administrador.', { duration: 15000 });
     };
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
     window.addEventListener('nexus-trial-expired', handleTrialExpired);
     return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
+      unsubscribe();
+      window.removeEventListener('online', autoSyncOnReconnect);
       window.removeEventListener('nexus-trial-expired', handleTrialExpired);
     };
   }, []);
@@ -214,22 +241,26 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
   }, []) ?? null;
 
   const handleManualSync = async () => {
-    if (!isOnline) {
-        toast.error("No hay conexión para sincronizar");
-        return;
-    }
+    if (manualSyncRunning.current) return;
+    manualSyncRunning.current = true;
     setIsSyncing(true);
     const timeout = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('timeout')), 45000)
     );
     try {
-        await Promise.race([syncManualFull(), timeout]);
-        toast.success('¡Sistema sincronizado con éxito!');
+        // syncManualFull comprueba de verdad si hay red (no se fía solo del navegador),
+        // quita las esperas de reintento y espera a que termine lo que ya estuviera subiendo.
+        const resumen = await Promise.race([syncManualFull(), timeout]);
+        reportSync(resumen);
     } catch (error) {
-        const isTimeout = error instanceof Error && error.message === 'timeout';
+        const msg = error instanceof Error ? error.message : '';
         console.error(error);
-        toast.error(isTimeout ? 'La sincronización tardó demasiado. Reintenta más tarde.' : 'Error al sincronizar');
+        if (msg === 'timeout') toast.error('La sincronización tardó demasiado. Reintenta más tarde.');
+        else if (msg.startsWith('Sin conexión')) toast.error(NO_CONNECTION_MESSAGE);
+        else if (msg.startsWith('Sincronización parcial')) toast.warning(msg, { duration: 8000 });
+        else toast.error('Error al sincronizar');
     } finally {
+        manualSyncRunning.current = false;
         setIsSyncing(false);
     }
   };
@@ -372,7 +403,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
                     Contador de Efectivo
                 </span>
             </button>
-            <button onClick={handleManualSync} disabled={!isOnline || isSyncing} className={`p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group border ${!isOnline ? 'bg-red-500/20 text-red-400 border-red-500/50' : pendingCount > 0 ? 'bg-white/5 hover:bg-white/10 text-[#F59E0B] border-[#F59E0B]/50' : failedCount > 0 ? 'bg-white/5 hover:bg-white/10 text-orange-400 border-orange-400/50' : 'bg-white/5 hover:bg-white/10 text-[#4ADE80] border-white/10'}`} title={!isOnline ? 'Sin conexión' : buttonState.title}>
+            <button onClick={handleManualSync} disabled={isSyncing} className={`p-3 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative group border ${!isOnline ? 'bg-red-500/20 text-red-400 border-red-500/50' : pendingCount > 0 ? 'bg-white/5 hover:bg-white/10 text-[#F59E0B] border-[#F59E0B]/50' : failedCount > 0 ? 'bg-white/5 hover:bg-white/10 text-orange-400 border-orange-400/50' : 'bg-white/5 hover:bg-white/10 text-[#4ADE80] border-white/10'}`} title={!isOnline ? 'Sin conexión' : buttonState.title}>
                 {!isOnline ? <WifiOff size={20} /> : buttonState.icon}
                 {(pendingCount > 0 || failedCount > 0) && (
                     <span className="absolute top-2 right-2 flex h-2.5 w-2.5">
@@ -406,7 +437,7 @@ export function Layout({ currentStaff, onChangeStaff }: LayoutProps) {
             </div>
 
             <div className="flex items-center gap-3">
-                <button onClick={handleManualSync} disabled={!isOnline || isSyncing} className={`flex items-center justify-center w-9 h-9 rounded-full transition-all ${!isOnline ? 'bg-red-500 text-white' : isSyncing || pendingCount > 0 ? 'bg-[#F59E0B] text-[#0040FC] animate-pulse' : 'bg-white text-[#0040FC]'}`}>
+                <button onClick={handleManualSync} disabled={isSyncing} className={`flex items-center justify-center w-9 h-9 rounded-full transition-all ${!isOnline ? 'bg-red-500 text-white' : isSyncing || pendingCount > 0 ? 'bg-[#F59E0B] text-[#0040FC] animate-pulse' : 'bg-white text-[#0040FC]'}`}>
                     {!isOnline ? <WifiOff size={18}/> : isSyncing ? <RefreshCw size={18} className="animate-spin"/> : pendingCount > 0 ? <Cloud size={18}/> : <CheckCircle2 size={18}/>}
                 </button>
             </div>

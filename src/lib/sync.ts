@@ -28,7 +28,8 @@ import {
 } from './db';
 import { supabase } from './supabase';
 import { fetchServerTime, getTrustedNow, getServerNow } from './licenseClock';
-import { ensureValidSession } from './authHealth';
+import { ensureValidSession, isAuthLost } from './authHealth';
+import { isReachableRecently, probeReachable, checkConnectivityNow, initConnectivity } from './connectivity';
 import type { Table } from 'dexie';
 import {
   filterRemoteItemsForBulkPut,
@@ -100,8 +101,38 @@ function setSyncWatermark(ms: number) {
   localStorage.setItem(SYNC_WATERMARK_KEY, String(Math.floor(ms)));
 }
 
+/**
+ * ¿Hay red? Se fía del navegador, pero si dice que NO y un sondeo reciente al servidor
+ * demostró que SÍ la hay (el WebView de Android a veces no avisa de que volvió la
+ * conexión), se da por buena. Ver lib/connectivity.
+ */
 export function isOnline() {
-  return typeof navigator !== 'undefined' && navigator.onLine;
+  if (typeof navigator === 'undefined') return false;
+  return navigator.onLine || isReachableRecently();
+}
+
+/**
+ * Quita la espera de reintento (backoff) de lo que está pendiente, para que se intente YA.
+ *
+ * Mientras no había internet de verdad (pero el navegador creía que sí: Wi-Fi sin datos), cada
+ * intento fallido subía la espera hasta 5 minutos. Al volver la conexión no cambia nada que
+ * despierte la cola, así que lo pendiente esperaba hasta 5 min aunque se tocara "sincronizar".
+ *
+ *  - `onlyTransient: true` (al reconectar): solo lo que falló por RED o por sesión, que no
+ *    cuenta contra los reintentos de errores de verdad.
+ *  - `onlyTransient: false` (botón de sincronizar): todo lo pendiente, porque el usuario
+ *    pidió intentarlo ahora.
+ *
+ * Devuelve cuántos elementos se liberaron.
+ */
+export async function resetRetryBackoff(opts: { onlyTransient: boolean }): Promise<number> {
+  if (!db.isOpen()) return 0;
+  const waiting = await db.action_queue
+    .where('status').equals('pending')
+    .filter(i => (i.retries || 0) > 0 && (!opts.onlyTransient || /^(Red|Sesión):/.test(i.error || '')))
+    .toArray();
+  for (const i of waiting) await db.action_queue.update(i.id, { retries: 0 });
+  return waiting.length;
 }
 
 export async function resetProcessingItems() {
@@ -463,8 +494,14 @@ async function processItem(item: QueueItem) {
   }
 }
 
-// Guard para evitar ejecuciones concurrentes del procesador de cola
-let _isProcessingQueue = false;
+// Ejecución en curso del procesador de cola (una sola a la vez).
+let _currentRun: Promise<void> | null = null;
+let _runStartedAt = 0;
+let _rerunRequested = false;
+// Si una ejecución lleva más que esto sin terminar, se da por muerta (algo se colgó sin
+// timeout) y se empieza de cero: antes quedaba marcada "en curso" PARA SIEMPRE y todos los
+// intentos posteriores —incluido el botón de sincronizar— volvían sin hacer nada.
+const STUCK_RUN_MS = 3 * 60_000;
 
 // Timeout por item. Si una operación de red tarda más que esto, se aborta la
 // espera y el item se reintenta luego. 35s da margen a redes lentas (Cuba)
@@ -496,20 +533,42 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer)) as Promise<T>;
 }
 
-export async function processQueue() {
-  if (!isOnline() || _isProcessingQueue) return;
+/**
+ * Procesa la cola de subida. Solo corre una ejecución a la vez, pero quien la pide mientras
+ * hay otra en curso:
+ *  - ESPERA a que termine (antes volvía al instante y el botón de sincronizar decía "listo"
+ *    sin haber hecho nada), y
+ *  - hace que se repase la cola al terminar, por si llegaron cosas nuevas entre medias.
+ */
+export function processQueue(): Promise<void> {
+  if (!isOnline()) return Promise.resolve();
 
-  _isProcessingQueue = true;
-  try {
-    // Recuperación de crash: cualquier item en `processing` al entrar aquí
-    // quedó de una ejecución anterior interrumpida (la app se cerró a mitad).
-    // El guard _isProcessingQueue garantiza que no hay otro _runQueue activo,
-    // así que es seguro devolverlos a `pending`.
-    await resetProcessingItems();
-    await _runQueue();
-  } finally {
-    _isProcessingQueue = false;
+  if (_currentRun) {
+    if (Date.now() - _runStartedAt < STUCK_RUN_MS) {
+      _rerunRequested = true;
+      return _currentRun;
+    }
+    console.warn('⚠️ El procesador de cola llevaba más de 3 min sin terminar: se reinicia.');
   }
+
+  _runStartedAt = Date.now();
+  _rerunRequested = false;
+  const run: Promise<void> = (async () => {
+    try {
+      do {
+        _rerunRequested = false;
+        // Recuperación de crash: cualquier item en `processing` al entrar aquí quedó de una
+        // ejecución anterior interrumpida (la app se cerró a mitad). Como solo hay una
+        // ejecución activa, es seguro devolverlos a `pending`.
+        await resetProcessingItems();
+        await _runQueue();
+      } while (_rerunRequested && isOnline());
+    } finally {
+      if (_currentRun === run) _currentRun = null;
+    }
+  })();
+  _currentRun = run;
+  return run;
 }
 
 /**
@@ -1290,26 +1349,49 @@ export async function retryFailedItems() {
     await processQueue();
 }
 
-export async function syncManualFull() {
-    if (!isOnline()) throw new Error("Sin conexión a internet");
+export interface SyncSummary {
+  /** Cambios que siguen sin subir al servidor. */
+  pending: number;
+  /** Cambios que el servidor rechazó (necesitan revisión). */
+  failed: number;
+  /** La sesión se perdió: hay que volver a entrar para que suban. */
+  authLost: boolean;
+  /** Último motivo por el que algo no subió (para mostrarlo sin tecnicismos). */
+  lastError?: string;
+}
+
+export async function syncManualFull(): Promise<SyncSummary> {
+    // El navegador a veces dice "sin red" cuando sí la hay: se comprueba de verdad antes de rendirse.
+    if (!isOnline() && !(await checkConnectivityNow())) throw new Error("Sin conexión a internet");
     // Mantenimiento: borrar items failed muy antiguos (>30d) antes de reintentar
     await pruneOldQueueItems(30);
-    // Reintentar ítems que fallaron previamente (en sync automático solo se reintenta hasta 5 veces)
     if (db.isOpen()) {
+        // Reintentar ítems que fallaron previamente (en sync automático solo se reintenta hasta 5 veces)
         await db.action_queue
             .where('status').equals('failed')
             .modify({ status: 'pending', retries: 0, error: undefined });
+        // Y quitar la espera de lo pendiente: si el usuario toca el botón, se intenta AHORA.
+        await resetRetryBackoff({ onlyTransient: false });
     }
     await syncPush();
     const pullOk = await syncPull();
+
+    const summary: SyncSummary = { pending: 0, failed: 0, authLost: isAuthLost() };
+    if (db.isOpen()) {
+        const left = await db.action_queue.where('status').anyOf('pending', 'processing', 'failed').toArray();
+        summary.pending = left.filter(i => i.status !== 'failed').length;
+        summary.failed = left.filter(i => i.status === 'failed').length;
+        summary.lastError = left.find(i => i.error)?.error;
+    }
+
     // Solo actualizar timestamp si TODO (push + pull completo) fue exitoso.
     // Si el pull heavy falló, los datos locales están desactualizados y el contador
     // "días sin sync" debe reflejarlo para que el usuario sepa que necesita reintentar.
     if (pullOk) {
         setLastSyncTimestamp();
-    } else {
-        throw new Error("Sincronización parcial: los datos pudieron no haberse actualizado completamente. Reintenta cuando la conexión sea estable.");
+        return summary;
     }
+    throw new Error("Sincronización parcial: los datos pudieron no haberse actualizado completamente. Reintenta cuando la conexión sea estable.");
 }
 
 // ─── SYNC LIVE: pull periódico para multi-dispositivo ───────────────────────
@@ -1570,46 +1652,69 @@ let _onlineHandler: (() => void) | null = null;
 let _visibilityHandler: (() => void) | null = null;
 let _authRestoredHandler: (() => void) | null = null;
 
+/**
+ * Despierta la sincronización: lo que falló o esperaba por red/sesión se libera y se sube YA,
+ * y se baja lo nuevo. Se usa al volver la conexión, al recuperar la sesión y al volver a la app.
+ */
+async function wakeUpSync(): Promise<void> {
+  if (!db.isOpen()) return;
+  // Fix 4: reintentar automáticamente items fallidos (antes solo con el botón manual en Ajustes)
+  await db.action_queue
+    .where('status').equals('failed')
+    .modify({ status: 'pending', retries: 0, error: undefined });
+  // Lo que esperaba su turno de reintento por falta de red no tiene por qué seguir esperando.
+  await resetRetryBackoff({ onlyTransient: true });
+  // processQueue ya recupera por sí mismo los items atascados en `processing`.
+  await processQueue();
+  await syncLiveData();
+}
+
+/** Un ciclo del reloj de 30 s. */
+async function periodicSyncTick(): Promise<void> {
+  if (!db.isOpen() || !isOnline()) return;
+
+  const pending = await db.action_queue.where('status').anyOf('pending', 'processing').toArray();
+  if (pending.length > 0) {
+    // ¿Hay cosas esperando por un error de red? Si el internet volvió pero el navegador nunca lo
+    // dijo (Wi-Fi sin datos que se recupera), no habrá ningún evento: se comprueba de verdad y,
+    // si ya hay camino, se quita la espera para no esperar hasta 5 minutos.
+    const waitingOnNetwork = pending.some(i =>
+      (i.retries || 0) > 0 && /^(Red|Sesión):/.test(i.error || '') && !isReadyToRetry(i.retries, i.timestamp));
+    if (waitingOnNetwork && (await probeReachable())) await resetRetryBackoff({ onlyTransient: true });
+    processQueue().catch(err => {
+      if (err?.name !== 'DatabaseClosedError') console.error("Error en sync push periódico:", err);
+    });
+  }
+  syncLiveData().catch(err => {
+    if (err?.name !== 'DatabaseClosedError') console.error("Error en sync pull periódico:", err);
+  });
+}
+
 export function startSyncListeners() {
   if (_syncIntervalId !== null) return; // Ya inicializado
 
+  // El sondeo de conexión real corre aunque no haya pantalla montada.
+  initConnectivity();
+
   _onlineHandler = () => {
-    // Fix 4: Al reconectarse, reintentar automáticamente items fallidos
-    // (antes solo se reintentaban con el botón manual en Ajustes)
-    if (db.isOpen()) {
-      db.action_queue
-        .where('status').equals('failed')
-        .modify({ status: 'pending', retries: 0, error: undefined })
-        .catch(() => {});
-    }
-    resetProcessingItems()
-      .then(() => processQueue())
-      .then(() => syncLiveData())
-      .catch(err => console.error("Error al procesar cola tras reconexión:", err));
+    wakeUpSync().catch(err => console.error("Error al procesar cola tras reconexión:", err));
   };
+  // 'online' lo dice el navegador; 'nexus-reconnected' lo dice el sondeo propio (cuando el
+  // navegador no avisa de que volvió la conexión).
   window.addEventListener('online', _onlineHandler);
+  window.addEventListener('nexus-reconnected', _onlineHandler);
 
   // Al recuperar la sesión (volvió a entrar o se renovó): lo que quedó marcado como
   // fallido por culpa de la sesión vuelve a la cola y se reanuda la sincronización.
   _authRestoredHandler = () => {
-    if (!db.isOpen()) return;
-    db.action_queue
-      .where('status').equals('failed')
-      .modify({ status: 'pending', retries: 0, error: undefined })
-      .then(() => processQueue())
-      .then(() => syncLiveData())
-      .catch(err => console.error('Error al reanudar tras recuperar la sesión:', err));
+    wakeUpSync().catch(err => console.error('Error al reanudar tras recuperar la sesión:', err));
   };
   window.addEventListener('nexus-auth-restored', _authRestoredHandler);
 
   _visibilityHandler = () => {
     if (!document.hidden && isOnline() && db.isOpen()) {
-      // Fix 4: También reintentar fallidos al volver a la app
-      db.action_queue
-        .where('status').equals('failed')
-        .modify({ status: 'pending', retries: 0, error: undefined })
-        .catch(() => {});
-      resetProcessingItems().then(() => processQueue()).catch(() => {});
+      // Volver a la app: lo que esperaba (mientras estaba en segundo plano) se intenta ya.
+      wakeUpSync().catch(() => {});
     }
   };
   document.addEventListener('visibilitychange', _visibilityHandler);
@@ -1617,20 +1722,7 @@ export function startSyncListeners() {
   // Push + Pull cada 30 segundos
   _syncIntervalId = setInterval(() => {
     if (document.hidden) return;
-    if (isOnline() && db.isOpen()) {
-      db.action_queue.where('status').anyOf('pending', 'processing').count()
-        .then(count => {
-          if (count > 0) {
-            processQueue().catch(err => {
-              if (err?.name !== 'DatabaseClosedError') console.error("Error en sync push periódico:", err);
-            });
-          }
-        })
-        .catch(() => {});
-      syncLiveData().catch(err => {
-        if (err?.name !== 'DatabaseClosedError') console.error("Error en sync pull periódico:", err);
-      });
-    }
+    periodicSyncTick().catch(() => {});
   }, 30000);
 
   resetProcessingItems().catch(() => {});
@@ -1643,6 +1735,7 @@ export function stopSyncListeners() {
   }
   if (_onlineHandler) {
     window.removeEventListener('online', _onlineHandler);
+    window.removeEventListener('nexus-reconnected', _onlineHandler);
     _onlineHandler = null;
   }
   if (_visibilityHandler) {

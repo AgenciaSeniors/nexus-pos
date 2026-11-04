@@ -27,6 +27,10 @@ const mockState = {
   // Sesión de Supabase simulada. Por defecto: válida por una hora.
   session: null as null | { expires_at: number },
   refresh: { ok: true, message: '' },
+  // true: getSession() nunca responde (cliente trabado)
+  hang: false,
+  // Si hay una promesa aquí, la PRIMERA llamada la espera (y el freno se consume): simula una petición lenta.
+  gate: null as null | Promise<void>,
 };
 const validSession = () => ({ expires_at: Math.floor(Date.now() / 1000) + 3600 });
 mockState.session = validSession();
@@ -36,10 +40,17 @@ function resetMock() {
   mockState.calls = [];
   mockState.session = validSession();
   mockState.refresh = { ok: true, message: '' };
+  mockState.gate = null;
+  mockState.hang = false;
 }
 
 vi.mock('./supabase', () => {
   const result = (key: string): Promise<MockResult> => {
+    if (mockState.gate) {
+      const g = mockState.gate;
+      mockState.gate = null;
+      return g.then(() => result(key));
+    }
     const r = mockState.responses[key];
     // Array → se consume en orden; el último valor persiste para llamadas extra.
     if (Array.isArray(r)) return Promise.resolve(r.length > 1 ? r.shift()! : (r[0] ?? { data: null, error: null }));
@@ -91,7 +102,9 @@ vi.mock('./supabase', () => {
       }),
       auth: {
         getUser: () => Promise.resolve({ data: { user: { id: 'admin-test-id' } } }),
-        getSession: () => Promise.resolve({ data: { session: mockState.session }, error: null }),
+        getSession: () => mockState.hang
+          ? new Promise(() => { /* trabado */ })
+          : Promise.resolve({ data: { session: mockState.session }, error: null }),
         refreshSession: () => {
           if (mockState.refresh.ok) {
             mockState.session = validSession();
@@ -106,9 +119,10 @@ vi.mock('./supabase', () => {
 
 // Importar DESPUÉS del mock para que sync.ts use el supabase mockeado
 const { db } = await import('./db');
-const { addToQueue, processQueue, syncLiveData, pullSalesRange, pullMovementsRange, isSalesBackfillDone } = await import('./sync');
+const { addToQueue, processQueue, syncLiveData, pullSalesRange, pullMovementsRange, isSalesBackfillDone, resetRetryBackoff, syncManualFull, isOnline } = await import('./sync');
+const { noteReachable, __resetConnectivity } = await import('./connectivity');
 const { persistStaffPin } = await import('./staffPin');
-const { __resetAuthHealth, isAuthLost } = await import('./authHealth');
+const { __resetAuthHealth, isAuthLost, ensureValidSession } = await import('./authHealth');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 async function clearDb() {
@@ -1065,5 +1079,186 @@ describe('sesión caducada o perdida', () => {
     await processQueue();
 
     expect(isAuthLost()).toBe(false);
+  });
+});
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// RECONEXIÓN: "hice cosas sin internet, volví a conectarme y no sincroniza ni con el botón"
+describe('Reconexión — lo pendiente no se queda esperando', () => {
+  it('lo que esperaba por un error de RED se libera al reconectar y sube', async () => {
+    // Estuvo "conectado" sin internet real: 5 fallos de red → espera de 5 min aunque ya haya red.
+    const id = await seedQueueItem({
+      type: 'PRODUCT_SYNC', status: 'pending', retries: 5, timestamp: Date.now(),
+      payload: { id: 'p1', business_id: 'b1', name: 'Esperando' },
+    });
+    await db.action_queue.update(id, { error: 'Red: Failed to fetch' });
+
+    // Tal cual estaba: en espera, no se procesa
+    await processQueue();
+    expect((await db.action_queue.get(id))?.status).toBe('pending');
+
+    // Al reconectar se libera y sube en el acto
+    expect(await resetRetryBackoff({ onlyTransient: true })).toBe(1);
+    await processQueue();
+    expect(await db.action_queue.get(id)).toBeUndefined();
+  });
+
+  it('al reconectar NO se les regalan reintentos a los errores de verdad', async () => {
+    const id = await seedQueueItem({
+      type: 'AUDIT', status: 'pending', retries: 3, timestamp: Date.now(),
+      payload: { id: 'a1', business_id: 'b1' },
+    });
+    await db.action_queue.update(id, { error: 'violates foreign key constraint' });
+
+    expect(await resetRetryBackoff({ onlyTransient: true })).toBe(0);
+    expect((await db.action_queue.get(id))?.retries).toBe(3);
+  });
+
+  it('el botón de sincronizar (todo) sí quita la espera de cualquier pendiente', async () => {
+    const id = await seedQueueItem({
+      type: 'AUDIT', status: 'pending', retries: 3, timestamp: Date.now(),
+      payload: { id: 'a1', business_id: 'b1' },
+    });
+    await db.action_queue.update(id, { error: 'violates foreign key constraint' });
+
+    expect(await resetRetryBackoff({ onlyTransient: false })).toBe(1);
+    expect((await db.action_queue.get(id))?.retries).toBe(0);
+  });
+
+  it('sincronizar a mano con algo en espera lo sube y lo cuenta como terminado', async () => {
+    await db.settings.put({ id: 'b1', name: 'Negocio', status: 'active' } as never);
+    const id = await seedQueueItem({
+      type: 'PRODUCT_SYNC', status: 'pending', retries: 4, timestamp: Date.now(),
+      payload: { id: 'p1', business_id: 'b1', name: 'En espera' },
+    });
+    await db.action_queue.update(id, { error: 'Red: Failed to fetch' });
+
+    const resumen = await syncManualFull();
+
+    expect(await db.action_queue.get(id)).toBeUndefined();
+    expect(resumen).toMatchObject({ pending: 0, failed: 0, authLost: false });
+  });
+
+  it('sincronizar a mano NO dice que todo va bien si algo no subió', async () => {
+    await db.settings.put({ id: 'b1', name: 'Negocio', status: 'active' } as never);
+    mockState.responses['products:upsert'] = { error: { message: 'Failed to fetch' } };
+    await seedQueueItem({
+      type: 'PRODUCT_SYNC', payload: { id: 'p1', business_id: 'b1', name: 'No sube' },
+    });
+
+    const resumen = await syncManualFull();
+
+    expect(resumen.pending).toBe(1);
+    expect(resumen.lastError).toContain('Red:');
+  });
+});
+
+describe('Cola — una sola ejecución, pero quien llega durante ella espera', () => {
+  it('una segunda llamada ESPERA a la primera y repasa lo que llegó entre medias', async () => {
+    let soltar!: () => void;
+    mockState.gate = new Promise<void>(res => { soltar = res; });
+
+    await seedQueueItem({ type: 'PRODUCT_SYNC', payload: { id: 'p1', business_id: 'b1', name: 'A' } });
+    const primera = processQueue();               // se queda esperando en la red (freno)
+    await new Promise(r => setTimeout(r, 20));
+
+    await seedQueueItem({ type: 'PRODUCT_SYNC', payload: { id: 'p2', business_id: 'b1', name: 'B' } });
+    let segundaTerminada = false;
+    const segunda = processQueue().then(() => { segundaTerminada = true; });
+    await new Promise(r => setTimeout(r, 20));
+    expect(segundaTerminada).toBe(false);          // antes volvía al instante sin haber hecho nada
+
+    soltar();
+    await Promise.all([primera, segunda]);
+    expect(await db.action_queue.count()).toBe(0); // y B también se subió
+  });
+
+  it('una ejecución colgada más de 3 min no bloquea para siempre', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      mockState.gate = new Promise<void>(() => { /* nunca se suelta: red colgada */ });
+      await seedQueueItem({ type: 'PRODUCT_SYNC', payload: { id: 'p1', business_id: 'b1', name: 'Colgado' } });
+      void processQueue().catch(() => {});
+      await new Promise(r => setTimeout(r, 30));
+
+      vi.setSystemTime(Date.now() + 4 * 60_000);    // pasan 4 minutos
+      await processQueue();                         // arranca de cero en vez de volver sin hacer nada
+      expect(await db.action_queue.count()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('Conexión — el navegador puede mentir', () => {
+  it('navigator.onLine=false pero un sondeo reciente dice que SÍ hay red: se sincroniza', async () => {
+    __resetConnectivity();
+    setOnline(false);
+    expect(isOnline()).toBe(false);
+
+    noteReachable();
+    expect(isOnline()).toBe(true);
+
+    await seedQueueItem({ type: 'PRODUCT_SYNC', payload: { id: 'p1', business_id: 'b1', name: 'X' } });
+    await processQueue();
+    expect(await db.action_queue.count()).toBe(0);
+    __resetConnectivity();
+  });
+
+  it('sin red de verdad y sin sondeo positivo sigue sin intentar nada', async () => {
+    __resetConnectivity();
+    setOnline(false);
+    await seedQueueItem({ type: 'PRODUCT_SYNC', payload: { id: 'p1', business_id: 'b1', name: 'X' } });
+    await processQueue();
+    expect(await db.action_queue.count()).toBe(1);
+  });
+});
+
+describe('Sesión trabada (punto muerto del cliente de autenticación)', () => {
+  it('una comprobación colgada no alarma; dos seguidas avisan de que hay que volver a entrar', async () => {
+    __resetAuthHealth();
+    vi.useFakeTimers();
+    try {
+      mockState.hang = true;
+
+      const primera = ensureValidSession();
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(await primera).toBe('unknown');
+      expect(isAuthLost()).toBe(false);
+
+      const segunda = ensureValidSession();
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(await segunda).toBe('lost');
+      expect(isAuthLost()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      mockState.hang = false;
+      __resetAuthHealth();
+    }
+  });
+
+  it('si getSession vuelve a responder, el contador de cuelgues se reinicia', async () => {
+    __resetAuthHealth();
+    vi.useFakeTimers();
+    try {
+      mockState.hang = true;
+      const colgada = ensureValidSession();
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(await colgada).toBe('unknown');
+
+      mockState.hang = false;
+      expect(await ensureValidSession()).toBe('ok');
+
+      mockState.hang = true;
+      const otra = ensureValidSession();
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(await otra).toBe('unknown'); // sigue siendo el primer cuelgue seguido
+      expect(isAuthLost()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      mockState.hang = false;
+      __resetAuthHealth();
+    }
   });
 });

@@ -3,11 +3,12 @@ import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-d
 import { supabase } from './lib/supabase';
 import logo from './assets/logo.png';
 import { friendlySyncError } from './lib/syncResolution';
+import { getRememberedEmail, rememberEmail } from './lib/rememberedLogin';
 import { type Staff, db } from './lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { isRestaurantMode } from './lib/businessType';
 import { startKdsRealtime, stopKdsRealtime } from './lib/realtime';
-import { type Session } from '@supabase/supabase-js';
+import { type Session, type AuthChangeEvent } from '@supabase/supabase-js';
 import { Toaster, toast } from 'sonner';
 import { syncCriticalData, syncHeavyData, syncLiveData, stopSyncListeners } from './lib/sync';
 import { startAutoBackup, stopAutoBackup } from './lib/backup';
@@ -126,7 +127,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
     }
   };
 
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(() => getRememberedEmail());
   const [password, setPassword] = useState('');
   const [otpCode, setOtpCode] = useState('');
   /**
@@ -194,6 +195,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
     try {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
+      rememberEmail(email);
       // Éxito → limpiar el contador de intentos para este email
       recordSuccess(email);
       setLockoutStatus({ isLocked: false, secondsLeft: 0, attemptsLeft: RATE_LIMIT_CONFIG.MAX_ATTEMPTS });
@@ -541,7 +543,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                 <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">Correo Electrónico</label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
-                  <input type="email" required readOnly={mode === 'otp'} className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] focus:bg-white outline-none transition-all font-medium text-[#1F2937] read-only:opacity-70" placeholder="correo@ejemplo.com" value={email} onChange={e => setEmail(e.target.value)} />
+                  <input type="email" name="email" id="login-email" autoComplete="username" inputMode="email" autoCapitalize="none" spellCheck={false} required readOnly={mode === 'otp'} className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] focus:bg-white outline-none transition-all font-medium text-[#1F2937] read-only:opacity-70" placeholder="correo@ejemplo.com" value={email} onChange={e => setEmail(e.target.value)} />
                 </div>
               </div>
               )}
@@ -567,7 +569,7 @@ function LoginScreen({ onRegistrationStart, onRegistrationEnd, onEnterApp }: Log
                     <label className="text-xs font-bold text-[#6B7280] uppercase tracking-wide">{mode === 'otp' ? 'Nueva contraseña' : 'Contraseña'}</label>
                     <div className="relative">
                       <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280] w-5 h-5" />
-                      <input type={showPassword ? 'text' : 'password'} required className="w-full pl-10 pr-11 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
+                      <input type={showPassword ? 'text' : 'password'} name="password" id="login-password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required className="w-full pl-10 pr-11 py-3 bg-[#F3F4F6] border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] focus:bg-white outline-none transition-all font-medium text-[#1F2937]" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
                       <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B7280] hover:text-[#0040FC] transition-colors p-1">
                         {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                       </button>
@@ -968,8 +970,8 @@ function BusinessApp() {
       ).catch(() => {});
     });
 
-    // Escuchador de cambios (Ej: Cuando alguien inicia sesión exitosamente en LoginScreen)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+    // Manejo de los cambios de sesión (Ej: cuando alguien inicia sesión exitosamente en LoginScreen).
+    const handleAuthEvent = async (event: AuthChangeEvent, newSession: Session | null) => {
       if (!mounted) return;
       
       if (event === 'PASSWORD_RECOVERY') setRecoveryMode(true);
@@ -1021,6 +1023,19 @@ function BusinessApp() {
         setCurrentStaff(null);
         setShowStaffSelector(false);
       }
+    };
+
+    // IMPORTANTE: supabase-js llama a este oyente MIENTRAS tiene tomado el bloqueo de la sesión
+    // (al arrancar, al volver a la app y al renovar el token) y ESPERA a que termine. Si aquí
+    // se hace trabajo que use supabase (bajar el perfil, sincronizar...), esa llamada necesita
+    // el mismo bloqueo, que no se libera hasta que el oyente termine: PUNTO MUERTO. Todo lo que
+    // use supabase —incluida la cola de sincronización— se queda esperando y nada sube hasta
+    // cerrar sesión y volver a entrar. Por eso el trabajo se aplaza al siguiente ciclo, ya sin
+    // el bloqueo.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, newSession) => {
+      setTimeout(() => {
+        handleAuthEvent(event, newSession).catch(err => console.error('Error al procesar el cambio de sesión:', err));
+      }, 0);
     });
 
     return () => {
