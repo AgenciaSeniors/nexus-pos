@@ -13,6 +13,9 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests',
+  /* Precalienta el servidor de desarrollo (evita fallos al azar con el servidor recién arrancado) */
+  globalSetup: './tests/global-setup.ts',
+  testIgnore: '**/global-setup.ts',
   /* Run tests in files in parallel */
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */

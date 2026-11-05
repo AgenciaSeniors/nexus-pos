@@ -106,6 +106,33 @@ export function buildShiftRecaps(args: {
     });
 }
 
+/** Cuánto de un producto vendió un vendedor en el día (neto de devoluciones). */
+export interface ProductSellerShare {
+  name: string;
+  quantity: number;
+  total: number;
+}
+
+const round3 = (n: number): number => Math.round((n + Number.EPSILON) * 1000) / 1000;
+
+/**
+ * Convierte el acumulado por vendedor de un producto en la lista que se muestra:
+ * sin los que quedaron en cero (todo devuelto), el que más vendió primero.
+ */
+export function finalizeSellerShares(
+  bySeller: Record<string, { quantity: number; total: number }>,
+): ProductSellerShare[] {
+  return Object.entries(bySeller)
+    .map(([name, d]) => ({ name, quantity: round3(d.quantity), total: round2(d.total) }))
+    .filter(x => x.quantity > 0)
+    .sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name));
+}
+
+/** "Ana 30 · Luis 20" — quién vendió cuánto de un producto. */
+export function formatSellerShares(sellers: ProductSellerShare[] | undefined): string {
+  return (sellers || []).map(x => `${x.name} ${x.quantity}`).join(' · ');
+}
+
 export interface ZReportInput {
   businessName: string;
   dateLabel: string;
@@ -120,7 +147,8 @@ export interface ZReportInput {
   /** Devoluciones de ventas de días anteriores hechas este día: restan del total neto */
   priorRefunds?: { count: number; total: number };
   shifts: ZShiftRecap[];
-  products: { name: string; quantity: number; total: number }[];
+  /** `sellers`: quién vendió cada producto. Solo se imprime si en el día vendió más de una persona. */
+  products: { name: string; quantity: number; total: number; sellers?: ProductSellerShare[] }[];
   staff: { name: string; count: number; total: number }[];
   /** Inventario del día (lib/dailyInventory). Opcional: sin él no hay sección. */
   inventory?: ProductDayRow[];
@@ -201,7 +229,13 @@ export function buildZReportText(input: ZReportInput): string {
     lines.push(SEP);
     lines.push('*PRODUCTOS VENDIDOS*');
     const shown = input.products.slice(0, MAX_PRODUCT_LINES);
-    for (const p of shown) lines.push(`${p.quantity} x ${p.name}  ${fmt(p.total)}`);
+    // Con un solo vendedor en el día el desglose no aporta nada: todo lo vendió esa persona.
+    const showSellers = input.staff.length > 1;
+    for (const p of shown) {
+      lines.push(`${p.quantity} x ${p.name}  ${fmt(p.total)}`);
+      const who = showSellers ? formatSellerShares(p.sellers) : '';
+      if (who) lines.push(`   ↳ ${who}`);
+    }
     const rest = input.products.length - shown.length;
     if (rest > 0) lines.push(`… y ${rest} producto${rest !== 1 ? 's' : ''} más`);
   }

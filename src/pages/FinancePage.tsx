@@ -27,7 +27,7 @@ import { computeVoidDelta, computeRefundQuote, cashPortionOfRefund } from '../li
 import { isSaleValidAtTime, endOfLocalDay } from '../lib/shiftStats';
 import { pickActiveShift, sortOpenShifts } from '../lib/activeShift';
 import { salesWindow, isWindowCoveredByBackfill } from '../lib/salesWindow';
-import { buildShiftRecaps, buildZReportText, describeDifference } from '../lib/zReport';
+import { buildShiftRecaps, buildZReportText, describeDifference, finalizeSellerShares } from '../lib/zReport';
 import { buildDailyInventory } from '../lib/dailyInventory';
 import { summarizePriorRefunds, EMPTY_REFUND_SUMMARY } from '../lib/priorRefunds';
 import { DailyInventoryTable } from '../components/DailyInventoryTable';
@@ -689,11 +689,13 @@ export function FinancePage() {
 
   const closingStats = useMemo(() => {
     let cashTotal = 0, transferTotal = 0, cardTotal = 0;
-    const productSummary: Record<string, { quantity: number, total: number }> = {};
+    // `sellers`: cuánto de cada producto vendió cada vendedor (para saber quién vendió qué).
+    const productSummary: Record<string, { quantity: number, total: number, sellers: Record<string, { quantity: number, total: number }> }> = {};
     const staffSummary: Record<string, { count: number, total: number }> = {};
 
     dailyStats.sales.forEach((sale) => {
       const { refunds, refundAmount, netTotal } = computeSaleNet(sale, dailyStats.periodEnd);
+      const sellerName = sale.staff_name || 'Sin asignar';
       const saleTotal = safeFloat(sale.total);
       const method = sale.payment_method?.toLowerCase() || 'efectivo';
       if (method === 'efectivo') cashTotal += saleTotal;
@@ -717,26 +719,35 @@ export function FinancePage() {
       const itemByProduct = new Map<string, Sale['items'][number]>();
       (sale.items || []).forEach((item) => {
         if (!itemByProduct.has(item.product_id)) itemByProduct.set(item.product_id, item);
-        if (!productSummary[item.name]) productSummary[item.name] = { quantity: 0, total: 0 };
+        if (!productSummary[item.name]) productSummary[item.name] = { quantity: 0, total: 0, sellers: {} };
+        const lineTotal = safeFloat(item.custom_price ?? item.price) * safeFloat(item.quantity);
         productSummary[item.name].quantity += safeFloat(item.quantity);
-        productSummary[item.name].total += (safeFloat(item.custom_price ?? item.price) * safeFloat(item.quantity));
+        productSummary[item.name].total += lineTotal;
+        const share = (productSummary[item.name].sellers[sellerName] ??= { quantity: 0, total: 0 });
+        share.quantity += safeFloat(item.quantity);
+        share.total += lineTotal;
       });
       refunds.forEach(r => {
         const name = itemByProduct.get(r.product_id)?.name || r.name;
         if (!name || !productSummary[name]) return;
         productSummary[name].quantity -= Math.max(0, safeFloat(r.quantity));
         productSummary[name].total -= Math.max(0, safeFloat(r.amount));
+        // La devolución se le descuenta a quien hizo la venta
+        const share = productSummary[name].sellers[sellerName];
+        if (share) {
+          share.quantity -= Math.max(0, safeFloat(r.quantity));
+          share.total -= Math.max(0, safeFloat(r.amount));
+        }
       });
 
       // Desglose por vendedor — neto de devoluciones
-      const sellerName = sale.staff_name || 'Sin asignar';
       if (!staffSummary[sellerName]) staffSummary[sellerName] = { count: 0, total: 0 };
       staffSummary[sellerName].count++;
       staffSummary[sellerName].total += netTotal;
     });
 
     const productsList = Object.entries(productSummary)
-      .map(([name, data]) => ({ name, ...data }))
+      .map(([name, data]) => ({ name, quantity: data.quantity, total: data.total, sellers: finalizeSellerShares(data.sellers) }))
       .filter(p => p.quantity > 0)
       .sort((a, b) => b.quantity - a.quantity);
     const staffList = Object.entries(staffSummary).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.total - a.total);
@@ -2668,7 +2679,21 @@ export function FinancePage() {
                          </thead>
                          <tbody className="divide-y divide-dashed divide-gray-200">
                              {closingStats.productsList.map((p, i) => (
-                                 <tr key={i}><td className="py-2 w-12 font-bold">{p.quantity}</td><td className="py-2 text-xs">{p.name}</td><td className="py-2 text-right">{formatMoney(p.total)}</td></tr>
+                                 <tr key={i}>
+                                   <td className="py-2 w-12 font-bold align-top">{p.quantity}</td>
+                                   <td className="py-2 text-xs">
+                                     {p.name}
+                                     {/* Quién vendió cada cosa (solo si en el día vendió más de una persona) */}
+                                     {closingStats.staffList.length > 1 && p.sellers.length > 0 && (
+                                       <span className="block text-[10px] text-[#6B7280] font-sans mt-0.5" data-testid="z-product-sellers">
+                                         {p.sellers.map((x, j) => (
+                                           <span key={x.name}>{j > 0 && ' · '}{x.name} <strong className="text-[#1F2937]">{x.quantity}</strong></span>
+                                         ))}
+                                       </span>
+                                     )}
+                                   </td>
+                                   <td className="py-2 text-right align-top">{formatMoney(p.total)}</td>
+                                 </tr>
                              ))}
                          </tbody>
                      </table>

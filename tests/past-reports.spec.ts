@@ -320,4 +320,50 @@ test.describe('Reportes de días anteriores (admin sin turno abierto)', () => {
     expect(texto).toContain('Café Cubita: inicial 20, −5 vendió → final 15');
     expect(texto).toContain('Agua Mineral: inicial 2, +10 entró, −4 vendió → final 8');
   });
+
+  test('el desglose de productos dice QUÉ VENDEDOR vendió cada cosa (y descuenta las devoluciones al que vendió)', async ({ page }) => {
+    await page.route('**/*.supabase.co/**', route => route.abort('failed'));
+    await page.addInitScript(() => {
+      (window as unknown as { __abiertas: string[] }).__abiertas = [];
+      window.open = (u?: string | URL) => { (window as unknown as { __abiertas: string[] }).__abiertas.push(String(u)); return null; };
+    });
+    const HUEVO = '33333333-3333-4333-8333-3333333333d1';
+    const PAN = '33333333-3333-4333-8333-3333333333d2';
+    const de = (id: string, vendedor: string, items: { product_id: string; name: string; price: number; quantity: number }[], extra: Record<string, unknown> = {}) => ({
+      ...venta(id, items.reduce((t, i) => t + i.price * i.quantity, 0), mediodiaISO(1)),
+      staff_name: vendedor, items: items.map(i => ({ ...i, cost: 0 })), ...extra,
+    });
+    await sembrar(page, [
+      // Ana: 30 huevos en dos ventas. Luis: 22 huevos, de los que le devolvieron 2 ese mismo día → 20.
+      de('aaaaaaaa-0000-4000-8000-0000000000d1', 'Ana', [{ product_id: HUEVO, name: 'Huevo', price: 10, quantity: 18 }]),
+      de('aaaaaaaa-0000-4000-8000-0000000000d2', 'Ana', [{ product_id: HUEVO, name: 'Huevo', price: 10, quantity: 12 }, { product_id: PAN, name: 'Pan', price: 5, quantity: 4 }]),
+      de('aaaaaaaa-0000-4000-8000-0000000000d3', 'Luis', [{ product_id: HUEVO, name: 'Huevo', price: 10, quantity: 22 }], {
+        refunded_items: [{ product_id: HUEVO, name: 'Huevo', quantity: 2, amount: 20, date: mediodiaISO(1).replace('T12', 'T16') }],
+      }),
+    ] as unknown as ReturnType<typeof venta>[]);
+
+    await abrirCorteZ(page, diaLocal(1));
+
+    const filaHuevo = page.locator('tr', { hasText: 'Huevo' }).filter({ has: page.getByTestId('z-product-sellers') });
+    await expect(filaHuevo).toContainText('50', { timeout: 20000 });
+    await expect(filaHuevo.getByTestId('z-product-sellers')).toHaveText('Ana 30 · Luis 20');
+    // El pan solo lo vendió Ana
+    const filaPan = page.locator('tr', { hasText: 'Pan' }).filter({ has: page.getByTestId('z-product-sellers') });
+    await expect(filaPan.getByTestId('z-product-sellers')).toHaveText('Ana 4');
+
+    // Y sale igual en el texto de WhatsApp (el mismo que va a la impresora térmica)
+    await page.getByRole('button', { name: 'WhatsApp' }).click();
+    const abiertas = await page.evaluate(() => (window as unknown as { __abiertas: string[] }).__abiertas);
+    const texto = decodeURIComponent(abiertas[0].split('text=')[1]);
+    expect(texto).toContain('50 x Huevo  $500.00\n   ↳ Ana 30 · Luis 20');
+    expect(texto).toContain('4 x Pan  $20.00\n   ↳ Ana 4');
+  });
+
+  test('con un solo vendedor en el día el desglose no añade nombres', async ({ page }) => {
+    await page.route('**/*.supabase.co/**', route => route.abort('failed'));
+    await sembrar(page, [venta('aaaaaaaa-0000-4000-8000-0000000000e1', 100, mediodiaISO(1))]);
+    await abrirCorteZ(page, diaLocal(1));
+    await expect(page.locator('tr', { hasText: 'Cerveza Cristal' }).first()).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId('z-product-sellers')).toHaveCount(0);
+  });
 });

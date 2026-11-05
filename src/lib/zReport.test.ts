@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { CashShift, CashMovement } from './db';
-import { describeDifference, buildShiftRecaps, buildZReportText, type ZReportInput } from './zReport';
+import { describeDifference, buildShiftRecaps, buildZReportText, finalizeSellerShares, formatSellerShares, type ZReportInput } from './zReport';
 import type { ProductDayRow } from './dailyInventory';
 
 const localDay = (d: Date): string => {
@@ -172,5 +172,50 @@ describe('buildZReportText', () => {
     const dos = buildZReportText({ ...base, staff: [{ name: 'Ana', count: 3, total: 90 }, { name: 'Luis', count: 1, total: 20 }] });
     expect(dos).toContain('Ana: 3 ventas · $90.00');
     expect(dos).toContain('Luis: 1 venta · $20.00');
+  });
+});
+
+describe('quién vendió cada producto', () => {
+  it('ordena por cantidad (el que más vendió primero) y quita a quien quedó en cero', () => {
+    const r = finalizeSellerShares({
+      Luis: { quantity: 20, total: 200 },
+      Ana: { quantity: 30, total: 300 },
+      Marta: { quantity: 0, total: 0 }, // vendió 2 y se devolvieron las 2
+    });
+    expect(r).toEqual([
+      { name: 'Ana', quantity: 30, total: 300 },
+      { name: 'Luis', quantity: 20, total: 200 },
+    ]);
+    expect(formatSellerShares(r)).toBe('Ana 30 · Luis 20');
+  });
+
+  it('cantidades decimales (venta por peso) sin ruido de coma flotante', () => {
+    const r = finalizeSellerShares({ Ana: { quantity: 0.1 + 0.2, total: 3 } });
+    expect(r[0].quantity).toBe(0.3);
+  });
+
+  it('el texto del Corte Z lo pone debajo de cada producto cuando vendió más de una persona', () => {
+    const base: ZReportInput = {
+      businessName: 'El Pinto', dateLabel: '14/10/2026', ticketCount: 5,
+      cashTotal: 500, cardTotal: 0, transferTotal: 0, netTotal: 500,
+      voided: { count: 0, total: 0 }, shifts: [],
+      products: [{ name: 'Huevo', quantity: 50, total: 500, sellers: [{ name: 'Ana', quantity: 30, total: 300 }, { name: 'Luis', quantity: 20, total: 200 }] }],
+      staff: [{ name: 'Ana', count: 3, total: 300 }, { name: 'Luis', count: 2, total: 200 }],
+    };
+    const t = buildZReportText(base).split('\n');
+    const i = t.indexOf('50 x Huevo  $500.00');
+    expect(i).toBeGreaterThan(-1);
+    expect(t[i + 1]).toBe('   ↳ Ana 30 · Luis 20');
+  });
+
+  it('con un solo vendedor en el día no se añade nada (todo lo vendió esa persona)', () => {
+    const t = buildZReportText({
+      businessName: 'El Pinto', dateLabel: '14/10/2026', ticketCount: 5,
+      cashTotal: 500, cardTotal: 0, transferTotal: 0, netTotal: 500,
+      voided: { count: 0, total: 0 }, shifts: [],
+      products: [{ name: 'Huevo', quantity: 50, total: 500, sellers: [{ name: 'Ana', quantity: 50, total: 500 }] }],
+      staff: [{ name: 'Ana', count: 5, total: 500 }],
+    });
+    expect(t).not.toContain('↳');
   });
 });
