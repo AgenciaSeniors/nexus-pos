@@ -1308,7 +1308,7 @@ export function SettingsPage() {
           <div className="bg-[#0040FC] rounded-2xl p-5 text-white">
             <h3 className="font-black text-sm mb-3">Contacto y Soporte</h3>
             <div className="space-y-2 text-sm">
-              <div className="flex items-center gap-2 text-white/80"><Phone size={14}/> <span>+53 5988-7863 (WhatsApp)</span></div>
+              <div className="flex items-center gap-2 text-white/80"><Phone size={14}/> <span>+53 5906-3005 (WhatsApp)</span></div>
               <div className="flex items-center gap-2 text-white/80"><MapPin size={14}/> <span>Sancti Spíritus, Cuba</span></div>
             </div>
             <a
