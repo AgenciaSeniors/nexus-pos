@@ -21,7 +21,7 @@ import { supabase } from '../lib/supabase';
 import { checkForUpdate, type AppVersionInfo } from '../lib/version';
 import { downloadUrlForPlatform } from '../lib/platform';
 import { loadPrinterConfig, savePrinterConfig, isValidIPv4, type PrinterConfig } from '../lib/printer/config';
-import { printTestPage, canPrintToNetwork } from '../lib/printer/service';
+import { printTestPage, canPrintToNetwork, canPrintUsb, listUsbPrinters, type UsbPrinterDevice } from '../lib/printer/service';
 import { RestaurantAdmin } from '../components/RestaurantAdmin';
 import { MenuModifiersAdmin } from '../components/MenuModifiersAdmin';
 import { RecipeAdmin } from '../components/RecipeAdmin';
@@ -248,6 +248,10 @@ export function SettingsPage() {
 
   const [printerConfig, setPrinterConfig] = useState<PrinterConfig>(() => loadPrinterConfig());
   const [printerTesting, setPrinterTesting] = useState(false);
+  // Impresoras USB conectadas ahora (null = todavía no se ha buscado)
+  const [usbDevices, setUsbDevices] = useState<UsbPrinterDevice[] | null>(null);
+  const [usbSearching, setUsbSearching] = useState(false);
+  const usbAvailable = canPrintUsb();
 
   const settings = useLiveQuery(async () => {
     if (!businessId) return null;
@@ -352,8 +356,27 @@ export function SettingsPage() {
       }
   };
 
+  const handleSearchUsb = async () => {
+      setUsbSearching(true);
+      try {
+          const found = await listUsbPrinters();
+          setUsbDevices(found);
+          if (found.length === 0) {
+              toast.error('No se encontró ninguna impresora USB. Revisa el cable, el adaptador OTG y que la impresora esté encendida.');
+          } else if (!printerConfig.usb || !found.some(d => d.vendorId === printerConfig.usb?.vendorId && d.productId === printerConfig.usb?.productId)) {
+              // Sin impresora elegida (o la elegida ya no está): se toma la primera encontrada.
+              const d = found[0];
+              setPrinterConfig(c => ({ ...c, usb: { vendorId: d.vendorId, productId: d.productId, name: d.name } }));
+          }
+      } catch {
+          toast.error('No se pudo buscar impresoras USB');
+      } finally {
+          setUsbSearching(false);
+      }
+  };
+
   const handleTestPrint = async () => {
-      if (!isValidIPv4(printerConfig.ip)) { toast.error('Escribe la IP de la impresora (ej. 192.168.1.50)'); return; }
+      if (printerConfig.connection !== 'usb' && !isValidIPv4(printerConfig.ip)) { toast.error('Escribe la IP de la impresora (ej. 192.168.1.50)'); return; }
       setPrinterTesting(true);
       const r = await printTestPage(printerConfig);
       setPrinterTesting(false);
@@ -765,11 +788,22 @@ export function SettingsPage() {
                     <div className="bg-[#F3F4F6] p-4 rounded-xl mb-6 flex items-start gap-3 border border-gray-200">
                         <Smartphone className="text-[#0040FC] mt-1" size={20}/>
                         <div>
-                            <h4 className="font-bold text-[#1F2937] text-sm">Impresora de red (Wi-Fi / cable)</h4>
-                            <p className="text-xs text-[#6B7280] mt-1">
-                                Este dispositivo y la impresora deben estar en la misma red. Para saber la IP de la impresora, apágala, mantén pulsado el botón FEED y enciéndela: imprime una hoja de prueba con su IP.
-                                {!canPrintToNetwork() && ' Desde el navegador no se puede imprimir directo: usa la app de Android o la de Windows.'}
-                            </p>
+                            {printerConfig.connection === 'usb' ? (
+                              <>
+                                <h4 className="font-bold text-[#1F2937] text-sm">Impresora por cable USB</h4>
+                                <p className="text-xs text-[#6B7280] mt-1">
+                                    Conecta la impresora al teléfono con su cable USB y un adaptador OTG. No hace falta Wi-Fi ni router. La primera vez el teléfono pregunta si permites a Senio usar el dispositivo: acepta (y marca "usar siempre" si lo ofrece).
+                                </p>
+                              </>
+                            ) : (
+                              <>
+                                <h4 className="font-bold text-[#1F2937] text-sm">Impresora de red (Wi-Fi / cable)</h4>
+                                <p className="text-xs text-[#6B7280] mt-1">
+                                    Este dispositivo y la impresora deben estar en la misma red. Para saber la IP de la impresora, apágala, mantén pulsado el botón FEED y enciéndela: imprime una hoja de prueba con su IP.
+                                    {!canPrintToNetwork() && ' Desde el navegador no se puede imprimir directo: usa la app de Android o la de Windows.'}
+                                </p>
+                              </>
+                            )}
                         </div>
                     </div>
 
@@ -780,7 +814,51 @@ export function SettingsPage() {
                             <label htmlFor="printerEnabled" className="text-sm font-bold text-[#1F2937]">Usar impresora térmica en este dispositivo</label>
                         </div>
 
+                        {/* Cómo se conecta: el cable USB solo existe en la app de Android */}
+                        {(usbAvailable || printerConfig.connection === 'usb') && (
+                          <div>
+                            <label htmlFor="printerConnection" className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Conexión</label>
+                            <select id="printerConnection" value={printerConfig.connection} onChange={e => setPrinterConfig({...printerConfig, connection: e.target.value as PrinterConfig['connection']})}
+                                className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none bg-white">
+                                <option value="network">Red (Wi-Fi o cable de red, por IP)</option>
+                                <option value="usb">Cable USB al teléfono (OTG)</option>
+                            </select>
+                          </div>
+                        )}
+
+                        {printerConfig.connection === 'usb' && (
+                          <div className="border border-gray-200 rounded-xl p-4 space-y-3" data-testid="usb-printer-box">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-[#6B7280] uppercase">Impresora USB</p>
+                                <p className="text-sm font-bold text-[#1F2937] truncate" data-testid="usb-printer-chosen">
+                                  {printerConfig.usb ? printerConfig.usb.name : 'Sin elegir: se usará la primera que esté conectada'}
+                                </p>
+                              </div>
+                              <button onClick={handleSearchUsb} disabled={usbSearching || !usbAvailable} className="px-4 py-2 border border-[#0040FC] text-[#0040FC] text-sm font-bold rounded-xl hover:bg-[#0040FC]/5 transition-colors disabled:opacity-50 shrink-0">
+                                {usbSearching ? 'Buscando…' : 'Buscar impresora USB'}
+                              </button>
+                            </div>
+                            {!usbAvailable && <p className="text-xs text-[#B45309]">La impresión por cable USB solo funciona en la app de Android.</p>}
+                            {usbDevices && usbDevices.length > 1 && (
+                              <div className="space-y-2">
+                                {usbDevices.map(d => {
+                                  const chosen = printerConfig.usb?.vendorId === d.vendorId && printerConfig.usb?.productId === d.productId;
+                                  return (
+                                    <button key={`${d.vendorId}:${d.productId}`} onClick={() => setPrinterConfig({...printerConfig, usb: { vendorId: d.vendorId, productId: d.productId, name: d.name }})}
+                                      className={`w-full text-left p-3 rounded-xl border text-sm transition-colors ${chosen ? 'border-[#0040FC] bg-[#0040FC]/5 font-bold' : 'border-gray-200 hover:border-[#0040FC]'}`}>
+                                      {d.name}{!d.isPrinter && <span className="text-xs text-[#6B7280] font-normal"> — puede no ser una impresora</span>}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                            {printerConfig.connection !== 'usb' && (
+                            <>
                             <div className="md:col-span-2">
                                 <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Dirección IP</label>
                                 <input type="text" inputMode="decimal" placeholder="192.168.1.50" value={printerConfig.ip} onChange={e => setPrinterConfig({...printerConfig, ip: e.target.value})}
@@ -791,6 +869,8 @@ export function SettingsPage() {
                                 <input type="number" value={printerConfig.port} onChange={e => setPrinterConfig({...printerConfig, port: Number(e.target.value) || 9100})}
                                     className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0040FC] outline-none font-mono" />
                             </div>
+                            </>
+                            )}
                             <div>
                                 <label className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Ancho de Papel</label>
                                 <select value={printerConfig.width} onChange={e => setPrinterConfig({...printerConfig, width: e.target.value as PrinterConfig['width']})}
@@ -829,7 +909,7 @@ export function SettingsPage() {
                             <button
                                 onClick={() => {
                                     const clean = { ...printerConfig, ip: printerConfig.ip.trim() };
-                                    if (clean.enabled && !isValidIPv4(clean.ip)) { toast.error('Para activar la impresora escribe una IP válida (ej. 192.168.1.50)'); return; }
+                                    if (clean.enabled && clean.connection !== 'usb' && !isValidIPv4(clean.ip)) { toast.error('Para activar la impresora escribe una IP válida (ej. 192.168.1.50)'); return; }
                                     setPrinterConfig(clean);
                                     savePrinterConfig(clean);
                                     toast.success('Configuración de impresora guardada');
@@ -1294,6 +1374,7 @@ export function SettingsPage() {
                   'Notas por ítem: toca el lápiz ✏️ en cualquier producto del carrito para agregar una nota (ej: "variada con extra queso") y/o cambiar el precio de ese ítem específico',
                   'Toca "Cobrar" → elige método → confirma → el ticket se genera automáticamente con las notas incluidas',
                   'Impresora térmica: en Ajustes → Hardware escribe la IP de la impresora (la imprime ella misma al encenderla con el botón FEED pulsado), pulsa "Imprimir página de prueba" y guarda. Desde ahí cada venta imprime su ticket sola, el botón "Imprimir" reimprime y el Corte Z también sale por la impresora. El teléfono y la impresora deben estar en el mismo Wi-Fi',
+                  'Impresora por cable USB (sin Wi-Fi ni router): conecta la impresora al teléfono con su cable USB y un adaptador OTG. En Ajustes → Hardware elige Conexión "Cable USB al teléfono", pulsa "Buscar impresora USB", imprime la página de prueba y guarda. La primera vez el teléfono pregunta si permites a Senio usar el dispositivo: acepta y marca "usar siempre" si lo ofrece',
                 ],
               },
               {

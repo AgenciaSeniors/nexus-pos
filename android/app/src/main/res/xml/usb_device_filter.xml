@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Impresoras USB (clase 7). Al conectar una, Android ofrece abrir Senio y recordar el permiso
+     ("usar siempre"), para que no lo vuelva a preguntar cada vez que se enchufa. -->
+<resources>
+    <usb-device class="7" />
+</resources>

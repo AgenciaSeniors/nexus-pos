@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import type { Sale } from '../db';
 import { buildTicketEscpos, buildPlainEscpos } from './ticketEscpos';
 import { sendToPrinter, printTicket, __setPrinterTransport, friendlyPrintError, toBase64 } from './service';
-import { normalizePrinterConfig } from './config';
+import { normalizePrinterConfig, isPrinterReady } from './config';
 
 /** Decodifica los bytes a texto legible quitando los comandos ESC/GS (para comprobar contenido y anchos). */
 function render(bytes: Uint8Array): string {
@@ -101,7 +101,7 @@ describe('servicio de impresión', () => {
 
   it('manda los bytes a la IP y puerto configurados', async () => {
     const calls: Array<[string, number, number]> = [];
-    __setPrinterTransport(async (h, p, b) => { calls.push([h, p, b.length]); });
+    __setPrinterTransport(async (c, b) => { calls.push([c.ip, c.port, b.length]); });
     const r = await printTicket(sale(), null, false, cfg);
     expect(r).toEqual({ ok: true });
     expect(calls).toHaveLength(1);
@@ -143,5 +143,60 @@ describe('servicio de impresión', () => {
   it('toBase64 round-trip', () => {
     const b = Uint8Array.from({ length: 70000 }, (_, i) => i % 256);
     expect(Uint8Array.from(Buffer.from(toBase64(b), 'base64'))).toEqual(b);
+  });
+});
+
+describe('impresora por cable USB', () => {
+  beforeEach(() => __setPrinterTransport(null));
+
+  it('la configuración de antes (sin "connection") sigue siendo de red', () => {
+    const c = normalizePrinterConfig({ enabled: true, ip: '192.168.1.50' });
+    expect(c.connection).toBe('network');
+    expect(c.usb).toBeNull();
+  });
+
+  it('por USB está lista sin IP; por red la sigue exigiendo', () => {
+    expect(isPrinterReady(normalizePrinterConfig({ enabled: true, connection: 'usb' }))).toBe(true);
+    expect(isPrinterReady(normalizePrinterConfig({ enabled: true, connection: 'network' }))).toBe(false);
+    expect(isPrinterReady(normalizePrinterConfig({ enabled: false, connection: 'usb' }))).toBe(false);
+  });
+
+  it('guarda la impresora elegida y descarta una elección corrupta', () => {
+    const ok = normalizePrinterConfig({ connection: 'usb', usb: { vendorId: 1155, productId: 22339, name: 'Rongta RP326' } });
+    expect(ok.usb).toEqual({ vendorId: 1155, productId: 22339, name: 'Rongta RP326' });
+    expect(normalizePrinterConfig({ connection: 'usb', usb: { vendorId: 'x' } }).usb).toBeNull();
+    expect(normalizePrinterConfig({ connection: 'bluetooth' }).connection).toBe('network');
+  });
+
+  it('imprime sin IP y le pasa al transporte la impresora elegida', async () => {
+    const cfg = normalizePrinterConfig({ enabled: true, connection: 'usb', codepage: 'ascii', usb: { vendorId: 1155, productId: 22339, name: 'RP326' } });
+    const calls: Array<{ connection: string; usb: unknown; n: number }> = [];
+    __setPrinterTransport(async (c, b) => { calls.push({ connection: c.connection, usb: c.usb, n: b.length }); });
+
+    expect(await printTicket(sale(), null, false, cfg)).toEqual({ ok: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].connection).toBe('usb');
+    expect(calls[0].usb).toEqual({ vendorId: 1155, productId: 22339, name: 'RP326' });
+    expect(calls[0].n).toBeGreaterThan(50);
+  });
+
+  it('errores del USB en lenguaje de persona (y sin confundirlos con los de red)', () => {
+    const usb = { ip: '', port: 9100, connection: 'usb' as const };
+    expect(friendlyPrintError(new Error('NO_DEVICE'), usb)).toContain('No hay ninguna impresora conectada por USB');
+    expect(friendlyPrintError(new Error('PERMISSION_DENIED'), usb)).toContain('permiso');
+    // contiene "TIMEOUT" pero NO es la impresora de red sin responder
+    expect(friendlyPrintError(new Error('PERMISSION_TIMEOUT'), usb)).not.toContain('Wi-Fi');
+    expect(friendlyPrintError(new Error('WRITE_FAILED'), usb)).toContain('papel');
+    expect(friendlyPrintError(new Error('OPEN_FAILED'), usb)).toContain('vuelve a conectar');
+    expect(friendlyPrintError(new Error('NO_USB'), usb)).toContain('solo funciona en la app de Android');
+    expect(friendlyPrintError(new Error('algo raro'), usb)).toContain('No se pudo imprimir por USB');
+  });
+
+  it('un fallo del USB no lanza: devuelve el mensaje', async () => {
+    const cfg = normalizePrinterConfig({ enabled: true, connection: 'usb' });
+    __setPrinterTransport(async () => { throw new Error('NO_DEVICE'); });
+    const r = await sendToPrinter(cfg, new Uint8Array([1]));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('USB');
   });
 });

@@ -15,12 +15,30 @@ const SHIFT = '44444444-4444-4444-8444-444444444444';
 
 type Printed = { host: string; port: number; bytes: number[] };
 
-async function sembrar(page: Page, impresora: Record<string, unknown> | null, respuesta: { ok: boolean; error?: string } = { ok: true }) {
+/** Teléfono Android simulado: lo que devuelve el plugin nativo UsbPrinter. */
+type Android = { devices: { vendorId: number; productId: number; name: string; isPrinter: boolean; hasPermission: boolean }[]; printError?: string };
+
+async function sembrar(page: Page, impresora: Record<string, unknown> | null, respuesta: { ok: boolean; error?: string } = { ok: true }, android: Android | null = null) {
   await page.route('**/*.supabase.co/**', route => route.abort('failed'));
-  // Puente de Electron simulado ANTES de que cargue la app.
-  await page.addInitScript((resp) => {
-    const w = window as unknown as { __printed: unknown[]; electronAPI: unknown };
+  // Puente nativo simulado ANTES de que cargue la app: Electron (Windows) o Capacitor (Android).
+  await page.addInitScript(({ resp, android }) => {
+    const w = window as unknown as { __printed: unknown[]; electronAPI: unknown; androidBridge: unknown; Capacitor: unknown };
     w.__printed = [];
+    if (android) {
+      // Así reconoce @capacitor/core un teléfono Android con el plugin nativo registrado.
+      w.androidBridge = {};
+      w.Capacitor = {
+        PluginHeaders: [{ name: 'UsbPrinter', methods: [{ name: 'list', rtype: 'promise' }, { name: 'print', rtype: 'promise' }] }],
+        nativePromise: async (plugin: string, method: string, options: Record<string, unknown>) => {
+          if (plugin !== 'UsbPrinter') throw new Error('not implemented');
+          if (method === 'list') return { devices: android.devices };
+          (w.__printed as unknown[]).push({ usb: true, ...options });
+          if (android.printError) throw new Error(android.printError);
+          return {};
+        },
+      };
+      return;
+    }
     w.electronAPI = {
       getVersion: async () => '0.0.0-test',
       printTicket: () => { (w.__printed as unknown[]).push({ driver: true }); },
@@ -31,7 +49,7 @@ async function sembrar(page: Page, impresora: Record<string, unknown> | null, re
         return resp;
       },
     };
-  }, respuesta);
+  }, { resp: respuesta, android });
 
   await page.goto('/');
   await page.waitForFunction(() => !!(window as unknown as { dbDebug?: unknown }).dbDebug, null, { timeout: 30000 });
@@ -169,5 +187,77 @@ test.describe('Impresora térmica', () => {
     await page.getByRole('button', { name: /Guardar Configuración/ }).click();
     await expect(page.getByText(/escribe una IP válida/)).toBeVisible();
     expect(await page.evaluate(() => localStorage.getItem('nexus_printer_config'))).toBeNull();
+  });
+
+  test.describe('por cable USB (teléfono Android)', () => {
+    const RP326 = { vendorId: 1155, productId: 22339, name: 'Rongta RP326', isPrinter: true, hasPermission: false };
+    const CONFIG_USB = { enabled: true, connection: 'usb', usb: { vendorId: 1155, productId: 22339, name: 'Rongta RP326' }, width: '80mm', codepage: 'ascii', autoPrint: true, openDrawer: false };
+    type TrabajoUsb = { usb?: boolean; data: string; vendorId?: number; productId?: number };
+    const trabajos = (page: Page) => page.evaluate(() => (window as unknown as { __printed: unknown[] }).__printed) as Promise<TrabajoUsb[]>;
+    const textoUsb = (t: TrabajoUsb) => Buffer.from(t.data, 'base64').toString('latin1');
+
+    test('Ajustes: elegir USB, buscar la impresora, probar y guardar', async ({ page }) => {
+      await sembrar(page, null, { ok: true }, { devices: [RP326] });
+      await page.goto('/#/configuracion');
+      await page.getByRole('button', { name: /Hardware/ }).click();
+
+      await page.getByLabel(/Usar impresora térmica/).check();
+      await page.getByLabel('Conexión').selectOption('usb');
+      // Con USB no se pide IP
+      await expect(page.getByPlaceholder('192.168.1.50')).toHaveCount(0);
+      await expect(page.getByTestId('usb-printer-chosen')).toContainText('Sin elegir');
+
+      await page.getByRole('button', { name: 'Buscar impresora USB' }).click();
+      await expect(page.getByTestId('usb-printer-chosen')).toHaveText('Rongta RP326');
+
+      await page.getByRole('button', { name: /Imprimir página de prueba/ }).click();
+      await expect.poll(async () => (await trabajos(page)).length).toBe(1);
+      const [t] = await trabajos(page);
+      expect(t).toMatchObject({ usb: true, vendorId: 1155, productId: 22339 });
+      expect(textoUsb(t)).toContain('Prueba de impresion');
+
+      await page.getByRole('button', { name: /Guardar Configuración/ }).click();
+      const guardado = await page.evaluate(() => JSON.parse(localStorage.getItem('nexus_printer_config') || '{}'));
+      expect(guardado).toMatchObject({ enabled: true, connection: 'usb', usb: { vendorId: 1155, productId: 22339, name: 'Rongta RP326' } });
+    });
+
+    test('al cobrar, el ticket sale por el USB a la impresora elegida', async ({ page }) => {
+      await sembrar(page, CONFIG_USB, { ok: true }, { devices: [RP326] });
+      await cobrar(page);
+      await expect.poll(async () => (await trabajos(page)).length, { timeout: 10000 }).toBe(1);
+      const [t] = await trabajos(page);
+      expect(t).toMatchObject({ usb: true, vendorId: 1155, productId: 22339 });
+      expect(textoUsb(t)).toContain('BODEGA LUZ');
+      expect(textoUsb(t)).toContain('$5.00');
+    });
+
+    test('sin impresora conectada: la venta queda guardada y el aviso dice qué revisar', async ({ page }) => {
+      await sembrar(page, CONFIG_USB, { ok: true }, { devices: [], printError: 'NO_DEVICE' });
+      await cobrar(page);
+      await expect(page.getByText(/Venta guardada, pero el ticket no salió/)).toBeVisible({ timeout: 10000 });
+      await expect(page.getByText(/No hay ninguna impresora conectada por USB/)).toBeVisible();
+      const ventas = await page.evaluate(async () => {
+        const { db } = (window as unknown as { dbDebug: { db: { table: (n: string) => { count: () => Promise<number> } } } }).dbDebug;
+        return db.table('sales').count();
+      });
+      expect(ventas).toBe(1);
+    });
+
+    test('buscar sin nada conectado lo explica', async ({ page }) => {
+      await sembrar(page, null, { ok: true }, { devices: [] });
+      await page.goto('/#/configuracion');
+      await page.getByRole('button', { name: /Hardware/ }).click();
+      await page.getByLabel('Conexión').selectOption('usb');
+      await page.getByRole('button', { name: 'Buscar impresora USB' }).click();
+      await expect(page.getByText(/No se encontró ninguna impresora USB/)).toBeVisible();
+    });
+  });
+
+  test('fuera de Android no se ofrece la conexión por USB', async ({ page }) => {
+    await sembrar(page, null);
+    await page.goto('/#/configuracion');
+    await page.getByRole('button', { name: /Hardware/ }).click();
+    await expect(page.getByLabel(/Usar impresora térmica/)).toBeVisible();
+    await expect(page.getByLabel('Conexión')).toHaveCount(0);
   });
 });
