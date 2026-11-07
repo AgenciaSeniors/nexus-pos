@@ -17,6 +17,7 @@ import { exportFile, exportSuccessMessage, friendlyExportError } from '../lib/fi
 import { round3 } from '../lib/recipe';
 import { matchesSearch } from '../lib/textSearch';
 import { resolveStockTarget, movementReason, parseInitialStock } from '../lib/stockTarget';
+import { analyzeImportRows, cellToText, mapHeaders, type ExistingMode, type ImportAnalysis, type ImportField } from '../lib/importProducts';
 
 export function InventoryPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
@@ -361,25 +362,15 @@ export function InventoryPage() {
   const importFileRef = useRef<HTMLInputElement>(null);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [importStep, setImportStep] = useState<'instructions' | 'preview' | 'importing' | 'done'>('instructions');
-  const [importResults, setImportResults] = useState<{
-    valid: Partial<Product>[]; errors: { row: number; message: string }[]; skipped: { row: number; sku: string; name: string }[];
-  }>({ valid: [], errors: [], skipped: [] });
+  const vacio: ImportAnalysis = { valid: [], updates: [], errors: [], skipped: [], fieldMap: [] };
+  const [importResults, setImportResults] = useState<ImportAnalysis>(vacio);
+  // Filas del archivo ya leído (para volver a analizarlas al cambiar el modo sin pedir el archivo otra vez)
+  const [importRows, setImportRows] = useState<{ data: string[][]; fieldMap: (ImportField | null)[] } | null>(null);
+  // Qué hacer con los productos que ya existen (mismo SKU, o mismo nombre si no hay SKU)
+  const [existingMode, setExistingMode] = useState<ExistingMode>('skip');
+  const [updatedCount, setUpdatedCount] = useState(0);
   const [importProgress, setImportProgress] = useState(0);
   const [importedCount, setImportedCount] = useState(0);
-
-  // Header mapping: normalizes any common variation to internal field name
-  const HEADER_MAP: Record<string, keyof Product> = {
-    'nombre del producto': 'name', 'nombre': 'name', 'product name': 'name', 'producto': 'name',
-    'sku': 'sku', 'codigo': 'sku', 'código': 'sku', 'code': 'sku',
-    'categoria': 'category', 'categoría': 'category', 'category': 'category',
-    'precio venta': 'price', 'precio': 'price', 'price': 'price', 'sale price': 'price',
-    'costo': 'cost', 'cost': 'cost',
-    'stock vitrina': 'stock', 'stock': 'stock', 'display stock': 'stock', 'existencia': 'stock',
-    'stock almacen': 'stock_warehouse', 'stock almacén': 'stock_warehouse', 'warehouse stock': 'stock_warehouse', 'almacen': 'stock_warehouse', 'almacén': 'stock_warehouse',
-    'unidad de medida': 'unit', 'unidad': 'unit', 'unit': 'unit',
-    'vencimiento': 'expiration_date', 'expiration': 'expiration_date', 'expiration date': 'expiration_date', 'fecha vencimiento': 'expiration_date',
-    'alerta stock': 'low_stock_threshold', 'low stock': 'low_stock_threshold', 'stock minimo': 'low_stock_threshold', 'stock mínimo': 'low_stock_threshold',
-  };
 
   const parseCSVLine = (line: string, separator: string): string[] => {
     const result: string[] = [];
@@ -410,13 +401,14 @@ export function InventoryPage() {
       // Excel: usar SheetJS para extraer la primera hoja como array de filas
       const XLSX = await import('xlsx');
       const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
+      const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       if (!firstSheet) return [];
-      // sheet_to_json con header:1 → cada fila es un array de strings (en el orden de columnas)
-      const rows = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, { header: 1, raw: false, defval: '' });
+      // header:1 → cada fila es un array de celdas. raw:true + cellDates: las fechas llegan como Date
+      // (si no, Excel las daba como "12/31/26" y se perdían) y los números sin formato.
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, { header: 1, raw: true, defval: '' });
       return rows
-        .map(r => (r as unknown[]).map(c => String(c ?? '').trim()))
+        .map(r => (r as unknown[]).map(cellToText))
         .filter(r => r.some(c => c !== '')); // descartar filas completamente vacías
     }
 
@@ -444,76 +436,37 @@ export function InventoryPage() {
 
     if (allRows.length < 2) { toast.error('El archivo está vacío o no tiene datos'); return; }
 
-    // Parse headers
-    const rawHeaders = allRows[0];
+    const fieldMap = mapHeaders(allRows[0]);
     const dataRows = allRows.slice(1);
-    const fieldMap: (keyof Product | null)[] = rawHeaders.map(h => {
-      const normalized = h.toLowerCase().replace(/['"]/g, '').trim();
-      return HEADER_MAP[normalized] || null;
-    });
-
-    // Check minimum required headers
-    const hasName = fieldMap.includes('name');
-    const hasPrice = fieldMap.includes('price');
-    if (!hasName && !hasPrice) {
-      toast.error('No se encontraron columnas de "Nombre" ni "Precio". Verifica el formato del CSV.');
+    if (!fieldMap.includes('name') && !fieldMap.includes('price')) {
+      toast.error('No se encontraron columnas de "Nombre" ni "Precio". Verifica el formato del archivo.');
       return;
     }
 
-    // Load existing SKUs for duplicate check
-    const existingProducts = await db.products.where('business_id').equals(businessId!).filter(p => !p.deleted_at).toArray();
-    const existingSKUs = new Set(existingProducts.map(p => p.sku?.toLowerCase()).filter(Boolean));
-
-    const valid: Partial<Product>[] = [];
-    const errors: { row: number; message: string }[] = [];
-    const skipped: { row: number; sku: string; name: string }[] = [];
-    const csvSKUs = new Set<string>();
-
-    for (let i = 0; i < dataRows.length; i++) {
-      const values = dataRows[i];
-      const row: Record<string, string> = {};
-      fieldMap.forEach((field, idx) => { if (field && values[idx] !== undefined) row[field] = values[idx]; });
-
-      const rowNum = i + 2; // +1 por base 0, +1 por header
-      const name = (row.name || '').replace(/^["']|["']$/g, '').trim();
-      if (!name) { errors.push({ row: rowNum, message: 'Nombre vacío' }); continue; }
-
-      const price = parseFloat(row.price || '0');
-      if (isNaN(price) || price < 0) { errors.push({ row: rowNum, message: `Precio inválido: "${row.price}"` }); continue; }
-
-      let sku = (row.sku || '').replace(/^["']|["']$/g, '').trim();
-      if (!sku) sku = `IMP-${String(i + 1).padStart(4, '0')}`;
-
-      // SKU duplicate in DB
-      if (existingSKUs.has(sku.toLowerCase())) { skipped.push({ row: rowNum, sku, name }); continue; }
-      // SKU duplicate within CSV
-      if (csvSKUs.has(sku.toLowerCase())) { errors.push({ row: rowNum, message: `SKU "${sku}" duplicado en el CSV` }); continue; }
-      csvSKUs.add(sku.toLowerCase());
-
-      const cost = Math.max(0, parseFloat(row.cost || '0') || 0);
-      const stock = Math.max(0, parseFloat(row.stock || '0') || 0);
-      const stockWarehouse = Math.max(0, parseFloat(row.stock_warehouse || '0') || 0);
-      const category = (row.category || '').replace(/^["']|["']$/g, '').trim() || 'General';
-      const unit = (row.unit || '').replace(/^["']|["']$/g, '').trim() || 'un';
-      const expirationRaw = (row.expiration_date || '').replace(/^["']|["']$/g, '').trim();
-      const expiration_date = /^\d{4}-\d{2}-\d{2}/.test(expirationRaw) ? expirationRaw.slice(0, 10) : '';
-      const thresholdRaw = parseInt(row.low_stock_threshold || '');
-      const low_stock_threshold = !isNaN(thresholdRaw) && thresholdRaw >= 0 ? thresholdRaw : undefined;
-
-      valid.push({ name, price, cost, sku, category, unit, stock, stock_warehouse: stockWarehouse || undefined, expiration_date: expiration_date || undefined, low_stock_threshold });
-    }
-
-    setImportResults({ valid, errors, skipped });
+    setImportRows({ data: dataRows, fieldMap });
+    setImportResults(await analizar(dataRows, fieldMap, existingMode));
     setImportStep('preview');
   };
 
+  /** Analiza las filas contra los productos actuales del negocio con el modo elegido. */
+  const analizar = async (data: string[][], fieldMap: (ImportField | null)[], mode: ExistingMode): Promise<ImportAnalysis> => {
+    const existentes = await db.products.where('business_id').equals(businessId!).filter(p => !p.deleted_at).toArray();
+    return analyzeImportRows(data, fieldMap, existentes, mode);
+  };
+
+  const cambiarModo = async (mode: ExistingMode) => {
+    setExistingMode(mode);
+    if (importRows) setImportResults(await analizar(importRows.data, importRows.fieldMap, mode));
+  };
+
   const executeImport = async () => {
-    if (!businessId || importResults.valid.length === 0) return;
+    if (!businessId || (importResults.valid.length === 0 && importResults.updates.length === 0)) return;
     setImportStep('importing');
     setImportProgress(0);
     setImportedCount(0);
+    setUpdatedCount(0);
 
-    const total = importResults.valid.length;
+    const total = importResults.valid.length + importResults.updates.length;
     const BATCH_SIZE = 50;
 
     try {
@@ -525,10 +478,10 @@ export function InventoryPage() {
         const product: Product = {
           id: crypto.randomUUID(),
           business_id: businessId,
-          name: item.name!,
-          price: item.price!,
+          name: item.name,
+          price: item.price,
           cost: item.cost,
-          sku: item.sku!,
+          sku: item.sku,
           category: item.category,
           unit: item.unit,
           stock: item.stock ?? 0,
@@ -578,10 +531,37 @@ export function InventoryPage() {
         });
       }
 
-      await logAuditAction('CREATE_PRODUCT', { action: 'csv_import', count: imported }, currentStaff);
+      // Actualizaciones de productos existentes: datos y, si el modo lo pide, stock (con su ajuste en el historial)
+      let updated = 0;
+      const now = new Date().toISOString();
+      for (const u of importResults.updates) {
+        await db.transaction('rw', [db.products, db.movements, db.action_queue], async () => {
+          const fresh = await db.products.get(u.existing.id);
+          if (!fresh) return;
+          const updatedProduct: Product = { ...fresh, ...u.changes, updated_at: now, sync_status: 'pending_update' };
+          await db.products.put(updatedProduct);
+          await addToQueue('PRODUCT_SYNC', updatedProduct);
+          const ajustes: Array<[number, string]> = [[u.stockDelta, 'correction'], [u.warehouseDelta, 'correction_warehouse']];
+          for (const [delta, reason] of ajustes) {
+            if (Math.abs(delta) < 0.0005) continue;
+            const m: InventoryMovement = {
+              id: crypto.randomUUID(), business_id: businessId, product_id: fresh.id, staff_id: currentStaff.id,
+              qty_change: delta, reason, created_at: now, sync_status: 'pending_create',
+            };
+            await db.movements.add(m);
+            await addToQueue('MOVEMENT', m);
+          }
+        });
+        updated++;
+        setUpdatedCount(updated);
+        setImportProgress(Math.round(((imported + updated) / total) * 100));
+      }
+
+      if (imported > 0) await logAuditAction('CREATE_PRODUCT', { action: 'csv_import', count: imported }, currentStaff);
+      if (updated > 0) await logAuditAction('UPDATE_PRODUCT', { action: 'csv_import_update', count: updated, stock: existingMode === 'update_stock' }, currentStaff);
       syncPush().catch(console.error);
       setImportStep('done');
-      toast.success(`${imported} productos importados correctamente`);
+      toast.success([imported > 0 ? `${imported} producto(s) nuevo(s)` : '', updated > 0 ? `${updated} actualizado(s)` : ''].filter(Boolean).join(' · ') || 'Nada que importar');
     } catch (error) {
       console.error('Import error:', error);
       toast.error(`Error durante la importación.`);
@@ -602,6 +582,9 @@ export function InventoryPage() {
 
   const closeImportModal = () => {
     setIsImportModalOpen(false);
+    setImportRows(null);
+    setImportResults(vacio);
+    setUpdatedCount(0);
     setImportStep('instructions');
     setImportResults({ valid: [], errors: [], skipped: [] });
     setImportProgress(0);
@@ -1438,9 +1421,10 @@ export function InventoryPage() {
                       <span className="text-[#6B7280]">Stock Vitrina</span><span className="text-[#6B7280]">Unidades en venta</span>
                       <span className="text-[#6B7280]">Stock Almacén</span><span className="text-[#6B7280]">Unidades en almacén</span>
                       <span className="text-[#6B7280]">Unidad</span><span className="text-[#6B7280]">un, kg, lt, etc.</span>
-                      <span className="text-[#6B7280]">Vencimiento</span><span className="text-[#6B7280]">Formato: AAAA-MM-DD</span>
+                      <span className="text-[#6B7280]">Vencimiento</span><span className="text-[#6B7280]">DD/MM/AAAA o AAAA-MM-DD</span>
                     </div>
-                    <p className="text-[10px] text-[#6B7280] mt-2">* Obligatorias. Las demás son opcionales. Columnas no reconocidas se ignoran.</p>
+                    <p className="text-[10px] text-[#6B7280] mt-2">* Obligatorias. Las demás son opcionales. Columnas no reconocidas se ignoran. Los precios aceptan coma o punto decimal (25,50 o 25.50).</p>
+                    <p className="text-[10px] text-[#6B7280] mt-1">Si un producto ya existe (mismo SKU, o mismo nombre si no hay SKU) podrás elegir si saltarlo o actualizarle precio, costo y, si quieres, stock.</p>
                   </div>
 
                   <div className="flex flex-col gap-3">
@@ -1458,29 +1442,77 @@ export function InventoryPage() {
               {/* PASO 2: PREVIEW */}
               {importStep === 'preview' && (
                 <div className="space-y-4">
-                  {/* Contadores */}
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-center">
-                      <CheckCircle2 size={20} className="mx-auto text-emerald-500 mb-1" />
-                      <span className="text-2xl font-black text-emerald-700">{importResults.valid.length}</span>
-                      <span className="block text-[10px] font-bold text-emerald-500 uppercase">Válidos</span>
+                  {/* Qué hacer con los que ya existen */}
+                  {(importResults.updates.length > 0 || importResults.skipped.length > 0) && (
+                    <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
+                      <label htmlFor="existingMode" className="block text-xs font-bold text-[#6B7280] uppercase mb-1">Productos que ya existen</label>
+                      <select id="existingMode" value={existingMode} onChange={e => cambiarModo(e.target.value as ExistingMode)}
+                        className="w-full p-2.5 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-[#0040FC] outline-none">
+                        <option value="skip">Saltarlos (no tocar nada)</option>
+                        <option value="update">Actualizar precio, costo y datos (sin tocar el stock)</option>
+                        <option value="update_stock">Actualizar todo, incluido el stock (queda como el archivo)</option>
+                      </select>
+                      {existingMode === 'update_stock' && <p className="text-[10px] text-[#B45309] mt-1">El stock pasará a ser el del archivo; la diferencia se registra en el historial como corrección.</p>}
                     </div>
-                    <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-center">
-                      <XCircle size={20} className="mx-auto text-red-400 mb-1" />
-                      <span className="text-2xl font-black text-red-600">{importResults.errors.length}</span>
+                  )}
+
+                  {/* Contadores */}
+                  <div className="grid grid-cols-4 gap-2">
+                    <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-2 text-center">
+                      <CheckCircle2 size={18} className="mx-auto text-emerald-500 mb-1" />
+                      <span className="text-xl font-black text-emerald-700" data-testid="import-count-new">{importResults.valid.length}</span>
+                      <span className="block text-[10px] font-bold text-emerald-500 uppercase">Nuevos</span>
+                    </div>
+                    <div className="bg-blue-50 border border-blue-100 rounded-xl p-2 text-center">
+                      <Upload size={18} className="mx-auto text-blue-500 mb-1" />
+                      <span className="text-xl font-black text-blue-700" data-testid="import-count-update">{importResults.updates.length}</span>
+                      <span className="block text-[10px] font-bold text-blue-500 uppercase">Actualizar</span>
+                    </div>
+                    <div className="bg-red-50 border border-red-100 rounded-xl p-2 text-center">
+                      <XCircle size={18} className="mx-auto text-red-400 mb-1" />
+                      <span className="text-xl font-black text-red-600" data-testid="import-count-error">{importResults.errors.length}</span>
                       <span className="block text-[10px] font-bold text-red-400 uppercase">Errores</span>
                     </div>
-                    <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 text-center">
-                      <SkipForward size={20} className="mx-auto text-amber-400 mb-1" />
-                      <span className="text-2xl font-black text-amber-600">{importResults.skipped.length}</span>
+                    <div className="bg-amber-50 border border-amber-100 rounded-xl p-2 text-center">
+                      <SkipForward size={18} className="mx-auto text-amber-400 mb-1" />
+                      <span className="text-xl font-black text-amber-600" data-testid="import-count-skipped">{importResults.skipped.length}</span>
                       <span className="block text-[10px] font-bold text-amber-400 uppercase">Saltados</span>
                     </div>
                   </div>
 
+                  {/* Actualizaciones de productos existentes */}
+                  {importResults.updates.length > 0 && (
+                    <div>
+                      <p className="text-xs font-bold text-[#6B7280] uppercase mb-2">Se actualizarán (primeros 10)</p>
+                      <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-xl">
+                        <table className="w-full text-xs">
+                          <thead className="bg-gray-50 sticky top-0">
+                            <tr><th className="p-2 text-left">Producto</th><th className="p-2 text-left">Cambios</th></tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {importResults.updates.slice(0, 10).map(u => (
+                              <tr key={u.existing.id} className="hover:bg-gray-50" data-testid="import-update-row">
+                                <td className="p-2 font-bold text-[#1F2937]">{u.existing.name}</td>
+                                <td className="p-2 text-[#6B7280]">
+                                  {Object.entries(u.changes).map(([k, v]) => {
+                                    const etiqueta: Record<string, string> = { name: 'nombre', price: 'precio', cost: 'costo', category: 'categoría', unit: 'unidad', expiration_date: 'vencimiento', low_stock_threshold: 'alerta', stock: 'stock', stock_warehouse: 'almacén' };
+                                    const antes = (u.existing as unknown as Record<string, unknown>)[k];
+                                    return <span key={k} className="inline-block mr-2">{etiqueta[k] || k}: <s>{String(antes ?? '—')}</s> → <strong className="text-[#1F2937]">{String(v ?? '—')}</strong></span>;
+                                  })}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {importResults.updates.length > 10 && <p className="text-[10px] text-[#6B7280] mt-1 text-center">...y {importResults.updates.length - 10} más</p>}
+                    </div>
+                  )}
+
                   {/* Preview de válidos */}
                   {importResults.valid.length > 0 && (
                     <div>
-                      <p className="text-xs font-bold text-[#6B7280] uppercase mb-2">Productos a importar (primeros 10)</p>
+                      <p className="text-xs font-bold text-[#6B7280] uppercase mb-2">Productos nuevos (primeros 10)</p>
                       <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-xl">
                         <table className="w-full text-xs">
                           <thead className="bg-gray-50 sticky top-0">
@@ -1490,7 +1522,7 @@ export function InventoryPage() {
                             {importResults.valid.slice(0, 10).map((p, i) => (
                               <tr key={i} className="hover:bg-gray-50">
                                 <td className="p-2 font-bold text-[#1F2937]">{p.name}</td>
-                                <td className="p-2 text-center text-[#15803D] font-bold">${p.price?.toFixed(2)}</td>
+                                <td className="p-2 text-center text-[#15803D] font-bold">${p.price.toFixed(2)}</td>
                                 <td className="p-2 text-center font-mono text-[#6B7280]">{p.sku}</td>
                                 <td className="p-2 text-center">{p.stock ?? 0}{(p.stock_warehouse ?? 0) > 0 && <span className="text-blue-500"> +{p.stock_warehouse}A</span>}</td>
                               </tr>
@@ -1519,7 +1551,7 @@ export function InventoryPage() {
                   {/* Saltados */}
                   {importResults.skipped.length > 0 && (
                     <div>
-                      <p className="text-xs font-bold text-amber-500 uppercase mb-2">SKU duplicados (se saltan)</p>
+                      <p className="text-xs font-bold text-amber-500 uppercase mb-2">Ya existen (se saltan)</p>
                       <div className="max-h-24 overflow-y-auto bg-amber-50 border border-amber-100 rounded-xl p-3 space-y-1">
                         {importResults.skipped.map((s, i) => (
                           <p key={i} className="text-xs text-amber-700">Fila {s.row}: "{s.name}" (SKU: {s.sku})</p>
@@ -1533,8 +1565,12 @@ export function InventoryPage() {
                     <button onClick={() => setImportStep('instructions')} className="flex-1 py-3 border border-gray-200 text-[#6B7280] font-bold rounded-xl hover:bg-gray-50 transition-colors">
                       Volver
                     </button>
-                    <button onClick={executeImport} disabled={importResults.valid.length === 0} className="flex-1 py-3 bg-[#0040FC] text-white font-bold rounded-xl hover:bg-[#0030CC] transition-colors shadow-lg shadow-[#0040FC]/20 disabled:opacity-50 flex items-center justify-center gap-2">
-                      <Upload size={16} /> Importar {importResults.valid.length}
+                    <button onClick={executeImport} disabled={importResults.valid.length === 0 && importResults.updates.length === 0} className="flex-1 py-3 bg-[#0040FC] text-white font-bold rounded-xl hover:bg-[#0030CC] transition-colors shadow-lg shadow-[#0040FC]/20 disabled:opacity-50 flex items-center justify-center gap-2">
+                      <Upload size={16} /> {importResults.updates.length > 0 && importResults.valid.length === 0
+                        ? `Actualizar ${importResults.updates.length}`
+                        : importResults.updates.length > 0
+                          ? `Importar ${importResults.valid.length} y actualizar ${importResults.updates.length}`
+                          : `Importar ${importResults.valid.length}`}
                     </button>
                   </div>
                 </div>
@@ -1546,7 +1582,7 @@ export function InventoryPage() {
                   <Loader2 size={40} className="animate-spin text-[#0040FC] mx-auto" />
                   <div>
                     <p className="text-lg font-bold text-[#1F2937]">Importando productos...</p>
-                    <p className="text-sm text-[#6B7280] mt-1">{importedCount} de {importResults.valid.length}</p>
+                    <p className="text-sm text-[#6B7280] mt-1">{importedCount + updatedCount} de {importResults.valid.length + importResults.updates.length}</p>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
                     <div className="bg-[#0040FC] h-full rounded-full transition-all duration-300" style={{ width: `${importProgress}%` }} />
@@ -1561,9 +1597,11 @@ export function InventoryPage() {
                     <CheckCircle2 size={32} className="text-emerald-500" />
                   </div>
                   <div>
-                    <p className="text-xl font-black text-[#1F2937]">{importedCount} productos importados</p>
+                    <p className="text-xl font-black text-[#1F2937]" data-testid="import-done">
+                      {[importedCount > 0 ? `${importedCount} producto(s) nuevo(s)` : '', updatedCount > 0 ? `${updatedCount} actualizado(s)` : ''].filter(Boolean).join(' · ') || 'Nada que importar'}
+                    </p>
                     {importResults.errors.length > 0 && <p className="text-sm text-red-500 mt-1">{importResults.errors.length} con errores (no importados)</p>}
-                    {importResults.skipped.length > 0 && <p className="text-sm text-amber-500">{importResults.skipped.length} saltados (SKU duplicado)</p>}
+                    {importResults.skipped.length > 0 && <p className="text-sm text-amber-500">{importResults.skipped.length} saltados (ya existían)</p>}
                   </div>
                   <button onClick={closeImportModal} className="w-full py-3 bg-[#0040FC] text-white font-bold rounded-xl hover:bg-[#0040FC]/90 transition-colors">
                     Cerrar
