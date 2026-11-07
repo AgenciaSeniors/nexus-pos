@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Banknote, Smartphone, ArrowLeftRight, X, Star, ChevronUp, ChevronDown, ArrowRight } from 'lucide-react';
 import type { Customer } from '../lib/db';
+import { CUP_BILLS, addBill, removeBill, billsTotal, type CashBills } from '../lib/cashBills';
 
 type PaymentMethod = 'efectivo' | 'transferencia' | 'mixto';
 
@@ -17,6 +18,8 @@ interface PaymentModalProps {
     // Modo restaurante (opcionales, ignorados por PosPage):
     tipAmount?: number,
     tipStaffId?: string,
+    /** Billetes con que pagó (solo efectivo, si el cajero los marcó). */
+    cashBills?: CashBills,
   ) => void;
   onCancel: () => void;
   // Modo restaurante: habilita la captura de propina + mesero.
@@ -34,6 +37,21 @@ export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled,
 
   // Efectivo
   const [tendered, setTendered] = useState<string>('');
+  // Billetes con que paga el cliente: al tocarlos, el monto recibido se arma solo. Si el cajero
+  // escribe el monto a mano, el desglose deja de valer y se descarta.
+  const [bills, setBills] = useState<CashBills | null>(null);
+  const tapBill = (d: number) => {
+    const next = addBill(bills, d);
+    setBills(next);
+    setTendered(String(billsTotal(next)));
+  };
+  const untapBill = (d: number) => {
+    const next = removeBill(bills, d);
+    const hay = Object.keys(next).length > 0;
+    setBills(hay ? next : null);
+    setTendered(hay ? String(billsTotal(next)) : '');
+  };
+  const setTenderedManual = (v: string) => { setTendered(v); setBills(null); };
 
   // Mixto
   const [cashInput, setCashInput] = useState<string>('');
@@ -62,7 +80,7 @@ export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled,
   // Efectivo
   const tenderedValue = parseFloat(tendered) || 0;
   const change = Math.round((tenderedValue - effectiveTotal) * 100) / 100;
-  const suggestions = [50, 100, 200, 500, 1000].filter(a => a >= effectiveTotal);
+  const suggestions = [50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000].filter(a => a >= effectiveTotal).slice(0, 3);
 
   // Mixto
   const cashValue = parseFloat(cashInput) || 0;
@@ -90,13 +108,13 @@ export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled,
     const tip = tipEnabled && tipAmount > 0 ? tipAmount : undefined;
     const tipStaff = tip ? (tipStaffId || undefined) : undefined;
     if (method === 'efectivo') {
-      onConfirm('efectivo', tenderedValue, Math.max(0, change), undefined, undefined, redeemedPoints || undefined, tip, tipStaff);
+      onConfirm('efectivo', tenderedValue, Math.max(0, change), undefined, undefined, redeemedPoints || undefined, tip, tipStaff, bills ?? undefined);
     } else if (method === 'transferencia') {
       onConfirm('transferencia', effectiveTotal, 0, undefined, undefined, redeemedPoints || undefined, tip, tipStaff);
     } else {
       onConfirm('mixto', cashValue, 0, cashValue, transferValue, redeemedPoints || undefined, tip, tipStaff);
     }
-  }, [isValid, method, tenderedValue, change, effectiveTotal, cashValue, transferValue, redeemedPoints, onConfirm, tipEnabled, tipAmount, tipStaffId]);
+  }, [isValid, method, tenderedValue, change, effectiveTotal, cashValue, transferValue, redeemedPoints, onConfirm, tipEnabled, tipAmount, tipStaffId, bills]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -260,18 +278,49 @@ export function PaymentModal({ total, customer, onConfirm, onCancel, tipEnabled,
                       className="w-full pl-10 pr-4 py-4 text-3xl font-black border-2 border-gray-200 rounded-2xl focus:border-[#0040FC] focus:ring-0 outline-none transition-colors text-[#1F2937]"
                       placeholder="0.00"
                       value={tendered}
-                      onChange={e => setTendered(e.target.value)}
+                      onChange={e => setTenderedManual(e.target.value)}
                     />
                   </div>
                 </div>
+                {/* Billetes con que paga: arma el monto y queda registrado para saber qué billetes entraron */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <p className="text-[11px] font-bold text-gray-500 uppercase">Billetes con que paga</p>
+                    {bills && (
+                      <button type="button" onClick={() => { setBills(null); setTendered(''); }} className="text-[11px] font-bold text-red-500 hover:underline">Borrar</button>
+                    )}
+                  </div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {CUP_BILLS.map(d => {
+                      const n = bills?.[String(d)] || 0;
+                      return (
+                        <button key={d} type="button" onClick={() => tapBill(d)} data-testid={`bill-${d}`}
+                          className={`relative px-2.5 py-1.5 rounded-lg text-xs font-black border transition-colors ${n > 0 ? 'bg-[#0040FC] text-white border-[#0040FC]' : d >= 1000 ? 'bg-blue-50 text-blue-800 border-blue-100 hover:bg-blue-100' : 'bg-gray-100 text-[#1F2937] border-gray-200 hover:bg-gray-200'}`}>
+                          ${d}
+                          {n > 0 && <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#16A34A] text-white text-[10px] font-black flex items-center justify-center">{n}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {bills && (
+                    <div className="flex gap-1.5 flex-wrap mt-2" data-testid="bills-chosen">
+                      {Object.entries(bills).map(([d, n]) => ({ d: Number(d), n })).sort((a, b) => b.d - a.d).map(({ d, n }) => (
+                        <button key={d} type="button" onClick={() => untapBill(d)} title="Quitar uno"
+                          className="px-2 py-1 rounded-lg bg-[#0040FC]/10 text-[#0040FC] text-xs font-bold border border-[#0040FC]/20 hover:bg-red-50 hover:text-red-500 hover:border-red-200">
+                          {n} × ${d} <span className="opacity-60">−</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <div className="flex gap-2 flex-wrap">
                   {suggestions.map(amount => (
-                    <button key={amount} onClick={() => setTendered(amount.toString())}
+                    <button key={amount} onClick={() => setTenderedManual(amount.toString())}
                       className="px-4 py-2 bg-gray-100 text-[#1F2937] rounded-xl text-sm font-bold hover:bg-[#0040FC]/10 hover:text-[#0040FC] transition-colors">
                       ${amount}
                     </button>
                   ))}
-                  <button onClick={() => setTendered(effectiveTotal.toFixed(2))}
+                  <button onClick={() => setTenderedManual(effectiveTotal.toFixed(2))}
                     className="px-4 py-2 bg-[#16A34A]/10 text-[#15803D] border border-[#16A34A]/20 rounded-xl text-sm font-bold hover:bg-[#16A34A]/20 transition-colors">
                     Monto Exacto
                   </button>

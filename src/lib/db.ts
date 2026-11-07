@@ -51,6 +51,8 @@ export interface Sale {
   payment_method: 'efectivo' | 'transferencia' | 'tarjeta' | 'mixto';
   amount_tendered?: number;
   change?: number;
+  /** Billetes con que pagó el cliente ({"1000": 2, "500": 1}), si el cajero los marcó. Ver lib/cashBills. */
+  cash_bills?: Record<string, number>;
   status?: 'completed' | 'voided' | 'stock_conflict' | 'partial_refund';
   /**
    * Timestamp ISO de cuándo se anuló la venta. Crítico para reportes inmutables:

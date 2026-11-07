@@ -85,6 +85,8 @@ export function PosPage() {
 
   // --- ESTADO VISUAL MÓVIL ---
   const [mobileView, setMobileView] = useState<'catalog' | 'cart'>('catalog');
+  // Teléfono: nota, guardar orden y descuento van plegados para dejar sitio a la lista de productos.
+  const [showCartExtras, setShowCartExtras] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -379,7 +381,10 @@ export function PosPage() {
     change: number,
     cashAmount?: number,
     transferAmount?: number,
-    redeemedPoints?: number
+    redeemedPoints?: number,
+    _tipAmount?: number,
+    _tipStaffId?: string,
+    cashBills?: Record<string, number>,
   ) => {
     if (!activeShift || !activeShift.id) return toast.error("Caja cerrada o turno inválido");
 
@@ -457,6 +462,8 @@ export function PosPage() {
             // Pago mixto
             ...(cashAmount !== undefined && { cash_amount: cashAmount }),
             ...(transferAmount !== undefined && { transfer_amount: transferAmount }),
+            // Billetes con que pagó (si el cajero los marcó al cobrar)
+            ...(cashBills && Object.keys(cashBills).length > 0 && { cash_bills: cashBills }),
             // Puntos canjeados
             ...(redeemedPoints && redeemedPoints > 0 && { redeemed_points: redeemedPoints }),
             sync_status: 'pending_create'
@@ -895,7 +902,7 @@ export function PosPage() {
             <CustomerSelect selectedCustomer={selectedCustomer} onSelect={setSelectedCustomer} />
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-background">
+        <div className="flex-1 overflow-y-auto p-2.5 md:p-4 space-y-2 md:space-y-3 bg-background" data-testid="cart-list">
             {cart.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-text-secondary opacity-60 text-center p-8 space-y-4">
                     <div className="w-20 h-20 bg-gray-200 rounded-full flex items-center justify-center">
@@ -911,30 +918,67 @@ export function PosPage() {
                   const effectivePrice = item.custom_price ?? item.price;
                   const isEditing = editingItemId === item.id;
                   return (
-                    <div key={item.id} className={`bg-surface p-3 rounded-xl border shadow-sm flex flex-col gap-2 animate-in slide-in-from-right-4 duration-200 ${isEditing ? 'border-[#0040FC]/40 ring-1 ring-[#0040FC]/20' : 'border-gray-200'}`}>
-                        <div className="flex justify-between items-start">
-                            <div className="flex-1 pr-2 min-w-0">
-                                <h4 className="font-bold text-text-main text-sm leading-tight line-clamp-2 font-heading">{item.name}</h4>
-                                <p className="text-xs text-text-secondary font-mono mt-0.5">
+                    <div key={item.id} data-testid="cart-item" className={`bg-surface px-2.5 py-2 rounded-xl border shadow-sm flex flex-col gap-1.5 animate-in slide-in-from-right-4 duration-200 ${isEditing ? 'border-[#0040FC]/40 ring-1 ring-[#0040FC]/20' : 'border-gray-200'}`}>
+                        {/* Una línea por producto: en el teléfono caben varios en pantalla (antes cada uno ocupaba media pantalla) */}
+                        <div className="flex items-center gap-2">
+                            <div className="flex-1 min-w-0">
+                                <h4 className="font-bold text-text-main text-sm leading-tight truncate font-heading" title={item.name}>{item.name}</h4>
+                                <p className="text-[11px] text-text-secondary font-mono leading-tight truncate">
                                     {item.custom_price !== undefined
                                         ? <><span className="line-through opacity-40">{currency.format(item.price)}</span> <span className="text-[#0040FC] font-bold">{currency.format(item.custom_price)}</span></>
                                         : <>{currency.format(item.price)}</>
-                                    } <span className="opacity-70">x unidad</span>
+                                    }{item.unit ? <span className="opacity-70"> / {item.unit}</span> : null}
                                 </p>
                                 {item.note && !isEditing && (
-                                    <p className="text-xs text-[#0040FC] bg-[#0040FC]/8 rounded-md px-2 py-0.5 mt-1 italic">📝 {item.note}</p>
+                                    <p className="text-[11px] text-[#0040FC] italic truncate">📝 {item.note}</p>
                                 )}
                             </div>
-                            <div className="flex items-center gap-1.5 flex-shrink-0">
-                                <div className="font-black text-text-main text-lg text-right whitespace-nowrap font-body">
-                                    {currency.format(currency.multiply(effectivePrice, item.quantity))}
-                                </div>
+                            <div className="flex items-center gap-0.5 bg-background p-0.5 rounded-lg border border-gray-100 flex-shrink-0">
+                                <button onClick={() => updateQuantity(item.id, -1)} aria-label="Quitar una unidad" className="w-8 h-8 md:w-9 md:h-9 flex items-center justify-center bg-surface rounded-md text-text-main shadow-sm hover:bg-gray-100 border border-gray-200 active:scale-95 transition-all">
+                                    <Minus size={16}/>
+                                </button>
+                                {editingQtyId === item.id ? (
+                                    <input
+                                        autoFocus
+                                        type="number"
+                                        min="0.001"
+                                        step={isDecimalUnit(item.unit) ? '0.1' : '1'}
+                                        value={editQtyValue}
+                                        onChange={e => setEditQtyValue(e.target.value)}
+                                        onBlur={() => { setDirectQuantity(item.id, editQtyValue); }}
+                                        onKeyDown={e => {
+                                            if (e.key === 'Enter') { e.preventDefault(); setDirectQuantity(item.id, editQtyValue); }
+                                            if (e.key === 'Escape') setEditingQtyId(null);
+                                        }}
+                                        className="w-12 text-center font-bold text-base text-bisne-navy border-b-2 border-bisne-navy outline-none bg-transparent tabular-nums"
+                                    />
+                                ) : (
+                                    <button
+                                        onClick={() => { setEditingQtyId(item.id); setEditQtyValue(fmtQty(item.quantity)); }}
+                                        className="font-bold text-base text-bisne-navy w-9 text-center tabular-nums font-body hover:text-talla-dark transition-colors"
+                                        title="Toca para editar cantidad"
+                                    >
+                                        {fmtQty(item.quantity)}
+                                    </button>
+                                )}
+                                <button onClick={() => updateQuantity(item.id, 1)} aria-label="Agregar una unidad" className="w-8 h-8 md:w-9 md:h-9 flex items-center justify-center bg-bisne-navy text-white rounded-md shadow-sm hover:bg-bisne-navy/90 active:scale-95 transition-all">
+                                    <Plus size={16}/>
+                                </button>
+                            </div>
+                            <div className="min-w-[64px] text-right font-black text-text-main text-sm whitespace-nowrap font-body flex-shrink-0">
+                                {currency.format(currency.multiply(effectivePrice, item.quantity))}
+                            </div>
+                            <div className="flex flex-col flex-shrink-0 -my-1">
                                 <button
                                     onClick={() => isEditing ? setEditingItemId(null) : openItemEditor(item)}
-                                    className={`p-1.5 rounded-lg transition-colors ${isEditing ? 'text-[#0040FC] bg-[#0040FC]/10' : 'text-gray-400 hover:text-[#0040FC] hover:bg-[#0040FC]/8'}`}
+                                    className={`p-1 rounded-md transition-colors ${isEditing ? 'text-[#0040FC] bg-[#0040FC]/10' : 'text-gray-400 hover:text-[#0040FC] hover:bg-[#0040FC]/8'}`}
                                     title="Nota y precio personalizado"
+                                    aria-label={`Nota o precio de ${item.name}`}
                                 >
                                     <Edit3 size={14}/>
+                                </button>
+                                <button onClick={() => removeFromCart(item.id)} aria-label={`Quitar ${item.name} del carrito`} className="p-1 rounded-md text-gray-400 hover:text-state-error hover:bg-red-50 transition-colors">
+                                    <X size={16} />
                                 </button>
                             </div>
                         </div>
@@ -969,53 +1013,34 @@ export function PosPage() {
                                 </div>
                             </div>
                         )}
-
-                        <div className="flex justify-between items-center bg-background p-1 rounded-lg mt-1 border border-gray-100">
-                            <div className="flex items-center gap-1">
-                                <button onClick={() => updateQuantity(item.id, -1)} aria-label="Quitar una unidad" className="w-10 h-10 flex items-center justify-center bg-surface rounded-md text-text-main shadow-sm hover:bg-gray-100 border border-gray-200 active:scale-95 transition-all">
-                                    <Minus size={18}/>
-                                </button>
-                                {editingQtyId === item.id ? (
-                                    <input
-                                        autoFocus
-                                        type="number"
-                                        min="0.001"
-                                        step={isDecimalUnit(item.unit) ? '0.1' : '1'}
-                                        value={editQtyValue}
-                                        onChange={e => setEditQtyValue(e.target.value)}
-                                        onBlur={() => { setDirectQuantity(item.id, editQtyValue); }}
-                                        onKeyDown={e => {
-                                            if (e.key === 'Enter') { e.preventDefault(); setDirectQuantity(item.id, editQtyValue); }
-                                            if (e.key === 'Escape') setEditingQtyId(null);
-                                        }}
-                                        className="w-14 text-center font-bold text-base text-bisne-navy border-b-2 border-bisne-navy outline-none bg-transparent tabular-nums"
-                                    />
-                                ) : (
-                                    <button
-                                        onClick={() => { setEditingQtyId(item.id); setEditQtyValue(fmtQty(item.quantity)); }}
-                                        className="font-bold text-lg text-bisne-navy w-10 text-center tabular-nums font-body hover:text-talla-dark transition-colors"
-                                        title="Toca para editar cantidad"
-                                    >
-                                        {fmtQty(item.quantity)}
-                                    </button>
-                                )}
-                                <button onClick={() => updateQuantity(item.id, 1)} aria-label="Agregar una unidad" className="w-10 h-10 flex items-center justify-center bg-bisne-navy text-white rounded-md shadow-sm hover:bg-bisne-navy/90 active:scale-95 transition-all">
-                                    <Plus size={18}/>
-                                </button>
-                            </div>
-                            {item.unit && <span className="text-[10px] text-gray-400 font-medium">{item.unit}</span>}
-                            <button onClick={() => removeFromCart(item.id)} aria-label={`Quitar ${item.name} del carrito`} className="w-10 h-10 flex items-center justify-center ml-3 text-gray-400 hover:text-state-error hover:bg-red-50 rounded-lg transition-colors">
-                                <X size={20} />
-                            </button>
-                        </div>
                     </div>
                   );
                 })
             )}
         </div>
 
-        <div className="p-5 bg-surface border-t border-gray-200 shadow-[0_-4px_20px_-5px_rgba(0,0,0,0.1)] relative z-30 shrink-0">
-            
+        <div className="p-3 md:p-5 bg-surface border-t border-gray-200 shadow-[0_-4px_20px_-5px_rgba(0,0,0,0.1)] relative z-30 shrink-0">
+
+            {/* Teléfono: nota, guardar orden y descuento plegados para que la lista de productos tenga sitio */}
+            <button
+                type="button"
+                onClick={() => setShowCartExtras(v => !v)}
+                className="md:hidden w-full flex items-center justify-between py-1.5 mb-2 text-xs font-bold text-text-secondary"
+                aria-expanded={showCartExtras}
+                data-testid="cart-extras-toggle"
+            >
+                <span>
+                    Nota, guardar orden, descuento
+                    {(discount || orderNote || parkedCount > 0) && (
+                        <span className="ml-2 px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-600 border border-amber-200 text-[10px]">
+                            {[discount && 'descuento', orderNote && 'nota', parkedCount > 0 && `${parkedCount} pendiente${parkedCount !== 1 ? 's' : ''}`].filter(Boolean).join(' · ')}
+                        </span>
+                    )}
+                </span>
+                <ChevronRight size={16} className={`transition-transform ${showCartExtras ? 'rotate-90' : ''}`} />
+            </button>
+            <div className={`${showCartExtras ? 'block' : 'hidden'} md:block`}>
+
             {/* ✅ CAMPO DE TEXTO OPCIONAL PARA NOMBRE/MESA AÑADIDO AQUÍ */}
             <div className="mb-3">
                 <div className="relative flex items-center">
@@ -1097,8 +1122,10 @@ export function PosPage() {
                 )}
             </div>
 
+            </div>
+
             {/* --- TOTALES --- */}
-            <div className="space-y-1 mb-5">
+            <div className="space-y-1 mb-3 md:mb-5">
                 {discountAmount > 0 ? (
                     <>
                         <div className="flex justify-between items-end border-b border-gray-100 pb-2 mb-1">
@@ -1111,7 +1138,7 @@ export function PosPage() {
                         </div>
                     </>
                 ) : (
-                    <div className="flex justify-between items-end border-b border-gray-100 pb-2 mb-2">
+                    <div className="hidden md:flex justify-between items-end border-b border-gray-100 pb-2 mb-2">
                         <span className="text-sm font-medium text-text-secondary font-heading">Subtotal</span>
                         <span className="text-sm font-bold text-text-main font-body">{currency.format(subtotal)}</span>
                     </div>
@@ -1120,7 +1147,7 @@ export function PosPage() {
                     <span className="font-bold text-lg text-text-main flex items-center gap-2 font-heading">
                         <Keyboard size={18} className="hidden md:block text-text-secondary"/> Total a Pagar
                     </span>
-                    <span className="font-black text-4xl text-bisne-navy tracking-tight font-body">{currency.format(finalTotal)}</span>
+                    <span className="font-black text-3xl md:text-4xl text-bisne-navy tracking-tight font-body">{currency.format(finalTotal)}</span>
                 </div>
             </div>
 

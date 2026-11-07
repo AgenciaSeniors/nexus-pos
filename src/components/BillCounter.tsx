@@ -2,9 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { X, Calculator, RotateCcw, Copy, CheckCircle2, Banknote, Coins } from 'lucide-react';
 import { toast } from 'sonner';
 
-// Denominaciones de pesos cubanos (CUP)
-const BILLS: number[] = [5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 3, 1];
-const COINS: number[] = [5, 3, 1];
+import { CUP_BILLS as BILLS, CUP_COINS as COINS } from '../lib/cashBills';
 
 type Counts = Record<string, string>; // key: 'bill_5000' | 'coin_5' → string para input controlado
 

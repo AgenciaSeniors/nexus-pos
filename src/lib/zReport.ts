@@ -152,6 +152,8 @@ export interface ZReportInput {
   staff: { name: string; count: number; total: number }[];
   /** Inventario del día (lib/dailyInventory). Opcional: sin él no hay sección. */
   inventory?: ProductDayRow[];
+  /** Billetes recibidos (lib/cashBills). Opcional: solo si algún cobro los registró. */
+  bills?: { rows: { denomination: number; count: number; total: number }[]; count: number; total: number; cashSalesWithoutBills: number };
   fmt?: (n: number) => string;
 }
 
@@ -259,6 +261,16 @@ export function buildZReportText(input: ZReportInput): string {
     }
     const resto = vendidos.length - MAX_PRODUCT_LINES;
     if (resto > 0) lines.push(`… y ${resto} producto${resto !== 1 ? 's' : ''} más`);
+  }
+
+  if (input.bills && input.bills.rows.length > 0) {
+    lines.push(SEP);
+    lines.push('*BILLETES RECIBIDOS*');
+    for (const r of input.bills.rows) lines.push(`${r.count} × $${r.denomination}  ${fmt(r.total)}`);
+    lines.push(`Total: ${input.bills.count} billete${input.bills.count !== 1 ? 's' : ''} · ${fmt(input.bills.total)}`);
+    if (input.bills.cashSalesWithoutBills > 0) {
+      lines.push(`(${input.bills.cashSalesWithoutBills} cobro${input.bills.cashSalesWithoutBills !== 1 ? 's' : ''} en efectivo sin desglose de billetes)`);
+    }
   }
 
   if (input.staff.length > 1) {

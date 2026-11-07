@@ -219,3 +219,28 @@ describe('quién vendió cada producto', () => {
     expect(t).not.toContain('↳');
   });
 });
+
+describe('billetes recibidos en el Corte Z', () => {
+  const base: ZReportInput = {
+    businessName: 'El Pinto', dateLabel: '14/10/2026', ticketCount: 3,
+    cashTotal: 3500, cardTotal: 0, transferTotal: 0, netTotal: 3500,
+    voided: { count: 0, total: 0 }, shifts: [], products: [], staff: [],
+  };
+
+  it('lista cuántos billetes de cada tipo entraron y avisa de los cobros sin desglose', () => {
+    const t = buildZReportText({ ...base, bills: {
+      rows: [{ denomination: 1000, count: 3, total: 3000 }, { denomination: 500, count: 1, total: 500 }],
+      count: 4, total: 3500, cashSalesWithoutBills: 1,
+    } });
+    expect(t).toContain('*BILLETES RECIBIDOS*');
+    expect(t).toContain('3 × $1000  $3000.00');
+    expect(t).toContain('1 × $500  $500.00');
+    expect(t).toContain('Total: 4 billetes · $3500.00');
+    expect(t).toContain('(1 cobro en efectivo sin desglose de billetes)');
+  });
+
+  it('sin billetes registrados no hay sección', () => {
+    expect(buildZReportText(base)).not.toContain('BILLETES');
+    expect(buildZReportText({ ...base, bills: { rows: [], count: 0, total: 0, cashSalesWithoutBills: 5 } })).not.toContain('BILLETES');
+  });
+});

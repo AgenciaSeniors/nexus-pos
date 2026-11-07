@@ -9,6 +9,7 @@ import { logAuditAction } from '../lib/audit';
 import { currency } from '../lib/currency';
 import { TicketModal } from '../components/TicketModal';
 import { loadPrinterConfig, isPrinterReady } from '../lib/printer/config';
+import { summarizeBills } from '../lib/cashBills';
 import { printPlainText } from '../lib/printer/service';
 import { toast } from 'sonner';
 import {
@@ -752,7 +753,7 @@ export function FinancePage() {
       .filter(p => p.quantity > 0)
       .sort((a, b) => b.quantity - a.quantity);
     const staffList = Object.entries(staffSummary).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.total - a.total);
-    return { cashTotal, transferTotal, cardTotal, productsList, staffList, ticketCount: dailyStats.sales.length };
+    return { cashTotal, transferTotal, cardTotal, productsList, staffList, ticketCount: dailyStats.sales.length, bills: summarizeBills(dailyStats.sales) };
   }, [dailyStats.sales, dailyStats.periodEnd]);
 
   // ── CUADRE DE CAJA DEL DÍA (parte del Corte Z) ──
@@ -879,6 +880,7 @@ export function FinancePage() {
     products: closingStats.productsList,
     staff: closingStats.staffList,
     inventory: dayInventory,
+    bills: closingStats.bills.rows.length > 0 ? closingStats.bills : undefined,
     fmt: formatMoney,
   });
 
@@ -2059,6 +2061,34 @@ export function FinancePage() {
             );
           })()}
 
+          {(() => {
+            const b = summarizeBills(shiftData?.sales || []);
+            if (b.rows.length === 0) return null;
+            return (
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5" data-testid="shift-bills">
+                <h3 className="font-bold text-[#1F2937] text-sm flex items-center gap-2 mb-1">
+                  <Wallet size={16} className="text-[#15803D]"/> Billetes recibidos (Turno Actual)
+                </h3>
+                <p className="text-[11px] text-[#6B7280] mb-3">Lo que marcaron los cajeros al cobrar en efectivo.</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {b.rows.map(r => (
+                    <div key={r.denomination} className="flex items-center justify-between p-2.5 bg-gray-50 rounded-xl border border-gray-100">
+                      <span className="text-xs font-bold text-[#1F2937]">{r.count} × ${r.denomination}</span>
+                      <span className="text-xs font-black text-[#15803D]">{formatMoney(r.total)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-between items-center mt-3 pt-3 border-t border-dashed border-gray-200 text-xs">
+                  <span className="font-bold text-[#6B7280]">{b.count} billete{b.count !== 1 ? 's' : ''}</span>
+                  <span className="font-black text-[#1F2937]">{formatMoney(b.total)}</span>
+                </div>
+                {b.cashSalesWithoutBills > 0 && (
+                  <p className="text-[11px] text-[#B45309] mt-2">{b.cashSalesWithoutBills} cobro{b.cashSalesWithoutBills !== 1 ? 's' : ''} en efectivo sin desglose (el cajero escribió el monto a mano).</p>
+                )}
+              </div>
+            );
+          })()}
+
           {shiftStats.staffList.length > 1 && (
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
               <h3 className="font-bold text-[#1F2937] text-sm flex items-center gap-2 mb-4">
@@ -2704,6 +2734,23 @@ export function FinancePage() {
                      </table>
                  ) : <p className="text-center text-[#6B7280] italic text-xs">Sin movimientos.</p>}
              </div>
+
+             {closingStats.bills.rows.length > 0 && (
+               <div className="mt-6 pt-5 border-t border-dashed border-gray-200" data-testid="z-bills">
+                 <h3 className="text-xs font-bold text-[#6B7280] uppercase mb-3 tracking-wider">Billetes Recibidos</h3>
+                 <table className="w-full text-sm font-mono text-[#1F2937]">
+                   <tbody className="divide-y divide-dashed divide-gray-200">
+                     {closingStats.bills.rows.map(r => (
+                       <tr key={r.denomination}><td className="py-1.5 font-bold">{r.count} × ${r.denomination}</td><td className="py-1.5 text-right">{formatMoney(r.total)}</td></tr>
+                     ))}
+                     <tr className="font-black"><td className="py-1.5">{closingStats.bills.count} billetes</td><td className="py-1.5 text-right">{formatMoney(closingStats.bills.total)}</td></tr>
+                   </tbody>
+                 </table>
+                 {closingStats.bills.cashSalesWithoutBills > 0 && (
+                   <p className="text-[10px] text-[#6B7280] mt-2 font-sans">{closingStats.bills.cashSalesWithoutBills} cobro{closingStats.bills.cashSalesWithoutBills !== 1 ? 's' : ''} en efectivo sin desglose de billetes.</p>
+                 )}
+               </div>
+             )}
 
              {closingStats.staffList.length > 1 && (
                <div className="mt-6 pt-5 border-t border-dashed border-gray-200">
