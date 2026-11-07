@@ -3,6 +3,8 @@
  * Compatible con Excel (UTF-8 BOM + delimitador `;` por defecto en es-CU).
  */
 
+import { exportFile, type ExportOutcome } from './fileExport';
+
 type CsvValue = string | number | boolean | null | undefined | Date;
 
 /**
@@ -64,24 +66,21 @@ export function toCsv<T>(
 }
 
 /**
- * Descarga un CSV en el navegador.
+ * Saca el CSV del dispositivo: descarga en navegador/Windows, menú de compartir en Android
+ * (ver lib/fileExport). Lanza si falla.
  */
 export function downloadCsv<T>(
   filename: string,
   rows: T[],
   columns: CsvColumn<T>[],
   opts: ExportOptions = {}
-): void {
+): Promise<ExportOutcome> {
   const content = toCsv(rows, columns, opts);
-  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename.endsWith('.csv') ? filename : `${filename}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  return exportFile({
+    name: filename.endsWith('.csv') ? filename : `${filename}.csv`,
+    mimeType: 'text/csv;charset=utf-8;',
+    content,
+  });
 }
 
 /**

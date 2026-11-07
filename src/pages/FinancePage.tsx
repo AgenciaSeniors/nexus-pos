@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { BillCounter } from '../components/BillCounter';
 import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
+import { exportSuccessMessage, friendlyExportError } from '../lib/fileExport';
 import { computeVoidDelta, computeRefundQuote, cashPortionOfRefund } from '../lib/saleRefund';
 import { isSaleValidAtTime, endOfLocalDay } from '../lib/shiftStats';
 import { pickActiveShift, sortOpenShifts } from '../lib/activeShift';
@@ -1627,7 +1628,7 @@ export function FinancePage() {
     if (newStr <= today) setSelectedDate(newStr);
   };
   
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
     if (!allSales.length) { toast.error('No hay ventas para exportar'); return; }
     const columns: CsvColumn<Sale>[] = [
       { label: 'ID', value: s => s.id.slice(0, 8).toUpperCase() },
@@ -1642,8 +1643,12 @@ export function FinancePage() {
       { label: 'Reembolsado', value: s => computeSaleNet(s).refundAmount.toFixed(2) },
       { label: 'Total neto', value: s => computeSaleNet(s).netTotal.toFixed(2) },
     ];
-    downloadCsv(`Ventas_${localDateStr()}`, allSales, columns);
-    toast.success(`${allSales.length} venta(s) exportada(s)`);
+    try {
+      const salida = await downloadCsv(`Ventas_${localDateStr()}`, allSales, columns);
+      toast.success(exportSuccessMessage(salida, `${allSales.length} venta(s)`));
+    } catch (e) {
+      toast.error(friendlyExportError(e));
+    }
   };
 
   // En Electron usar el IPC nativo (evita el "no admite vista previa" de Chromium)

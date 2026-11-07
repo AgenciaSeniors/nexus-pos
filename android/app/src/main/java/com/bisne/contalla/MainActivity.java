@@ -23,6 +23,7 @@ public class MainActivity extends BridgeActivity {
         // Los plugins propios se registran ANTES de super.onCreate (así lo exige Capacitor).
         registerPlugin(LanPrinterPlugin.class);
         registerPlugin(UsbPrinterPlugin.class);
+        registerPlugin(FileExportPlugin.class);
         super.onCreate(savedInstanceState);
         // Que el gestor de contraseñas del teléfono (Google, Samsung...) pueda ofrecer guardar y
         // rellenar el correo y la contraseña del inicio de sesión dentro de la app.

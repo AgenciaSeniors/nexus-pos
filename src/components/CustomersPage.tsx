@@ -13,6 +13,7 @@ import { currency } from '../lib/currency';
 import { matchesSearch } from '../lib/textSearch';
 import { computeSaleNet } from '../lib/salesStats';
 import { downloadCsv, formatLocalDateTime, type CsvColumn } from '../lib/csv';
+import { exportSuccessMessage, friendlyExportError } from '../lib/fileExport';
 
 export function CustomersPage() {
   const { currentStaff } = useOutletContext<{ currentStaff: Staff }>();
@@ -291,7 +292,7 @@ export function CustomersPage() {
       setIsDetailsOpen(true);
   };
 
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
       if (customers.length === 0) {
           toast.error('No hay clientes para exportar');
           return;
@@ -306,8 +307,12 @@ export function CustomersPage() {
           { label: 'Fecha registro', value: c => formatLocalDateTime(c.created_at) },
       ];
       const today = new Date().toISOString().split('T')[0];
-      downloadCsv(`Clientes_Senio_${today}`, customers, columns);
-      toast.success(`${customers.length} cliente(s) exportado(s)`);
+      try {
+        const salida = await downloadCsv(`Clientes_Senio_${today}`, customers, columns);
+        toast.success(exportSuccessMessage(salida, `${customers.length} cliente(s)`));
+      } catch (e) {
+        toast.error(friendlyExportError(e));
+      }
   };
 
   const resetForm = () => {

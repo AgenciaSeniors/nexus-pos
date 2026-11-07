@@ -13,6 +13,7 @@ import { toast } from 'sonner';
 import { logAuditAction } from '../lib/audit';
 import { InventoryHistory } from '../components/InventoryHistory';
 import { downloadCsv, type CsvColumn } from '../lib/csv';
+import { exportFile, exportSuccessMessage, friendlyExportError } from '../lib/fileExport';
 import { round3 } from '../lib/recipe';
 import { matchesSearch } from '../lib/textSearch';
 import { resolveStockTarget, movementReason, parseInitialStock } from '../lib/stockTarget';
@@ -588,18 +589,15 @@ export function InventoryPage() {
     }
   };
 
-  const downloadTemplate = () => {
+  const downloadTemplate = async () => {
     const headers = 'Nombre del Producto,SKU,Categoría,Precio Venta,Costo,Stock Vitrina,Stock Almacén,Unidad de Medida,Vencimiento\n';
     const example = 'Coca Cola 600ml,BEB-001,Bebidas,25.00,18.00,20,100,un,\nArroz 1kg,ALM-001,Alimentos,45.50,32.00,15,80,kg,2026-12-31\n';
-    const blob = new Blob(["\uFEFF" + headers + example], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'Plantilla_Inventario_Senio.csv');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    try {
+      const salida = await exportFile({ name: 'Plantilla_Inventario_Senio.csv', mimeType: 'text/csv;charset=utf-8;', content: '\uFEFF' + headers + example });
+      toast.success(exportSuccessMessage(salida, 'Plantilla'));
+    } catch (e) {
+      toast.error(friendlyExportError(e));
+    }
   };
 
   const closeImportModal = () => {
@@ -652,7 +650,7 @@ export function InventoryPage() {
   };
 
   // EXPORTAR A EXCEL (CSV)
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
     if (products.length === 0) {
         toast.error("No hay productos para exportar");
         return;
@@ -671,8 +669,12 @@ export function InventoryPage() {
         { label: 'Unidad', value: p => p.unit || 'un' },
         { label: 'Vencimiento', value: p => p.expiration_date || '' },
     ];
-    downloadCsv(`Inventario_Senio_${new Date().toISOString().split('T')[0]}`, products, columns);
-    toast.success(`${products.length} producto(s) exportado(s)`);
+    try {
+      const salida = await downloadCsv(`Inventario_Senio_${new Date().toISOString().split('T')[0]}`, products, columns);
+      toast.success(exportSuccessMessage(salida, `Inventario con ${products.length} producto(s)`));
+    } catch (e) {
+      toast.error(friendlyExportError(e));
+    }
   };
 
   const openEdit = (p: Product) => {

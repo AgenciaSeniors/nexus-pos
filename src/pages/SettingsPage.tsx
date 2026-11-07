@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Staff, type BusinessConfig } from '../lib/db';
 import { syncManualFull, syncPush, isOnline, addToQueue, retryFailedItems } from '../lib/sync';
 import { describeSyncSummary, NO_CONNECTION_MESSAGE } from '../lib/syncReport';
+import { exportFile, friendlyExportError } from '../lib/fileExport';
 import { ADMIN_WHATSAPP_PHONE } from '../lib/config';
 import { hashPin, verifyPin, isPinHashed } from '../lib/pin';
 import { logAuditAction } from '../lib/audit';
@@ -398,25 +399,15 @@ export function SettingsPage() {
               backupData[table.name] = await table.toArray();
           }
 
-          // Lo convertimos en un archivo JSON descargable
-          const dataStr = JSON.stringify(backupData);
-          const blob = new Blob([dataStr], { type: "application/json" });
-          const url = URL.createObjectURL(blob);
-          
-          const a = document.createElement('a');
-          a.href = url;
+          // En Android sale por el menú de compartir (WhatsApp, Drive, Archivos…); en Windows/web se descarga.
           const date = new Date().toISOString().split('T')[0];
-          a.download = `Respaldo_Senio_${date}.json`;
-          
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-          
-          toast.success("Copia de seguridad descargada con éxito");
+          const salida = await exportFile({ name: `Respaldo_Senio_${date}.json`, mimeType: 'application/json', content: JSON.stringify(backupData) });
+          toast.success(salida === 'shared'
+            ? 'Copia de seguridad lista: elige dónde guardarla (Drive, Archivos) o a quién enviarla'
+            : 'Copia de seguridad descargada con éxito');
       } catch (error) {
           console.error(error);
-          toast.error("Error al generar la copia de seguridad");
+          toast.error(friendlyExportError(error));
       } finally {
           setIsLoading(false);
       }
@@ -1387,6 +1378,7 @@ export function SettingsPage() {
                   'Una compra puede entrar directo a la vitrina: ya no hace falta meterla al almacén y trasladarla después',
                   'El stock se descuenta automáticamente con cada venta realizada',
                   'Edita precio, nombre o categoría tocando el lápiz en cualquier momento',
+                  'Exportar e importar: "Exportar" saca el inventario completo como Excel/CSV y "Importar" carga productos nuevos desde un CSV o Excel (descarga la plantilla para ver las columnas). En el teléfono, al exportar se abre el menú de compartir: elige Drive, Archivos, WhatsApp o correo para guardarlo o enviarlo',
                   'Transferencia almacén ↔ vitrina: toca el producto → "Transferir" → elige la dirección (al mostrador o de vuelta al almacén) y la cantidad — útil solo si manejas almacén aparte; el movimiento queda en el historial',
                 ],
               },
@@ -1457,6 +1449,7 @@ export function SettingsPage() {
                   'Al instalar una actualización, se crea un backup de seguridad adicional automáticamente antes de migrar los datos',
                   'Los backups son independientes de la base de datos principal — si algo falla, los datos están protegidos',
                   'Si necesitas restaurar un backup, contacta a soporte técnico',
+                  'Respaldo manual: en Ajustes → Datos y Respaldo, "Descargar Respaldo" genera un archivo con TODO el negocio. En el teléfono se abre el menú de compartir: guárdalo en Drive o Archivos, o envíatelo por WhatsApp o correo. Hazlo antes de cambiar de teléfono o reinstalar',
                 ],
               },
               {
